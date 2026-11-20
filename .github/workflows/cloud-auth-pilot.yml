@@ -1,0 +1,54 @@
+name: Publish ANT-178 PAIGE Auth pilot
+
+on:
+  push:
+    tags: [ant-178-auth-pilot-*]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: cloud-ant-178-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'Paige-Agent-AI/paige-cloud-preview'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      IMAGE_REPO: ghcr.io/paige-agent-ai/paige-cloud-preview
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Verify pilot and build exact source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          node --test auth-pilot/*.test.mjs
+          pilot="$IMAGE_REPO:ant178-$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          docker build --platform linux/amd64 -f auth-pilot/Dockerfile \
+            --build-arg "CLOUD_COMMIT=$GITHUB_SHA" \
+            --build-arg "UPSTREAM_COMMIT=$(tr -d '\r\n' < upstream.commit)" \
+            --tag "$pilot" .
+          echo "CANDIDATE=$pilot" >> "$GITHUB_ENV"
+      - name: Publish and verify digest
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          trap 'docker logout ghcr.io >/dev/null' EXIT
+          docker push "$CANDIDATE"
+          digest="$(docker buildx imagetools inspect --format '{{json .Manifest.Digest}}' "$CANDIDATE" | tr -d '"')"
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          docker pull "$IMAGE_REPO@$digest"
+          [[ "$(docker image inspect --format '{{.Id}}' "$CANDIDATE")" == "$(docker image inspect --format '{{.Id}}' "$IMAGE_REPO@$digest")" ]]
+          alias="$IMAGE_REPO:${digest/:/-}"
+          docker tag "$CANDIDATE" "$alias"
+          docker push "$alias"
+          [[ "$(docker buildx imagetools inspect --format '{{json .Manifest.Digest}}' "$alias" | tr -d '"')" == "$digest" ]]
+          jq -n --arg commit "$GITHUB_SHA" --arg image "$IMAGE_REPO@$digest" --arg tag "$alias" \
+            '{commit:$commit,image:$image,coolifyTag:$tag}' | tee -a "$GITHUB_STEP_SUMMARY"

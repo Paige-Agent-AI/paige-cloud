@@ -1,0 +1,8 @@
+**
+!upstream.commit
+!auth-pilot/
+!auth-pilot/prepare.mjs
+!auth-pilot/frontend/
+!auth-pilot/frontend/**
+!auth-pilot/server.mjs
+!auth-pilot/supabase.mjs
