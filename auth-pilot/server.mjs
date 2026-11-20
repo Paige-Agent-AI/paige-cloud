@@ -17,7 +17,7 @@ const textType = "text/plain; charset=utf-8";
 const headers = {
   "Cache-Control": "no-store",
   "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
-  "Referrer-Policy": "no-referrer",
+  "Referrer-Policy": "same-origin",
   "Strict-Transport-Security": "max-age=31536000",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
@@ -51,7 +51,9 @@ function evaluatorToken(reply, evaluator) {
     // This token came directly from Supabase over TLS. The protected read also
     // validates it with Auth. Require a session ID before any scope=local logout.
     const claims = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
-    return claims.sub === evaluator.id && claims.role === "authenticated" && uuid.test(claims.session_id) ? token : null;
+    return claims.sub === evaluator.id && claims.role === "authenticated" &&
+      typeof claims.session_id === "string" && uuid.test(claims.session_id) &&
+      claims.session_id !== "00000000-0000-0000-0000-000000000000" ? token : null;
   } catch {
     return null;
   }

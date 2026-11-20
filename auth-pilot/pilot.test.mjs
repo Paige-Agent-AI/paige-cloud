@@ -60,6 +60,7 @@ test("gate denies anonymous assets and protected routes, and disabled auth makes
   for (const path of ["/auth", "/choose-account", "/release.json", "/assets/pilot.js", "/api/account"]) {
     assert.equal((await call(path)).status, 401, path);
   }
+  assert.equal((await call("/auth")).headers["referrer-policy"], "same-origin");
   assert.equal((await unlock("wrong-key")).status, 401);
   const gate = await unlock();
   assert.equal(gate.status, 303);
@@ -119,7 +120,8 @@ test("rejects invalid subject or absent session ID without allowing logout to re
   };
   const { call, unlock } = await listen(t, { backend, evaluator });
   const gate = cookieFrom(await unlock());
-  for (claims of [{ sub: "another-user" }, { session_id: undefined }]) {
+  for (claims of [{ sub: "another-user" }, { session_id: undefined },
+    { session_id: ["12345678-1111-2222-3333-323456789abc"] }, { session_id: "00000000-0000-0000-0000-000000000000" }]) {
     assert.equal((await call("/api/sign-in", credentials(gate))).status, 403);
   }
   assert.equal(backend.account.mock.calls.length, 0);
