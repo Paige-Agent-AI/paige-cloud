@@ -42,7 +42,15 @@ function prepare() {
     `const BUILD_ID = ${JSON.stringify(buildId)};`);
   vite = replaceOnce(vite, /^const CUSTOMER_UPDATE = readCustomerUpdateManifest\(\);$/gm,
     "const CUSTOMER_UPDATE = null;");
+  vite = replaceOnce(vite, /^\s+auth: path.resolve\(__dirname, "auth\.html"\),\r?\n/gm, "");
   writeFileSync("vite.config.ts", vite);
+
+  const clientPath = "src/integrations/supabase/client.ts";
+  const client = readFileSync(clientPath, "utf8");
+  writeFileSync(clientPath, replaceOnce(client,
+    /createClient<Database>\(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, \{/g,
+    "createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {\n" +
+      '  global: { fetch: async () => { throw new Error("PAIGE Cloud preview has no backend access."); } },'));
 }
 
 function verify() {

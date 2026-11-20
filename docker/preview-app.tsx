@@ -6,7 +6,6 @@ import "@/marketing/home.css";
 const Home = lazy(() => import("@/pages/PaigeHome"));
 const About = lazy(() => import("@/pages/About"));
 const Pricing = lazy(() => import("@/pages/Pricing"));
-const Blog = lazy(() => import("@/pages/Blog"));
 const Terms = lazy(() => import("@/pages/Terms"));
 const Privacy = lazy(() => import("@/pages/Privacy"));
 const SmsTerms = lazy(() => import("@/pages/SmsTerms"));
@@ -33,7 +32,6 @@ export default function PreviewApp() {
           <Route path="/" element={<Home />} />
           <Route path="/about" element={<About />} />
           <Route path="/pricing" element={<Pricing />} />
-          <Route path="/blog" element={<Blog />} />
           <Route path="/terms" element={<Terms />} />
           <Route path="/privacy" element={<Privacy />} />
           <Route path="/sms-terms" element={<SmsTerms />} />
