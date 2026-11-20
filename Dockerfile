@@ -19,7 +19,7 @@ server {
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     add_header Content-Security-Policy "default-src 'self' https: data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: blob: https:; font-src 'self' data: https:; connect-src 'self' https: wss:; frame-src 'self' https:; media-src 'self' https: data: blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self' https:" always;
-    location = /healthz { access_log off; default_type text/plain; return 200 "ok\n"; }
+    location = /healthz { access_log off; default_type text/plain; return 200 "ok v3\n"; }
     location = /privacy { try_files /privacy.html =404; }
     location = /sms-terms { try_files /sms-terms.html =404; }
     location = /auth { try_files /auth.html =404; }
