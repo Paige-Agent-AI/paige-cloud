@@ -1,34 +1,9 @@
-# PAIGE Cloud — Security Design (nonproduction preview)
+# PAIGE Cloud preview security design
 
-## Principles
-- Production Vercel deployment, production DNS, Supabase data/credentials, and existing agents' source are NOT modified.
-- No secret export/copy. Preview uses only public Supabase publishable (anon) key, same as production frontend (public by design).
-- Preview is nonproduction: distinct hostname (e.g. preview.paige... or a host-provided subdomain), no production domain transfer.
-- Least privilege: Coolify admin access owner-only; container runs as non-root where possible (nginx base image default); no SSH keys in image.
+The governed preview serves static content as UID and GID 101 on port 8080 behind Coolify TLS. The runtime has no backend proxy, auth configuration or writable data volume.
 
-## Headers (mirrored from vercel.json)
-- X-Content-Type-Options: nosniff
-- Referrer-Policy: strict-origin-when-cross-origin
-- Content-Security-Policy (as in vercel.json)
-- Cache-Control per path (sw.js, entry html no-cache; assets immutable 1y).
-
-## TLS
-- Let's Encrypt via Coolify/Traefik OR Cloudflare origin cert. HTTPS only; HSTS optional for preview (not production).
-
-## Auth/CORS/OAuth (preview)
-- If preview auth is exercised: add preview origin to Supabase Auth redirect allowlist (owner-authorized, non-production config). Otherwise preview runs with auth disabled / fixture mode.
-- No production callback URLs changed.
-- CORS: Supabase already allows browser origins; preview origin added only if needed.
-
-## Supply chain
-- Pinned base images (oven/bun:1.2-alpine, nginx:1.27-alpine).
-- Frozen lockfile install (bun install --frozen-lockfile).
-- No Lovable code/assets (owner rule).
-
-## Data
-- No Supabase data changes. No migrations. No RLS changes.
-- Container is stateless; no persistent volume for user data.
-
-## Open risks
-- CSP is permissive (unsafe-inline/unsafe-eval) inherited from Vercel; tighten later as separate hardening outcome.
-- No WAF beyond Cloudflare optional.
+- The build strips upstream environment files, substitutes a reserved `.invalid` backend and placeholder keys, then scans browser-facing output for excluded build values.
+- Browser connections are same-origin only. External scripts, frames and form submission are blocked. nginx handles only GET and HEAD, and denies authentication and API paths.
+- A fresh F2 hostname avoids service workers installed on legacy origins. The preview service worker is absent and blocked by CSP. Release, version and HTML responses use `no-store`; successful fingerprinted assets may be cached.
+- GitHub Actions publishes to the private Cloud package. Coolify pulls by digest with package-read access. Keep deployment permissions scoped to the preview app, with credentials in the approved secret store.
+- Legacy previews used different headers and inputs. Their reachability and isolation require separate evidence. The owner-gated authenticated staging proposal remains separate.

@@ -1,0 +1,63 @@
+name: Build PAIGE Cloud preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      reviewed_commit:
+        description: Full independently reviewed Cloud commit SHA
+        required: true
+        type: string
+      review_receipt:
+        description: Reference to the non-author review for that SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: cloud-preview-publish
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.repository == 'Paige-Agent-AI/paige-cloud-preview' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      IMAGE_REPO: ghcr.io/paige-agent-ai/paige-cloud-preview
+      EXPECTED_CLOUD_COMMIT: ${{ inputs.reviewed_commit }}
+      REVIEW_RECEIPT: ${{ inputs.review_receipt }}
+    steps:
+      - name: Check release request
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_CLOUD_COMMIT" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$EXPECTED_CLOUD_COMMIT" == "$GITHUB_SHA" ]]
+          [[ -n "${REVIEW_RECEIPT//[[:space:]]/}" ]]
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Build and verify the exact candidate
+        run: bash scripts/build-preview.sh "$IMAGE_REPO:$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+      - name: Publish candidate and record immutable identity
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          trap 'docker logout ghcr.io >/dev/null' EXIT
+          image="$IMAGE_REPO:$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          docker push "$image"
+          digest="$(docker buildx imagetools inspect --format '{{json .Manifest.Digest}}' "$image" | tr -d '"')"
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          docker pull "$IMAGE_REPO@$digest"
+          [[ "$(docker image inspect --format '{{.Id}}' "$image")" == "$(docker image inspect --format '{{.Id}}' "$IMAGE_REPO@$digest")" ]]
+          jq -n --arg environment cloud-preview --arg cloudCommit "$GITHUB_SHA" \
+            --arg frontendCommit "$(tr -d '\r\n' < upstream.commit)" \
+            --arg image "$IMAGE_REPO@$digest" --arg tag "$image" \
+            --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --arg review "$REVIEW_RECEIPT" \
+            '{environment:$environment,cloudCommit:$cloudCommit,frontendCommit:$frontendCommit,image:$image,tag:$tag,run:$run,review:$review}' \
+            | tee -a "$GITHUB_STEP_SUMMARY"

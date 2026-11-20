@@ -1,29 +1,9 @@
-# PAIGE Cloud — Architecture (nonproduction preview)
+# PAIGE Cloud preview architecture
 
-## Goal
-One real, owner-visible nonproduction hosting preview of the EXISTING PAIGE Vite+React frontend, outside Vercel, with Vercel production and Supabase unchanged.
+The private Cloud repository identifies the public frontend by full commit SHA. GitHub Actions builds and tests a static nginx image from locked dependencies and digest-pinned bases, then publishes the candidate to the private GHCR package. The job records both Git revisions and the image manifest digest.
 
-## Components
-1. Source: GitHub repo Paige-Agent-AI/Paige-Agent-AI (read-only clone for build).
-2. Build: oven/bun + vite build (multi-entry). Reproducible via Dockerfile.
-3. Serve: nginx 1.27 (static, rewrites, headers, cache) in container.
-4. Host: owner-approved Linux VPS (Coolify-managed) OR any Docker-capable Linux host. TBD pending authorization.
-5. Edge/CDN (optional): Cloudflare DNS + proxy + WAF + TLS. TBD pending authorization.
-6. Backend: existing Supabase project (unchanged). Preview origin added to Supabase auth redirect allowlist only if preview auth exercised (owner-authorized, non-production).
+An authorized operator promotes the digest to the dedicated Docker Image app in the existing Coolify Cloud project. Coolify manages the existing Traefik TLS proxy and the application on the Hostinger KVM 2. It pulls each release by digest. The public browser connects to the HTTPS preview, and Traefik routes to nginx on port 8080.
 
-## Network flow
-Browser -> (Cloudflare, optional) -> host:443 (TLS) -> Coolify/Traefik -> container:80 (nginx) -> static files.
-Auth/API calls from browser -> Supabase (existing) directly (CORS/redirect config).
+The governed preview serves no backend or auth endpoints. The build configuration substitutes a reserved invalid backend and the runtime limits browser connections to the preview origin. See [preview security](03-security-design.md) and the [release and rollback runbook](05-rollback-runbook.md).
 
-## Coolify fit
-- Coolify = open-source self-hosted PaaS (Docker-based) supporting Dockerfile/Compose deployments, TLS via Let's Encrypt, Git-based deploys, rollback to prior image.
-- Preferred starting candidate per charter; not permanently mandated.
-- Requires a Linux host with Docker + Coolify installed; owner-approved spend/account.
-
-## Rollback
-- Coolify keeps prior deployment image; one-click rollback to previous image.
-- DNS/origin rollback: revert preview hostname to previous or remove; production DNS untouched.
-- Source rollback: redeploy prior git commit SHA.
-
-## What is NOT in scope (this outcome)
-- Production cutover, DNS transfer, Supabase migration, customer hosting, long-running workers, control panel.
+The legacy Dockerfile previews stay on their recorded URLs. The F2 app uses its own stable origin for the entire deployment and rollback sequence.

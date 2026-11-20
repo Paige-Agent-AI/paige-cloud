@@ -1,20 +1,6 @@
-# PAIGE Cloud preview — Coolify/Docker Compose definition.
-# Deploy to an isolated nonproduction host only. Do NOT point production DNS here.
-version: "3.9"
 services:
   paige-web-preview:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: paige-cloud-preview:preview
+    image: ${PAIGE_PREVIEW_IMAGE:?Set PAIGE_PREVIEW_IMAGE to the verified image digest}
     ports:
-      - "8080:80"
+      - "127.0.0.1:8080:8080"
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-    labels:
-      - "coolify.managed=true"
-      - "paige.cloud.tier=nonproduction-preview"
