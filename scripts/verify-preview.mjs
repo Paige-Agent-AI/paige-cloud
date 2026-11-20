@@ -57,7 +57,11 @@ await request("/sms-terms");
 await request("/auth", 403);
 await request("/auth.html", 403);
 await request("/auth/callback", 403);
+await request("/get-started", 403);
+await request("/operator", 403);
+await request("/oauth/mcp/callback", 403);
 await request("/sw.js", 404);
+await request("/api", 404);
 await request("/api/f2-probe", 404);
 await request("/api/f2-probe", 405, { method: "POST" });
 

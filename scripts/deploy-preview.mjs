@@ -9,6 +9,9 @@ const appUuid = process.env.COOLIFY_PREVIEW_APP_UUID;
 const token = process.env.COOLIFY_CLOUD_TOKEN;
 const imageRepo = "ghcr.io/paige-agent-ai/paige-cloud-preview";
 const appName = "paige-cloud-f2";
+const project = "mvokcozpkh3u8grmordxzjly";
+const environmentName = "f2-preview";
+const serverName = "paige-cloud-preview";
 const digestRef = /^ghcr\.io\/paige-agent-ai\/paige-cloud-preview@sha256:([a-f0-9]{64})$/;
 assert.match(appUuid ?? "", /^[a-z0-9]{20,32}$/);
 assert.ok(token, "Obtain Coolify access from the approved secret store.");
@@ -59,9 +62,14 @@ function verifyEndpoint(release) {
   ], { stdio: "inherit" });
 }
 
+const environment = await coolify(`/projects/${project}/${environmentName}`);
+assert.equal(environment.name, environmentName);
+assert.ok(Number.isInteger(environment.id));
+
 function confirmApp(app) {
   assert.equal(app.uuid, appUuid);
   assert.equal(app.name, appName);
+  assert.equal(app.environment_id, environment.id);
   assert.equal(app.fqdn, url);
   assert.equal(app.build_pack, "dockerimage");
   assert.equal(app.docker_registry_image_name, imageRepo);
@@ -101,8 +109,12 @@ console.log(JSON.stringify({
 for (let attempt = 0; attempt < 60; attempt++) {
   const status = await coolify(`/deployments/${deployment}`);
   if (status.status === "finished") {
-    assert.equal(status.docker_registry_image_tag, candidate.tag,
-      "The deployment record must identify the selected digest.");
+    assert.equal(status.deployment_uuid, deployment);
+    assert.equal(String(status.application_id), String(app.id));
+    assert.equal(status.server_name, serverName);
+    const pullWitness = `Starting deployment of ${candidate.image} to ${serverName}.`;
+    assert.ok(typeof status.logs === "string" && status.logs.includes(pullWitness),
+      "The expected immutable image reference is missing from the deployment logs. Check log permission and inspect live state before retrying.");
     const current = await coolify(appPath);
     confirmApp(current);
     assert.equal(current.docker_registry_image_tag, candidate.tag);
@@ -110,7 +122,7 @@ for (let attempt = 0; attempt < 60; attempt++) {
     console.log(JSON.stringify({
       observedAt: new Date().toISOString(), appUuid, deployment, url, result: status.status,
       finishedAt: status.finished_at,
-      ...candidate, tag: undefined, rollbackTarget: previous?.image ?? null,
+      ...candidate, tag: undefined, pullWitness, rollbackTarget: previous?.image ?? null,
     }));
     process.exit(0);
   }

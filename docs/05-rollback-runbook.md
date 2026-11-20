@@ -8,15 +8,15 @@
 
 ## Promote a verified digest
 
-Use the dedicated `paige-cloud-f2` Docker Image application in **PAIGE Cloud Preview** on the existing server. Keep its generated HTTPS hostname and UUID. Use port 8080, enable the `GET /healthz` health check expecting 200, disable auto-deploy and leave app environment variables and persistent volumes empty. Coolify needs a package-reader login on the existing server.
+Use the dedicated `paige-cloud-f2` Docker Image application in **PAIGE Cloud Preview → f2-preview** on the existing server. Keep its generated HTTPS hostname and UUID. Use port 8080, enable the `GET /healthz` health check expecting 200, disable auto-deploy and leave app environment variables and persistent volumes empty. Coolify needs a package-reader login on the existing server.
 
-Set `COOLIFY_PREVIEW_APP_UUID` to the dedicated app UUID. Load the scoped API credential from the approved secret store. Run:
+Set `COOLIFY_PREVIEW_APP_UUID` to the dedicated app UUID. Load a scoped Coolify API credential with read, write, deploy and deployment log access from the approved secret store. Run:
 
 ```bash
 node scripts/deploy-preview.mjs candidate.json previous.json
 ```
 
-On the first deploy only, use `bootstrap` in place of `previous.json` after creating the app with the first approved digest and instant deploy disabled. Coolify stores the selected digest as `sha256-<hex>` in **Docker Image Tag or Hash**. Reserve the release window with other operators and serialize changes through readback.
+On the first deploy only, use `bootstrap` in place of `previous.json` after creating the app with the first approved digest and instant deploy disabled. Coolify stores the selected digest as `sha256-<hex>` in **Docker Image Tag or Hash**. Confirm that both JSON records match their successful exact-SHA Actions runs and independent reviews. A single operator must own the release window through readback. Coolify applies the configuration update and deployment request as separate operations.
 
 Capture the UTC timestamps, environment, app UUID and URL, source SHAs, GHCR digest, deployment ID, final result, and previous verified digest. Keep the Coolify log lines showing image reference and startup, the HTTP results and screenshot. Use a read-only Docker inspection when the provider log lacks image identity. The public `/release.json` reports embedded source identity. The registry and provider records identify the digest.
 

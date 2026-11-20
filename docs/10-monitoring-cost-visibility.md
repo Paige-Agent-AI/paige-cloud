@@ -4,7 +4,8 @@
 
 - Hostinger hPanel showed KVM 2 running Ubuntu **26.04 LTS** in Boston 2, with 2 vCPU, 8 GB RAM, 100 GB disk and 8 TB monthly bandwidth. The earlier handoff listed Ubuntu 24.04. hPanel showed 2% CPU and 9% memory over the previous 24 hours, with 6 GB disk in use. Coolify sampled 1.9% CPU, 0.98 GB memory and 6.6% disk.
 - Coolify Cloud 4.7.6 reported server `p2mh5nemklmkmb6rtnuw8swd` reachable and usable. Legacy F1, v3 and v4 were healthy, with Dockerfile healthchecks and the separate application-level health setting disabled. Three other legacy resources showed exited/unhealthy.
-- Hostinger payment history showed **$13.99 paid November 19** for KVM 2. Subscriptions showed **$24.49 renewal before tax**, auto-renewing December 19. The prior Coolify receipt reports **$5/month**, pending current invoice readback. hPanel showed a weekly backup schedule and zero snapshots/backups during inspection.
+- Hostinger payment history showed **$13.99 paid November 19** for KVM 2. Subscriptions showed **$24.49 renewal before tax**, auto-renewing December 19. The Coolify billing portal showed **$5/month**, with a $5 invoice paid November 19 and the next bill December 19. hPanel showed a weekly backup schedule and zero snapshots/backups during inspection.
+- On owner authorization, the Coolify team changed to the included hosted email provider. Deployment failure, server disk usage and unreachable server email events were already selected. Coolify reported one test email sent to the team owner. The provider result and inbox delivery are separate checks.
 
 | Legacy app | Deployment ID | Readback |
 |---|---|---|
@@ -20,4 +21,4 @@ Coolify reported `HEAD` for the legacy deployment records. The [digest release r
 - Inspect Coolify application status and deployment logs, then probe `/healthz`, `/version.json` and `/release.json` over HTTPS. Use application logs for startup and requests.
 - Verify the existing alert destinations for deployment failures, stopped containers, server reachability and disk usage. Record delivery after a controlled failure or notification test. Platform capability and configuration alone do not prove delivery.
 - Keep the private Cloud repo, both GHCR images, release records and the nonsecret Coolify app settings. The static preview has no data volumes. Restore requires the saved configuration, registry access and TLS on a working host. Retrieve credentials from the approved secret store.
-- Check GitHub usage and the spending stop before dispatch. One VPS hosts all previews. A host outage can affect each of them and there is no second host for failover.
+- GitHub organization billing showed zero-dollar enforced overage budgets for Actions and Packages. One VPS hosts all previews. A host outage can affect each of them and there is no second host for failover.

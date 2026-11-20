@@ -3,5 +3,6 @@
 !upstream.commit
 !docker/
 !docker/nginx.conf
+!docker/preview-app.tsx
 !scripts/
 !scripts/prepare-preview.mjs

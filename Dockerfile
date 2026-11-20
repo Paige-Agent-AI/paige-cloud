@@ -12,9 +12,10 @@ RUN set -eu; upstream="$(cat /tmp/upstream.commit)"; \
 ARG CLOUD_COMMIT
 ARG UPSTREAM_COMMIT
 COPY scripts/prepare-preview.mjs /tmp/prepare-preview.mjs
+COPY docker/preview-app.tsx /src/src/App.tsx
 RUN test "$UPSTREAM_COMMIT" = "$(cat /tmp/upstream.commit)" \
     && node /tmp/prepare-preview.mjs prepare "$UPSTREAM_COMMIT" "$CLOUD_COMMIT" \
-    && npm run build \
+    && NODE_OPTIONS=--max-old-space-size=4096 npm run build \
     && node /tmp/prepare-preview.mjs verify "$UPSTREAM_COMMIT" "$CLOUD_COMMIT"
 
 FROM nginx:1.28-alpine@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236
