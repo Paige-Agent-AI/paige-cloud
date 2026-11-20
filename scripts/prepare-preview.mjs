@@ -51,6 +51,11 @@ function prepare() {
     /createClient<Database>\(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, \{/g,
     "createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {\n" +
       '  global: { fetch: async () => { throw new Error("PAIGE Cloud preview has no backend access."); } },'));
+
+  const index = readFileSync("index.html", "utf8");
+  writeFileSync("index.html", replaceOnce(index,
+    /<!-- Privacy-friendly analytics by Plausible\.[\s\S]*?<\/script>\s*<script>\s*window\.plausible[\s\S]*?<\/script>/g,
+    ""));
 }
 
 function verify() {

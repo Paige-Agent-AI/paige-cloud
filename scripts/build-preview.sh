@@ -35,3 +35,8 @@ done
 [[ "$health" == healthy ]]
 address="$(docker port "$container" 8080/tcp)"
 node scripts/verify-preview.mjs "http://$address" "$cloud" "$frontend"
+
+home="$(curl --fail --silent --show-error "http://$address/")"
+denial="$(curl --silent --show-error "http://$address/auth")"
+[[ "$home" != *"https://plausible.io/"* ]]
+[[ "$denial" == "$home" ]]
