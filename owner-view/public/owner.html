@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Preview deployments · PAIGE Cloud</title>
+<link rel="stylesheet" href="/assets/owner.css">
+<script src="/assets/owner.js" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to deployment view</a>
+<header><div class="wrap">
+  <span class="brand"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" aria-hidden="true"><path d="M5 18.5v-13h7.25a4.25 4.25 0 0 1 0 8.5H9.5m-.25 4.5H19" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>PAIGE Cloud</span>
+  <form action="/sign-out" method="post" class="sign-out-form"><button class="sign-out" type="submit">Sign out</button></form>
+</div></header>
+<main class="wrap" id="main">
+  <div class="page-head">
+    <div><h1>Preview deployments</h1><p class="muted">PAIGE Cloud Preview <span aria-hidden="true"> / </span> <code>f2-preview</code></p></div>
+    <div class="page-actions">
+      <a href="https://izwrky18u9ixdhstnulxpjs5.179.66.154.248.sslip.io/" target="_blank" rel="noreferrer">Open preview<span class="sr"> (new tab)</span></a>
+      <button class="primary" id="refresh" type="button">Refresh status</button>
+    </div>
+  </div>
+  <div id="announcement" class="sr" role="status" aria-live="polite" aria-atomic="true"></div>
+  <noscript><p class="notice warn">Enable JavaScript to view deployment status.</p></noscript>
+  <div id="deployment-view" hidden>
+    <div class="notice-list" id="notices" hidden></div>
+    <div class="releases">
+      <section class="release" aria-labelledby="current-title">
+        <div class="release-head"><h2 id="current-title">Current release</h2><span class="status" id="health">Checking</span></div>
+        <p class="release-name" id="release-name">Checking</p>
+        <p class="release-context muted" id="readback"></p>
+        <dl id="current-identifiers" hidden>
+          <div><dt>Cloud commit</dt><dd><code id="commit-current"></code></dd></div>
+          <div><dt>Frontend commit</dt><dd><code id="frontend-current"></code></dd></div>
+          <div><dt class="id-value">Image digest<button class="copy" type="button" data-copy="digest-current" aria-label="Copy current release image digest">Copy</button></dt><dd><code id="digest-current"></code></dd></div>
+        </dl>
+      </section>
+      <section class="release" aria-labelledby="rollback-title">
+        <div class="release-head"><h2 id="rollback-title">Rollback target</h2><span class="status" id="rollback-state">Checking</span></div>
+        <p class="release-name" id="rollback-name">Checking</p>
+        <p class="release-context muted" id="rollback-context"></p>
+        <dl id="rollback-identifiers" hidden>
+          <div><dt>Cloud commit</dt><dd><code id="commit-rollback"></code></dd></div>
+          <div><dt>Frontend commit</dt><dd><code id="frontend-rollback"></code></dd></div>
+          <div><dt class="id-value">Image digest<button class="copy" type="button" data-copy="digest-rollback" aria-label="Copy rollback target image digest">Copy</button></dt><dd><code id="digest-rollback"></code></dd></div>
+        </dl>
+        <a class="release-source" id="evidence" target="_blank" rel="noreferrer" href="https://linear.app/paigeagentai/issue/ANT-176/paige-cloud-f2-codex-successor-immutable-releases-cicd-and-real#comment-dbea82cc-9b5b-45da-81e2-1bbc3476555a" hidden>F2 rollback evidence<span class="sr"> (new tab)</span></a>
+      </section>
+    </div>
+    <section class="history" aria-labelledby="history-title">
+      <div class="history-head"><h2 id="history-title">Deployment history</h2><p class="small muted" id="history-source">Coolify · newest first</p></div>
+      <p class="notice" id="empty" hidden></p>
+      <div class="history-list" id="deployment-rows" hidden></div>
+    </section>
+  </div>
+</main>
+</body>
+</html>

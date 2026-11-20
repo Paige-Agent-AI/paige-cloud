@@ -1,0 +1,47 @@
+name: Publish PAIGE Cloud owner view
+
+on:
+  push:
+    tags: [ant-177-owner-view-*]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: cloud-owner-view-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'Paige-Agent-AI/paige-cloud-preview'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      IMAGE_REPO: ghcr.io/paige-agent-ai/paige-cloud-owner-view
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Test and build the tagged source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          docker build --target verify ./owner-view
+          image="$IMAGE_REPO:$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          docker build --label "org.opencontainers.image.revision=$GITHUB_SHA" --tag "$image" ./owner-view
+          echo "CANDIDATE=$image" >> "$GITHUB_ENV"
+      - name: Publish image and record immutable identity
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          trap 'docker logout ghcr.io >/dev/null' EXIT
+          docker push "$CANDIDATE"
+          digest="$(docker buildx imagetools inspect --format '{{json .Manifest.Digest}}' "$CANDIDATE" | tr -d '"')"
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          docker pull "$IMAGE_REPO@$digest"
+          [[ "$(docker image inspect --format '{{.Id}}' "$CANDIDATE")" == "$(docker image inspect --format '{{.Id}}' "$IMAGE_REPO@$digest")" ]]
+          jq -n --arg commit "$GITHUB_SHA" --arg tag "$CANDIDATE" --arg image "$IMAGE_REPO@$digest" \
+            '{commit:$commit,tag:$tag,image:$image}' | tee -a "$GITHUB_STEP_SUMMARY"

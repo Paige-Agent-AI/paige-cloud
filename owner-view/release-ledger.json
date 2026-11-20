@@ -1,0 +1,24 @@
+{
+  "releases": {
+    "A": {
+      "name": "Release A",
+      "cloudCommit": "e58c553f04b63f1d974b9e3e3fda85fa6d84f10e",
+      "frontendCommit": "89d72496470b28e39392d72746f2fbcd6eb4f519",
+      "imageDigest": "sha256:289dff26e7d870c42f5343119b7749e639e760d8f5ddc56a8c67c9c37566cfcf",
+      "run": "https://github.com/Paige-Agent-AI/paige-cloud-preview/actions/runs/44793590528"
+    },
+    "B": {
+      "name": "Release B",
+      "cloudCommit": "f714e87b8ff9809d321d3b9a1ac6cfb0db7f8a0e",
+      "frontendCommit": "89d72496470b28e39392d72746f2fbcd6eb4f519",
+      "imageDigest": "sha256:fba08fea4e3c4a7d04fb069a7e074fc7aab4c0c8facfd4bbb013d4d9f31a7fb1",
+      "run": "https://github.com/Paige-Agent-AI/paige-cloud-preview/actions/runs/44793908817"
+    }
+  },
+  "deployments": [
+    { "id": "mvzsk1oeqaeym6wrlghaeiqc", "release": "B", "event": "Roll-forward", "finishedAt": "2026-11-20T19:37:26Z" },
+    { "id": "khl3cgoehztcr7nxxl1f0fiz", "release": "A", "event": "Rollback", "finishedAt": "2026-11-20T19:36:35Z" },
+    { "id": "d7laso09uh5uubbvlns58t2e", "release": "B", "event": "Promotion", "finishedAt": "2026-11-20T19:35:40Z" },
+    { "id": "i9lmjvfxjxgy4f5jk3hhjhnl", "release": "A", "event": "Initial deploy", "finishedAt": "2026-11-20T19:32:54Z" }
+  ]
+}
