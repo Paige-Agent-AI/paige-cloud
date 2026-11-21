@@ -3,6 +3,9 @@ name: Publish PAIGE app for Coolify
 on:
   push:
     tags: [cloud-app-host-*]
+  repository_dispatch:
+    types: [paige-frontend-main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -14,7 +17,9 @@ concurrency:
 
 jobs:
   publish:
-    if: github.repository == 'Paige-Agent-AI/paige-cloud-preview'
+    if: >-
+      github.repository == 'Paige-Agent-AI/paige-cloud-preview' &&
+      (startsWith(github.ref, 'refs/tags/cloud-app-host-') || github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
@@ -24,10 +29,19 @@ jobs:
         with:
           persist-credentials: false
       - name: Build the full frontend and verify routes
+        env:
+          MERGED_COMMIT: ${{ github.event.client_payload.commit }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          frontend="$(cat app-host/frontend.commit)"
+          if [[ "$GITHUB_REF" == refs/tags/cloud-app-host-* ]]; then
+            frontend="$(cat app-host/frontend.commit)"
+          else
+            frontend="$(git ls-remote --exit-code https://github.com/Paige-Agent-AI/Paige-Agent-AI.git refs/heads/main | cut -f1)"
+            if [[ "$GITHUB_EVENT_NAME" == repository_dispatch ]]; then
+              [[ "$MERGED_COMMIT" =~ ^[a-f0-9]{40}$ && "$MERGED_COMMIT" == "$frontend" ]]
+            fi
+          fi
           [[ "$frontend" =~ ^[a-f0-9]{40}$ ]]
           image="$IMAGE_REPO:app-$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           docker build --platform linux/amd64 -f app-host/Dockerfile \
@@ -48,7 +62,7 @@ jobs:
           curl -fsSI "$base/embed.js" | grep -qi '^Cache-Control: public, max-age=300'
           test "$(curl -s -o /dev/null -w '%{http_code}' "$base/assets/missing.js")" = 404
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/auth")" = 405
-          echo "CANDIDATE=$image" >> "$GITHUB_ENV"
+          printf 'CANDIDATE=%s\nFRONTEND_COMMIT=%s\n' "$image" "$frontend" >> "$GITHUB_ENV"
       - name: Publish the verified image
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -65,6 +79,6 @@ jobs:
           docker tag "$CANDIDATE" "$IMAGE_REPO:$tag"
           docker push "$IMAGE_REPO:$tag"
           test "$(docker buildx imagetools inspect --format '{{json .Manifest.Digest}}' "$IMAGE_REPO:$tag" | tr -d '"')" = "$digest"
-          jq -n --arg cloud "$GITHUB_SHA" --arg frontend "$(cat app-host/frontend.commit)" \
+          jq -n --arg cloud "$GITHUB_SHA" --arg frontend "$FRONTEND_COMMIT" \
             --arg image "$IMAGE_REPO@$digest" --arg tag "$tag" \
             '{cloudCommit:$cloud,frontendCommit:$frontend,image:$image,coolifyTag:$tag}' | tee -a "$GITHUB_STEP_SUMMARY"
