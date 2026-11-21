@@ -50,9 +50,10 @@ async function readPassword(request) {
   return /^[A-Za-z0-9_-]{43}$/.test(password ?? "") ? password : null;
 }
 
-export function createOwnerServer({ origin, aliasOrigin, passwordHash, projectAccess: resolveRead, principalId = ownerId }) {
+export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
+  passwordHash, projectAccess: resolveRead, principalId = ownerId }) {
   const allowedOrigins = new Map();
-  for (const value of aliasOrigin ? [origin, aliasOrigin] : [origin]) {
+  for (const value of [origin, ...(aliasOrigin ? [aliasOrigin] : []), ...additionalOrigins]) {
     const url = new URL(value);
     if (url.protocol !== "https:" || url.origin !== value) throw new Error("Owner dashboard origins must be exact HTTPS origins.");
     allowedOrigins.set(url.host, url.origin);
@@ -183,6 +184,8 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
   const server = createOwnerServer({
     origin: process.env.OWNER_VIEW_ORIGIN,
     aliasOrigin: process.env.OWNER_VIEW_ALIAS_ORIGIN,
+    additionalOrigins: (process.env.OWNER_VIEW_ADDITIONAL_ORIGINS ?? "").split(",")
+      .map((value) => value.trim()).filter(Boolean),
     passwordHash: process.env.OWNER_VIEW_PASSWORD_SHA256,
     projectAccess: createPaigeProjectAccess(process.env.OWNER_VIEW_COOLIFY_TOKEN, store.hasProjectRead),
   });
