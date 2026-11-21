@@ -10,6 +10,8 @@ import "./pilot.css";
 // PAIGE_AUTH_THEME
 
 const signInPath = "/auth?mode=login";
+const directoryPath = "/operator/fleet/directory";
+const isProtected = () => ["/choose-account", directoryPath].includes(window.location.pathname);
 const root = document.getElementById("root")!;
 const authReady = root.dataset.authReady === "true";
 
@@ -31,7 +33,9 @@ function PasswordSignIn() {
         body: JSON.stringify({ email: email.trim(), password }),
       });
       if (reply.status === 204) {
-        window.location.replace("/choose-account");
+        const next = reply.headers.get("Location");
+        if (next === "/choose-account" || next === directoryPath) window.location.replace(next);
+        else setError("Paige did not return a workspace destination. Reload to continue.");
         return;
       }
       const errors: Record<number, string> = {
@@ -74,10 +78,11 @@ function PasswordSignIn() {
   );
 }
 
-type Workspace = { email: string; workspace: string; role: string };
+type MemberAccount = { email: string; workspace: string; role: string; scope?: never };
+type OperatorAccount = { email: string; scope: "operator"; workspaces: { name: string; status: string }[]; truncated: boolean };
 
 function ChooseAccount() {
-  const [account, setAccount] = useState<Workspace | null>(null);
+  const [account, setAccount] = useState<MemberAccount | OperatorAccount | null>(null);
   const [error, setError] = useState("");
   const [leaving, setLeaving] = useState(false);
 
@@ -117,9 +122,25 @@ function ChooseAccount() {
   return (
     <main className="min-h-dvh bg-background px-4 py-8 text-foreground sm:py-14" style={goldTheme}>
       <section className="mx-auto w-full max-w-xl rounded-3xl border border-border bg-card p-6 sm:p-9" aria-labelledby="account-picker-title">
-        {/* PAIGE_ACCOUNT_HEADER */}
+        {window.location.pathname === directoryPath ? (
+          <div>
+            <div className="mb-6 flex items-center gap-3"><PaigeCommandMark plated={false} className="h-10 w-10" /><span className="text-sm font-semibold">Paige Agent AI</span></div>
+            <h1 id="account-picker-title" className="text-3xl font-semibold tracking-tight">Workspace directory</h1>
+          </div>
+        ) : <>{/* PAIGE_ACCOUNT_HEADER */}</>}
         {account && <p className="mt-2 text-sm leading-6 text-muted-foreground">Signed in as <strong className="text-foreground">{account.email}</strong>.</p>}
-        {account && (
+        {account?.scope === "operator" && (
+          <div className="mt-6">
+            <p className="mb-3 text-sm text-muted-foreground">Platform access · Read-only</p>
+            {account.workspaces.length ? (
+              <ul aria-label="Workspaces" className="divide-y divide-border rounded-xl border border-border bg-muted/50">
+                {account.workspaces.map(({ name, status }, index) => <li key={index} className="flex justify-between gap-4 p-3"><strong>{name}</strong><span className="capitalize text-muted-foreground">{status.replaceAll("_", " ")}</span></li>)}
+              </ul>
+            ) : <p>No workspaces are visible to this account.</p>}
+            {account.truncated && <p className="mt-3 text-sm text-muted-foreground">Showing the first 20 workspaces.</p>}
+          </div>
+        )}
+        {account && account.scope !== "operator" && (
           <div className="mt-7 flex items-center gap-4 rounded-2xl border border-border bg-muted/50 p-4">
             <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-accent/10 text-accent"><Building2 aria-hidden className="h-5 w-5" /></span>
             <div><strong className="block text-base">{account.workspace}</strong><span className="text-xs capitalize text-muted-foreground">{account.role}</span></div>
@@ -135,9 +156,9 @@ function ChooseAccount() {
 
 // Revalidate protected content when a browser restores the page after sign-out.
 window.addEventListener("pageshow", (event) => {
-  if (event.persisted && window.location.pathname === "/choose-account") window.location.reload();
+  if (event.persisted && isProtected()) window.location.reload();
 });
 
 createRoot(root).render(
-  window.location.pathname === "/choose-account" ? <ChooseAccount /> : <PasswordSignIn />,
+  isProtected() ? <ChooseAccount /> : <PasswordSignIn />,
 );

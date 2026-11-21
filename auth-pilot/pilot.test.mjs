@@ -128,6 +128,57 @@ test("rejects invalid subject or absent session ID without allowing logout to re
   assert.equal(backend.signOut.mock.calls.length, 0);
 });
 
+test("the bound platform operator sees only the directory and loses access after local sign-out", async (t) => {
+  const operator = { id: evaluator.id, email: evaluator.email, mode: "operator" };
+  const backend = {
+    signIn: t.mock.fn(async () => ({ access_token: signedToken(), user: { id: operator.id }, expires_in: 3600 })),
+    account: t.mock.fn(async () => ({ email: operator.email, scope: "operator", workspaces: [{ name: "A workspace", status: "active" }] })),
+    signOut: t.mock.fn(async () => true),
+  };
+  const { call, unlock } = await listen(t, { evaluator: operator, backend });
+  const directory = "/operator/fleet/directory";
+  assert.equal((await call(directory)).status, 401);
+  const gate = cookieFrom(await unlock());
+  assert.equal((await call(directory, { cookie: gate })).headers.location, "/auth?mode=login");
+  assert.equal((await call("/api/sign-in", credentials(gate, "other@example.test"))).status, 401);
+  assert.equal(backend.signIn.mock.calls.length, 0);
+  const accepted = await call("/api/sign-in", credentials(gate));
+  assert.equal(accepted.status, 204);
+  assert.equal(accepted.headers.location, directory);
+  const cookie = gate + "; " + cookieFrom(accepted);
+  for (let load = 0; load < 2; load++) {
+    assert.equal((await call(directory, { cookie })).status, 200);
+    assert.equal(JSON.parse((await call("/api/account", { cookie })).body).scope, "operator");
+  }
+  for (const path of ["/choose-account", "/operator/settings", "/rest/v1/tenants", "/functions/v1/billing"]) {
+    assert.equal((await call(path, { cookie })).status, 404);
+  }
+  assert.equal((await call("/api/sign-out", { method: "POST", cookie })).status, 204);
+  assert.equal((await call(directory, { cookie })).headers.location, "/auth?mode=login");
+  assert.equal((await call("/api/account", { cookie })).status, 401);
+});
+
+test("operator directory checks the existing server role before reading only workspace names and status", async () => {
+  const calls = [];
+  let admin = false;
+  const operator = { id: evaluator.id, email: evaluator.email, mode: "operator" };
+  const backend = createSupabasePilot("sb_publishable_test", () => {}, async (target, options) => {
+    const url = new URL(target);
+    calls.push([options.method, url.pathname, url.search, options.headers.Authorization]);
+    if (url.pathname === "/auth/v1/user") return Response.json({ id: operator.id, email: operator.email });
+    if (url.pathname === "/rest/v1/rpc/is_platform_admin") return Response.json(admin);
+    if (url.pathname === "/rest/v1/tenants") return Response.json([{ name: "A workspace", status: "active", ignored: true }]);
+    throw new Error("Unexpected outbound request");
+  });
+  assert.equal(await backend.account("operator-token", operator), null);
+  assert.equal(calls.length, 2);
+  admin = true;
+  assert.deepEqual(await backend.account("operator-token", operator), {
+    email: operator.email, scope: "operator", truncated: false, workspaces: [{ name: "A workspace", status: "active" }],
+  });
+  assert.deepEqual(calls.at(-1), ["GET", "/rest/v1/tenants", "?select=name,status&archived_at=is.null&order=name.asc,id.asc&limit=21", "Bearer operator-token"]);
+});
+
 test("Supabase adapter forwards the evaluator token to the fixed Auth and RLS read endpoints only", async () => {
   const calls = [];
   const audit = [];

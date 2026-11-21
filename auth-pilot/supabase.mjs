@@ -35,6 +35,17 @@ export function createSupabasePilot(publishableKey, audit, fetcher = fetch) {
       const user = await read("GET", "/auth/v1/user", token);
       if (user.id !== evaluator.id || user.email?.toLowerCase() !== evaluator.email) return null;
 
+      if (evaluator.mode === "operator") {
+        if (await read("POST", "/rest/v1/rpc/is_platform_admin", token, {}) !== true) return null;
+        // The existing SELECT policies decide which rows the signed-in operator can read.
+        const directory = await read("GET", "/rest/v1/tenants?select=name,status&archived_at=is.null&order=name.asc,id.asc&limit=21", token);
+        if (!Array.isArray(directory) || directory.some((row) => typeof row.name !== "string" || typeof row.status !== "string")) return null;
+        return {
+          email: user.email, scope: "operator", truncated: directory.length > 20,
+          workspaces: directory.slice(0, 20).map(({ name, status }) => ({ name, status })),
+        };
+      }
+
       const [memberships, admin, owner] = await Promise.all([
         read("GET", `/rest/v1/tenant_members?select=tenant_id,role&user_id=eq.${evaluator.id}&status=eq.active&limit=2`, token),
         read("POST", "/rest/v1/rpc/is_platform_admin", token, {}),

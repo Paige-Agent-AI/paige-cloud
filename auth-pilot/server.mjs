@@ -11,6 +11,7 @@ const sessionDuration = 15 * 60;
 const idPattern = /^[A-Za-z0-9_-]{43}$/;
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const authPath = "/auth?mode=login";
+const directoryPath = "/operator/fleet/directory";
 const jsonType = "application/json; charset=utf-8";
 const htmlType = "text/html; charset=utf-8";
 const textType = "text/plain; charset=utf-8";
@@ -75,9 +76,12 @@ export function createPilotServer({ origin, keyHash, evaluator, backend, index, 
   const url = new URL(origin);
   if (url.protocol !== "https:" || url.origin !== origin) throw new Error("Pilot requires an exact HTTPS origin");
   if (!/^[a-f0-9]{64}$/.test(keyHash ?? "")) throw new Error("Pilot access key hash required");
-  if (evaluator && (!uuid.test(evaluator.id) || !uuid.test(evaluator.tenant) ||
-      !/^[^\s@]+@[^\s@]+$/.test(evaluator.email) || !["member", "client", "viewer"].includes(evaluator.role) || !backend)) {
-    throw new Error("Pilot requires one ordinary evaluator and workspace");
+  const operator = evaluator?.mode === "operator";
+  const protectedPath = operator ? directoryPath : "/choose-account";
+  if (evaluator && (!uuid.test(evaluator.id) || !/^[^\s@]+@[^\s@]+$/.test(evaluator.email) || !backend ||
+      (operator ? evaluator.tenant || evaluator.role :
+        (evaluator.mode != null || !uuid.test(evaluator.tenant) || !["member", "client", "viewer"].includes(evaluator.role))))) {
+    throw new Error("Pilot requires one bound platform operator or one ordinary evaluator and workspace");
   }
 
   const expectedHash = Buffer.from(keyHash, "hex");
@@ -114,17 +118,17 @@ export function createPilotServer({ origin, keyHash, evaluator, backend, index, 
     }
 
     if (!hasGate) {
-      if (method === "GET" && ["/", "/auth", authPath, "/choose-account"].includes(path)) {
+      if (method === "GET" && ["/", "/auth", authPath, protectedPath].includes(path)) {
         return send(response, 401, htmlType, gate);
       }
       return send(response, 401);
     }
     const current = session?.gate === gateId && session?.id === jar.get(sessionCookie) && session?.expiresAt > now() ? session : null;
 
-    if (method === "GET" && path === "/") return redirect(response, current ? "/choose-account" : authPath);
-    if (method === "GET" && ["/auth", authPath, "/choose-account"].includes(path)) {
-      if (path === "/choose-account" && !current) return redirect(response, authPath);
-      if (path !== "/choose-account" && current) return redirect(response, "/choose-account");
+    if (method === "GET" && path === "/") return redirect(response, current ? protectedPath : authPath);
+    if (method === "GET" && ["/auth", authPath, protectedPath].includes(path)) {
+      if (path === protectedPath && !current) return redirect(response, authPath);
+      if (path !== protectedPath && current) return redirect(response, protectedPath);
       return send(response, 200, htmlType, appHtml);
     }
     if (method === "GET" && path === "/release.json") return send(response, 200, jsonType, release);
@@ -156,7 +160,7 @@ export function createPilotServer({ origin, keyHash, evaluator, backend, index, 
 
         const id = randomBytes(32).toString("base64url");
         session = { id, gate: gateId, token, expiresAt };
-        return send(response, 204, textType, "", { "Set-Cookie": cookie(sessionCookie, id, lifetime) });
+        return send(response, 204, textType, "", { "Set-Cookie": cookie(sessionCookie, id, lifetime), Location: protectedPath });
       } finally {
         try {
           if (!session && token) await backend.signOut(token);
@@ -206,6 +210,7 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
   }));
   const evaluator = env.PAIGE_PILOT_AUTH_READY === "true" ? {
     id: env.PAIGE_PILOT_USER_ID, email: env.PAIGE_PILOT_USER_EMAIL?.toLowerCase(),
+    mode: env.PAIGE_PILOT_ACCESS_MODE,
     tenant: env.PAIGE_PILOT_TENANT_ID, role: env.PAIGE_PILOT_TENANT_ROLE,
   } : null;
   createPilotServer({
