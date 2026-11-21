@@ -26,7 +26,7 @@ document.addEventListener("visibilitychange", () => {
 });
 window.addEventListener("pagehide", hideProjects);
 window.addEventListener("pageshow", (event) => {
-  if (event.persisted) location.replace("/projects");
+  if (event.persisted) location.replace(workspace.dataset.projectHome);
 });
 
 if (Number.isFinite(remaining) && remaining > 0) {

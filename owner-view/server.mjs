@@ -12,6 +12,9 @@ const sessionName = "__Host-paige_owner";
 const sessionLifetime = 30 * 60;
 const cookieFields = "; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=";
 const maxBodyBytes = 4096;
+const accountNumberPattern = /^[1-9][0-9]{11}$/;
+const accountRoutePattern = /^\/accounts\/([1-9][0-9]{11})(\/[^\r\n]*)?$/;
+const dashboardPages = new Set(["/", "/overview", "/deployments"]);
 const headers = {
   "Cache-Control": "no-store, max-age=0",
   "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
@@ -82,7 +85,7 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
   const expectedHash = passwordHash ? Buffer.from(passwordHash, "hex") : null;
   const signInPage = readAsset("login.html").toString("utf8");
   const noProjects = readAsset("no-projects.html").toString("utf8");
-  const owner = readAsset("owner.html");
+  const owner = readAsset("owner.html").toString("utf8");
   const css = readAsset("owner.css");
   const javascript = readAsset("owner.js");
   const projectSession = readAsset("project-session.js");
@@ -121,6 +124,10 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
   }
 
   function startSession(response, principalId, requestOrigin, previousId) {
+    const hasAccountNumbers = catalog && typeof accounts.ensureNumberFor === "function";
+    const number = hasAccountNumbers ? accounts.ensureNumberFor(principalId) : undefined;
+    if (hasAccountNumbers && !accountNumberPattern.test(number ?? "")) throw new Error("Missing Cloud account number.");
+    const accountPath = number ? "/accounts/" + number : "";
     const now = Date.now();
     if (previousId) sessions.delete(previousId);
     const samePrincipal = [];
@@ -130,9 +137,9 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
     }
     if (samePrincipal.length >= 6) sessions.delete(samePrincipal[0]);
     const id = randomBytes(32).toString("base64url");
-    sessions.set(id, { principalId, origin: requestOrigin, expires: now + sessionLifetime * 1000 });
+    sessions.set(id, { principalId, accountPath, number, origin: requestOrigin, expires: now + sessionLifetime * 1000 });
     const location = resolveRead(principalId, firstProject) ? "/overview" : catalog ? "/projects" : "/";
-    send(response, 303, text, "", { Location: location, "Set-Cookie": sessionName + "=" + id + cookieFields + sessionLifetime });
+    send(response, 303, text, "", { Location: accountPath + location, "Set-Cookie": sessionName + "=" + id + cookieFields + sessionLifetime });
   }
 
   function getStatus(reader) {
@@ -148,7 +155,8 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
   }
 
   async function handle(request, response) {
-    const { method, url: path } = request;
+    const { method } = request;
+    let path = request.url;
     if (path === "/healthz" && method === "GET") {
       send(response, 200, text, "ok");
       return;
@@ -171,7 +179,35 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
     const session = sessions.get(id);
     const authorized = session?.origin === requestOrigin && session.expires > now;
     if (session && session.expires <= now) sessions.delete(id);
+    const accountPath = authorized ? session.accountPath : "";
+    const numbered = path === "/accounts" || path.startsWith("/accounts/");
+    if (numbered) {
+      const match = accountRoutePattern.exec(path);
+      if (!match || match[0] !== path || (authorized && match[1] !== session.number)) {
+        send(response, 404, text, "Not found");
+        return;
+      }
+      path = match[2] ?? "/";
+      if (!(dashboardPages.has(path) || matchProjectPage(path) || parseProjectStatusPath(path))) {
+        send(response, 404, text, "Not found");
+        return;
+      }
+      if (!authorized) {
+        const signIn = method === "GET" && !parseProjectStatusPath(path);
+        send(response, signIn ? 303 : 401, text, "Sign in required", signIn ? { Location: "/sign-in" } : {});
+        return;
+      }
+    }
     const projectRoute = catalog && matchProjectPage(path);
+    if (accountPath && !numbered && (dashboardPages.has(path) || projectRoute)) {
+      if (method !== "GET") {
+        send(response, 404, text, "Not found");
+        return;
+      }
+      const target = path === "/" ? (resolveRead(session.principalId, firstProject) ? "/overview" : "/projects") : path;
+      send(response, 303, text, "", { Location: accountPath + target });
+      return;
+    }
     if (projectRoute) {
       if (!authorized) {
         send(response, method === "GET" ? 303 : 401, text, "Sign in required", method === "GET" ? { Location: "/sign-in" } : {});
@@ -188,7 +224,7 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
       }
       const result = projectPage({ route: projectRoute, form, method, principal: session.principalId,
         origin, catalog, accounts, showDeployments: !!resolveRead(session.principalId, firstProject),
-        remaining: Math.max(0, session.expires - Date.now()) });
+        remaining: Math.max(0, session.expires - Date.now()), accountPath });
       send(response, result.status, result.html ? html : text,
         result.html ?? (result.status === 404 ? "Not found" : ""), result.location ? { Location: result.location } : {});
       return;
@@ -261,13 +297,13 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
       return;
     }
     const scope = parseProjectStatusPath(path);
-    if (["/", "/overview", "/deployments"].includes(path)) {
+    if (dashboardPages.has(path)) {
       if (authorized && catalog && !resolveRead(session.principalId, firstProject)) {
-        send(response, 303, text, "", { Location: "/projects" });
+        send(response, 303, text, "", { Location: accountPath + "/projects" });
         return;
       }
       const page = !authorized ? authPage("/session", 200)
-        : resolveRead(session.principalId, firstProject) ? owner
+        : resolveRead(session.principalId, firstProject) ? owner.replaceAll("{{ACCOUNT_PATH}}", accountPath)
           : noProjects.replace("{{ACCOUNT_ID}}", session.principalId);
       send(response, 200, html, page);
     } else if (path === "/sign-in" || path === "/session" || path === "/sign-in?setup=complete" || path === "/sign-in?signup=complete") {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { verifiedProductionReceipts } from "./production-receipts.mjs";
 import { readOwnerStatus, readPreviewStatus, readProductionStatus } from "./status.mjs";
 
 const ledger = JSON.parse(readFileSync(new URL("./release-ledger.json", import.meta.url)));
@@ -173,4 +174,31 @@ test("rejects partial responses and non-string source revisions from production 
   assert.equal(production.identity, "unavailable");
   assert.equal(production.frontendCommit, null);
   assert.deepEqual(production.domains.map(({ frontendCommit }) => frontendCommit), [null, null, sampleManifest.frontendCommit]);
+});
+test("shows verified receipt evidence separately from live health and fails closed on invalid evidence", async () => {
+  const ledger = JSON.parse(readFileSync(new URL("./production-receipts.json", import.meta.url), "utf8"));
+  const [row] = ledger;
+  const commit = row.candidate.commit;
+  const status = await readProductionStatus(async (url) => {
+    const { hostname, pathname } = new URL(url);
+    if (pathname === "/healthz") return new Response(hostname === "app.paigeagent.ai" ? "failed" : "ok");
+    return Response.json({ frontendCommit: commit, cloudCommit: commit });
+  });
+  assert.equal(status.state, "unhealthy");
+  assert.equal(status.receiptCommit, commit);
+  assert.equal(status.receipts[0].image, row.candidate.image);
+  assert.equal(status.receipts[0].rollback.image, row.previous.image);
+  const history = await readProductionStatus(async (url) => new URL(url).pathname === "/healthz"
+    ? new Response("ok") : Response.json(sampleManifest));
+  assert.equal(history.receiptCommit, null);
+  assert.equal(history.receipts[0].commit, commit);
+  const hostingMismatch = await readProductionStatus(async (url) => new URL(url).pathname === "/healthz"
+    ? new Response("ok") : Response.json({ frontendCommit: commit, cloudCommit: sampleManifest.cloudCommit }));
+  assert.equal(hostingMismatch.frontendCommit, commit);
+  assert.equal(hostingMismatch.receiptCommit, null);
+  assert.deepEqual(verifiedProductionReceipts([row, row]), []);
+  assert.deepEqual(verifiedProductionReceipts([{ ...row, result: "failed" }]), []);
+  assert.deepEqual(verifiedProductionReceipts([{ ...row, candidate: { commit, image: "https://unrelated.test/image" } }]), []);
+  assert.deepEqual(verifiedProductionReceipts([{ ...row, domains: [row.domains[0], row.domains[0], row.domains[0]] }]), []);
+  assert.doesNotMatch(JSON.stringify(verifiedProductionReceipts([{ ...row, privateData: "omit this" }])), /omit this/);
 });

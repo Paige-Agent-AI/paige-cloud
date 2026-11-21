@@ -1,0 +1,26 @@
+[
+  {
+    "artifactId": "14716436192",
+    "schema": 1,
+    "repository": "Paige-Agent-AI/Paige-Agent-AI",
+    "environment": "paige-coolify-production",
+    "appId": "qucl8euvl1vjcg1z3nryqadb",
+    "domains": ["https://app.paigeagent.ai", "https://paigeagent.ai", "https://www.paigeagent.ai"],
+    "candidate": {
+      "commit": "a60b96a13464d627da331a7e3923786eb7aa6540",
+      "image": "ghcr.io/paige-agent-ai/paige-agent-ai-web@sha256:fe0eea47089650247863f44595c3174316e5491dbdb61c74df897dfe8f61b37d"
+    },
+    "approval": { "ciRun": "44923002343", "pullRequest": 3367 },
+    "workflow": { "runId": "44926039509", "attempt": "1" },
+    "previous": {
+      "frontendCommit": "442dbb9ee280cb5e19fc0293e04947eefdea828e",
+      "deployment": "eg7suvweem0o7ggcncrf3u1b",
+      "image": "ghcr.io/paige-agent-ai/paige-agent-ai-web@sha256:4898f8b98178be2d18791b89522187df8ada575df23ebce10cb3880716cf498b"
+    },
+    "deployment": "bi80jakeg1vynaxj7lt9j4r1",
+    "providerStatus": "finished",
+    "stage": "live-verification",
+    "result": "verified",
+    "finishedAt": "2026-11-21T16:53:11.336Z"
+  }
+]
