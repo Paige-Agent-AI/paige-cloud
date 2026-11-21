@@ -21,6 +21,109 @@ const readFromGrants = (grants) => (principalId, organizationId, projectId) =>
 
 const ownerEmail = "owner@example.test";
 
+test("provisions two isolated customer workspaces through an invitation at signup", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "paige-customer-workspaces-"));
+  const membershipPath = join(dir, "memberships.sqlite");
+  const accountsPath = join(dir, "accounts.sqlite");
+  initializeMembershipStore(membershipPath);
+  initializeAccounts(accountsPath);
+  const catalog = openProjectCatalog(membershipPath);
+  const accounts = openAccounts(accountsPath, membershipPath);
+  t.after(() => {
+    accounts.close();
+    catalog.close();
+    unlinkSync(accountsPath);
+    unlinkSync(membershipPath);
+    rmdirSync(dir);
+  });
+  const password = "fixture customer workspace password";
+  await accounts.create(ownerEmail, password, { owner: true });
+  const access = createProjectAccess([{ ...firstProject, readStatus: async () => ({}), environments: {} }], catalog.hasProjectRead);
+  const { request } = await startServer(t, access, ownerId, accounts, catalog);
+  const post = (path, fields, cookie) => request(path, {
+    method: "POST", headers: { origin, cookie: cookie ?? "", "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(fields).toString(),
+  });
+  async function signIn(email) {
+    const response = await post("/session", { email, password });
+    assert.equal(response.status, 303);
+    return { cookie: response.headers.get("set-cookie").split(";")[0], path: response.headers.get("location") };
+  }
+  const owner = await signIn(ownerEmail);
+  const ownerProjects = owner.path.replace(/\/overview$/, "/projects");
+  assert.match(await (await request(ownerProjects, { headers: { cookie: owner.cookie } })).text(), /Invite a customer/);
+  async function invite(email) {
+    const response = await post(ownerProjects, { action: "invite-customer", email, name: "First & best project" }, owner.cookie);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("cache-control"), /no-store/);
+    const code = (await response.text()).match(/<code class="account-id">([A-Za-z0-9_-]{43})<\/code>/)?.[1];
+    assert.ok(code);
+    return code;
+  }
+  const anna = "anna@example.test";
+  const ben = "ben@example.test";
+  const overlappingCode = accounts.issueInvitation(anna);
+  const annaCode = await invite(anna);
+  const benOldCode = await invite(ben);
+  const benCode = await invite(ben);
+  const cancelled = await invite("cancelled@example.test");
+  assert.equal((await post(ownerProjects, { action: "cancel-customer", email: "cancelled@example.test" }, owner.cookie)).status, 303);
+  assert.equal(catalog.list(ownerId).length, 1);
+  for (const [email, invite] of [[ben, annaCode], [ben, benOldCode], ["cancelled@example.test", cancelled]]) {
+    assert.equal((await post("/signup", { email, password, invite })).status, 400);
+  }
+  assert.equal(await accounts.create(anna, password, { code: overlappingCode }), false);
+  const registered = await Promise.all([1, 2].map(() => post("/signup", { email: anna, password, invite: annaCode })));
+  const [accepted, replay] = registered.sort((a, b) => a.status - b.status);
+  assert.equal(accepted.status, 303);
+  assert.ok([400, 409, 429].includes(replay.status));
+  assert.equal(accepted.headers.get("location"), "/sign-in?signup=workspace");
+  assert.equal((await post("/signup", { email: anna, password, invite: annaCode })).status, 400);
+
+  const faultyStore = new DatabaseSync(membershipPath);
+  try {
+    faultyStore.exec(`CREATE TRIGGER deny_customer_grant BEFORE INSERT ON project_memberships
+      WHEN NEW.organization_id LIKE 'org-%' BEGIN SELECT RAISE(ABORT, 'fixture grant failure'); END`);
+    await assert.rejects(accounts.create(ben, password, { code: benCode, allowCustomerSignup: true }), /fixture grant failure/);
+    assert.equal(await accounts.verify(ben, password), undefined);
+    assert.equal(catalog.list(ownerId).length, 2);
+    assert.equal(catalog.hasCustomerInvitation(ben, benCode), true);
+    faultyStore.exec("DROP TRIGGER deny_customer_grant");
+  } finally {
+    faultyStore.close();
+  }
+  assert.equal((await post("/signup", { email: ben, password, invite: benCode })).status, 303);
+  assert.equal(catalog.list(ownerId).length, 3);
+
+  const a = await signIn(anna);
+  const b = await signIn(ben);
+  const projectPath = /^(\/accounts\/[1-9]\d{11})(\/projects\/(org-[a-f0-9]{32})\/(prj-[a-f0-9]{32}))$/;
+  const aParts = projectPath.exec(a.path);
+  const bParts = projectPath.exec(b.path);
+  assert.ok(aParts && bParts);
+  assert.notEqual(aParts[3], bParts[3]);
+  assert.notEqual(aParts[4], bParts[4]);
+  assert.match(await (await request(a.path, { headers: { cookie: a.cookie } })).text(), /First &amp; best project/);
+  assert.equal((await request(aParts[1] + bParts[2], { headers: { cookie: a.cookie } })).status, 404);
+  assert.equal((await request(a.path, { headers: { cookie: b.cookie } })).status, 404);
+  assert.equal((await post(aParts[1] + "/projects", { action: "invite-customer", email: "third@example.test", name: "Other" }, a.cookie)).status, 404);
+  assert.equal((await post(ownerProjects, { action: "invite-customer", email: anna, name: "Another workspace" }, owner.cookie)).status, 409);
+  assert.equal((await request(aParts[1] + "/api/status", { headers: { cookie: a.cookie } })).status, 404);
+
+  const reopenedCatalog = openProjectCatalog(membershipPath);
+  const reopenedAccounts = openAccounts(accountsPath, membershipPath);
+  try {
+    const principal = await reopenedAccounts.verify(anna, password);
+    assert.equal(reopenedCatalog.customerHome(principal).organizationId, aParts[3]);
+    assert.equal(reopenedCatalog.list(principal).length, 1);
+    assert.equal(reopenedAccounts.numberFor(principal), aParts[1].split("/").at(-1));
+    assert.equal(reopenedCatalog.hasCustomerInvitation(anna, annaCode), false);
+  } finally {
+    reopenedAccounts.close();
+    reopenedCatalog.close();
+  }
+});
+
 test("backfills account numbers for existing credential records and preserves them on reopen", async () => {
   const dir = mkdtempSync(join(tmpdir(), "paige-account-numbers-"));
   const path = join(dir, "accounts.sqlite");

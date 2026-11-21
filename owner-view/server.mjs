@@ -138,7 +138,9 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
     if (samePrincipal.length >= 6) sessions.delete(samePrincipal[0]);
     const id = randomBytes(32).toString("base64url");
     sessions.set(id, { principalId, accountPath, number, origin: requestOrigin, expires: now + sessionLifetime * 1000 });
-    const location = resolveRead(principalId, firstProject) ? "/overview" : catalog ? "/projects" : "/";
+    const home = catalog?.customerHome(principalId);
+    const location = home ? `/projects/${home.organizationId}/${home.projectId}`
+      : resolveRead(principalId, firstProject) ? "/overview" : catalog ? "/projects" : "/";
     send(response, 303, text, "", { Location: accountPath + location, "Set-Cookie": sessionName + "=" + id + cookieFields + sessionLifetime });
   }
 
@@ -272,15 +274,19 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
         send(response, 400, html, authPage(path, 400, "Choose a password that differs from your owner key."));
         return;
       }
-      const projectSignup = !signIn && !setup && validCode(code) && catalog?.hasInvitation(email, code);
-      if (!signIn && !setup && (!validCode(code) || (!projectSignup && !accounts.hasInvitation(email, code)))) {
+      const signup = !signIn && !setup && validCode(code);
+      const customerSignup = signup && catalog?.hasCustomerInvitation(email, code);
+      const projectSignup = signup && !customerSignup && catalog?.hasInvitation(email, code);
+      if (!signIn && !setup && (!signup || (!customerSignup && !projectSignup && !accounts.hasInvitation(email, code)))) {
         send(response, 400, html, authPage(path, 400, "Check your invitation code and email address."));
         return;
       }
       const limit = signIn ? (accounts.isOwnerEmail(email) ? limitOwnerSignIn : limitSignIn)
         : setup ? limitSetup : limitSignUp;
       const result = await limit(setup ? "owner" : email, () =>
-        signIn ? accounts.verify(email, password) : accounts.create(email, password, { owner: setup, code, allowProjectSignup: projectSignup }));
+        signIn ? accounts.verify(email, password) : accounts.create(email, password, {
+          owner: setup, code, allowProjectSignup: projectSignup, allowCustomerSignup: customerSignup,
+        }));
       if (result === null) {
         send(response, 429, html, authPage(path, 429, "Try again in a minute."), { "Retry-After": "60" });
       } else if (signIn && result) {
@@ -292,7 +298,8 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
       } else if (!result) {
         send(response, 409, html, authPage(path, 409, "This invitation could not be used. Ask your project owner for help."));
       } else {
-        send(response, 303, text, "", { Location: setup ? "/sign-in?setup=complete" : "/sign-in?signup=complete" });
+        const location = setup ? "/sign-in?setup=complete" : customerSignup ? "/sign-in?signup=workspace" : "/sign-in?signup=complete";
+        send(response, 303, text, "", { Location: location });
       }
       return;
     }
@@ -306,10 +313,12 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
         : resolveRead(session.principalId, firstProject) ? owner.replaceAll("{{ACCOUNT_PATH}}", accountPath)
           : noProjects.replace("{{ACCOUNT_ID}}", session.principalId);
       send(response, 200, html, page);
-    } else if (path === "/sign-in" || path === "/session" || path === "/sign-in?setup=complete" || path === "/sign-in?signup=complete") {
-      const message = path === "/sign-in?setup=complete" ? "Owner setup complete. Sign in with your email and password."
-        : path === "/sign-in?signup=complete" ? "Sign in with the email and password you just set. For project invitations, choose Accept an invitation in Projects."
-          : "";
+    } else if (["/sign-in", "/session", "/sign-in?setup=complete", "/sign-in?signup=complete", "/sign-in?signup=workspace"].includes(path)) {
+      const message = {
+        "/sign-in?setup=complete": "Owner setup complete. Sign in with your email and password.",
+        "/sign-in?signup=complete": "Sign in with the email and password you just set. For project invitations, choose Accept an invitation in Projects.",
+        "/sign-in?signup=workspace": "Sign in with the email and password you just set to open your new workspace.",
+      }[path] ?? "";
       send(response, 200, html, authPage("/session", 200, message));
     } else if (path === "/signup" || path === "/setup") {
       send(response, 200, html, authPage(path, 200));

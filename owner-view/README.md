@@ -18,6 +18,8 @@ After owner setup, approved evaluators can create an account at `/signup`. The o
 
 ## Projects and members
 
+For a new customer, open **Projects → Invite a customer**, enter their email and first project name, and send the prepared email draft. The customer signs up with the email and the single-use, 48-hour invitation code. Signup creates their account, account number, organization, first project, and project grant in one transaction. When they sign in, they land on their new project. The owner can reissue or cancel a pending invitation in Projects. Use the project's **Members** page to invite a teammate to an existing project. When both invitation types are pending for a new email, use the customer invitation for signup and accept the teammate invitation after signing in.
+
 Open **Projects** to create a project, edit its display name, or archive and restore it. Organization and project IDs remain stable. PAIGE Agent AI has a fixed display name and stays connected to its reviewed deployment readers. New projects are private records until connected to their own deployment source.
 
 Each sign-in receives a stable, randomly assigned 12-digit account number from the private account database. The account prefix `/accounts/{number}` is followed by `/overview`, `/deployments`, `/projects`, `/projects/{organizationId}/{projectId}`, the owner-only `/projects/{organizationId}/{projectId}/members`, or `/join`. Short page links redirect to the signed-in account. Each user still needs a project grant to open that project, even if someone shares a link. Account numbers are identifiers only. Include the existing accounts database in backup and restore to preserve its number mappings.
@@ -26,7 +28,7 @@ In a project, the Cloud owner can prepare an invitation for one email. **Open em
 
 The console extends the existing membership file on startup in a SQLite transaction. Existing grants are preserved. Archived projects retain their IDs and grants for restoration, while active member access and pending invitations are closed. Keep both database files on the **same** private local volume in rollback-journal mode.
 
-For recovery, keep the console offline while reconciling membership changes and archived projects since the snapshot. Invalidate all project invitations restored from the snapshot with `DELETE FROM project_invitations` using a trusted SQLite client, then reissue the current invitations after verification. The post-enrollment PR #7 image can read the original grants on the same file and only serves the canonical deployment reader. Invalidate outstanding project invitations before resuming catalogue operation after any rollback that used older membership tools.
+For recovery, keep the console offline while reconciling membership changes and archived projects since the snapshot. Use a trusted SQLite client on the membership database to invalidate restored invitations with `DELETE FROM project_invitations` and, when the table exists, `DELETE FROM customer_invitations`. Reissue the current invitations after verification. The post-enrollment PR #7 image can read the original grants on the same file and only serves the canonical deployment reader. Invalidate outstanding invitations before resuming catalogue operation after any rollback that used older membership tools.
 
 ### Membership storage and administration
 

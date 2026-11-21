@@ -190,6 +190,19 @@ export function openProjectCatalog(path) {
       ) STRICT;
       CREATE INDEX IF NOT EXISTS project_memberships_by_project
         ON project_memberships (organization_id, project_id);
+      CREATE INDEX IF NOT EXISTS projects_by_project_id ON projects (project_id);
+      CREATE TABLE IF NOT EXISTS customer_invitations (
+        email TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        digest BLOB NOT NULL UNIQUE CHECK (length(digest) = 32),
+        expires_at INTEGER NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS customer_organizations (
+        organization_id TEXT PRIMARY KEY NOT NULL,
+        customer_id TEXT UNIQUE NOT NULL,
+        first_project_id TEXT NOT NULL,
+        FOREIGN KEY (organization_id, first_project_id) REFERENCES projects (organization_id, project_id)
+      ) STRICT;
     `);
     const { organizationId, projectId } = firstProject;
     db.prepare(`INSERT INTO project_details (organization_id, project_id, name)
@@ -216,6 +229,17 @@ export function openProjectCatalog(path) {
       FROM project_invitations i LEFT JOIN project_details d USING (organization_id, project_id)
       WHERE i.email = ? AND i.digest = ? AND i.expires_at > ? AND COALESCE(d.archived, 0) = 0`);
     const grant = db.prepare(grantSql);
+    const customerHome = db.prepare(`SELECT c.organization_id AS organizationId, c.first_project_id AS projectId
+      FROM customer_organizations c
+      JOIN project_memberships m ON m.principal_id = c.customer_id
+        AND m.organization_id = c.organization_id AND m.project_id = c.first_project_id
+      JOIN project_details d ON d.organization_id = c.organization_id AND d.project_id = c.first_project_id
+      WHERE c.customer_id = ? AND d.archived = 0`);
+    const customerInvitation = db.prepare(`SELECT 1 FROM customer_invitations
+      WHERE email = ? AND digest = ? AND expires_at > ?`);
+    const pendingCustomers = db.prepare(`SELECT email, name, expires_at AS expiresAt FROM customer_invitations
+      WHERE expires_at > ? ORDER BY email`);
+    const removeCustomerInvite = db.prepare("DELETE FROM customer_invitations WHERE email = ?");
     const invitesForProject = db.prepare("DELETE FROM project_invitations WHERE organization_id = ? AND project_id = ?");
     const removeInvite = db.prepare(removeInvitationSql);
     const find = (email, code) => invite.get(email, hashCode(code), Date.now());
@@ -225,6 +249,10 @@ export function openProjectCatalog(path) {
       hasProjectRead: (...keys) => !!access.get(...keys),
       members: (scope) => members.all(scope.organizationId, scope.projectId),
       pending: (scope) => pending.all(scope.organizationId, scope.projectId, Date.now()),
+      customerHome: (principal) => customerHome.get(principal),
+      pendingCustomers: () => pendingCustomers.all(Date.now()),
+      hasCustomerInvitation: (email, code) => !!customerInvitation.get(email, hashCode(code), Date.now()),
+      cancelCustomerInvitation: (email) => removeCustomerInvite.run(email),
       create(org, id, name) {
         return transaction(db, () => {
           if (!db.prepare("INSERT INTO projects VALUES (?, ?) ON CONFLICT DO NOTHING").run(org, id).changes) return false;
