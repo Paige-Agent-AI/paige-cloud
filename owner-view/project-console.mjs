@@ -18,25 +18,25 @@ export function matchProjectPage(path) {
   return { path, organizationId: parts[2], projectId: parts[3], members };
 }
 
-function shell(title, body, showDeployments, remaining) {
+function shell(title, body, showDeployments, remaining, accountPath) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escape(title)} · PAIGE Cloud</title><link rel="stylesheet" href="/assets/owner.css">
 <script src="/assets/project-session.js" defer></script></head>
 <body class="workspace"><a class="skip-link" href="#main">Skip to main content</a>
-<header><div class="topbar"><a class="brand" href="/projects" aria-label="PAIGE Cloud projects">
+<header><div class="topbar"><a class="brand" href="${accountPath}/projects" aria-label="PAIGE Cloud projects">
 <svg viewBox="0 0 48 48" aria-hidden="true"><polygon points="21,13.6 30.5,13.6 21,34.4 11.5,34.4"/><circle cx="34.5" cy="30.5" r="5.5"/></svg>
 <span>PAIGE <span class="brand-cloud">Cloud</span></span></a>
 <form action="/sign-out" method="post" class="sign-out-form">${button("Sign out")}</form></div></header>
 <div class="workspace-layout"><nav class="workspace-menu" aria-label="Workspace">
-${showDeployments ? '<a href="/overview">Overview</a><a href="/deployments">Deployments</a>' : ""}
-<a href="/projects" aria-current="page">Projects</a></nav>
-<main id="main" class="project-main" tabindex="-1" data-session-remaining="${remaining}" hidden><h1>${escape(title)}</h1>${body}</main>
+${showDeployments ? `<a href="${accountPath}/overview">Overview</a><a href="${accountPath}/deployments">Deployments</a>` : ""}
+<a href="${accountPath}/projects" aria-current="page">Projects</a></nav>
+<main id="main" class="project-main" tabindex="-1" data-session-remaining="${remaining}" data-project-home="${accountPath}/projects" hidden><h1>${escape(title)}</h1>${body}</main>
 <noscript><p>Enable JavaScript to open your projects.</p></noscript></div></body></html>`;
 }
 
-function membersPanel(project, catalog, accounts) {
-  const path = url(project) + "/members";
+function membersPanel(project, catalog, accounts, accountPath) {
+  const path = accountPath + url(project) + "/members";
   const items = catalog.members(project).map(({ id }) => {
     const email = accounts.emailFor(id);
     const identity = email ? `<strong>${escape(email)}</strong>` : `<code>${escape(id)}</code>`;
@@ -54,9 +54,9 @@ function membersPanel(project, catalog, accounts) {
   ${invites.length ? `<h3>Pending invitations</h3><ul class="project-list">${invites.join("")}</ul>` : ""}</section>`;
 }
 
-function settingsPanel(project) {
+function settingsPanel(project, accountPath) {
   if (canonical(project)) return "";
-  const path = url(project);
+  const path = accountPath + url(project);
   return `<section class="project-panel" aria-labelledby="settings"><h2 id="settings">Project settings</h2>
   <form class="project-form" method="post" action="${path}">${action("rename")}
   <label for="project-name">Display name</label><input name="name" id="project-name" required maxlength="80" value="${escape(project.name)}">${button("Save name")}</form>
@@ -65,16 +65,16 @@ function settingsPanel(project) {
   ${button(project.archived ? "Restore project" : "Archive project")}</form></section>`;
 }
 
-export function projectPage({ route, form, method, principal, origin, catalog, accounts, showDeployments, remaining }) {
+export function projectPage({ route, form, method, principal, origin, catalog, accounts, showDeployments, remaining, accountPath = "" }) {
   const manage = principal === ownerId;
-  const page = (title, body, status = 200) => ({ status, html: shell(title, body, showDeployments, remaining) });
-  const redirect = (location) => ({ status: 303, location });
+  const page = (title, body, status = 200) => ({ status, html: shell(title, body, showDeployments, remaining, accountPath) });
+  const redirect = (location) => ({ status: 303, location: accountPath + location });
   const error = (message, back, status = 400) => page("Projects",
-    `<p class="notice bad" role="alert">${message}</p><p><a href="${back}">Go back</a></p>`, status);
+    `<p class="notice bad" role="alert">${message}</p><p><a href="${accountPath + back}">Go back</a></p>`, status);
   const post = method === "POST";
   if (route.path === "/join") {
     if (!post) return page("Accept an invitation", `<section class="project-panel"><p class="muted">Enter the code sent to your PAIGE Cloud email address.</p>
-      <form class="project-form" method="post" action="/join">${activeInviteInput}${button("Accept invitation", true)}</form></section>`);
+      <form class="project-form" method="post" action="${accountPath}/join">${activeInviteInput}${button("Accept invitation", true)}</form></section>`);
     const code = form?.get("invite");
     const email = accounts.emailFor(principal);
     const joined = email && form?.size === 1 && validCode(code) && catalog.accept(principal, email, code);
@@ -93,14 +93,16 @@ export function projectPage({ route, form, method, principal, origin, catalog, a
         : error("That project ID is already in use in this organization.", "/projects", 409);
     }
     const projects = catalog.list(principal);
-    return page("Projects", `<p class="project-join"><a href="/join">Accept an invitation</a></p>
+    const number = accountPath.split("/").at(-1);
+    return page("Projects", `${number ? `<p class="muted">Account <code>${escape(number)}</code></p>` : ""}
+      <p class="project-join"><a href="${accountPath}/join">Accept an invitation</a></p>
       <section class="project-panel" aria-label="Available projects">${projects.length ?
       `<ul class="project-list">${projects.map((project) =>
-        `<li><div><a href="${url(project)}"><strong>${escape(project.name)}</strong></a><br><code class="muted">${escape(project.organizationId)}/${escape(project.projectId)}</code></div>
+        `<li><div><a href="${accountPath + url(project)}"><strong>${escape(project.name)}</strong></a><br><code class="muted">${escape(project.organizationId)}/${escape(project.projectId)}</code></div>
         ${project.archived ? '<span class="status">Archived</span>' : ""}</li>`).join("")}</ul>` :
       `<p>No projects yet. Accept an invitation to get access.</p><p class="muted">Account ID <code class="account-id">${escape(principal)}</code></p>`}</section>
       ${manage ? `<section class="project-panel"><h2>Create a project</h2>
-        <form class="project-form" method="post" action="/projects">
+        <form class="project-form" method="post" action="${accountPath}/projects">
         <label for="name">Display name</label><input id="name" name="name" maxlength="80" required>
         <label for="organization">Organization ID</label><input id="organization" name="organization" required pattern="[a-z0-9][a-z0-9\u005c-]{0,62}" maxlength="63" spellcheck="false">
         <label for="project">Project ID</label><input id="project" name="project" required pattern="[a-z0-9][a-z0-9\u005c-]{0,62}" maxlength="63" spellcheck="false">
@@ -110,12 +112,12 @@ export function projectPage({ route, form, method, principal, origin, catalog, a
   const { organizationId, projectId } = route;
   const project = catalog.get(route);
   if (!project || (!manage && (route.members || !catalog.hasProjectRead(principal, organizationId, projectId)))) return { status: 404 };
-  if (!post && route.members) return page("Members", `<p class="muted"><a href="/projects">All projects</a> /
-    <a href="${url(project)}">${escape(project.name)}</a> / Members</p>` + membersPanel(project, catalog, accounts));
-  const detail = `<p class="muted"><a href="/projects">All projects</a> / ${escape(organizationId)}/${escape(projectId)}${project.archived ? ' · Archived' : ''}</p>
-    ${canonical(project) && catalog.hasProjectRead(principal, organizationId, projectId) ? '<p><a href="/deployments">View deployments</a></p>' : !project.archived ? '<p class="muted">No deployment source is connected.</p>' : ""}
-    ${manage ? `<p><a href="${url(project)}/members">Manage members</a></p>` : ""}`;
-  if (!post) return page(project.name, detail + (manage ? settingsPanel(project) : ""));
+  if (!post && route.members) return page("Members", `<p class="muted"><a href="${accountPath}/projects">All projects</a> /
+    <a href="${accountPath + url(project)}">${escape(project.name)}</a> / Members</p>` + membersPanel(project, catalog, accounts, accountPath));
+  const detail = `<p class="muted"><a href="${accountPath}/projects">All projects</a> / ${escape(organizationId)}/${escape(projectId)}${project.archived ? ' · Archived' : ''}</p>
+    ${canonical(project) && catalog.hasProjectRead(principal, organizationId, projectId) ? `<p><a href="${accountPath}/deployments">View deployments</a></p>` : !project.archived ? '<p class="muted">No deployment source is connected.</p>' : ""}
+    ${manage ? `<p><a href="${accountPath + url(project)}/members">Manage members</a></p>` : ""}`;
+  if (!post) return page(project.name, detail + (manage ? settingsPanel(project, accountPath) : ""));
 
   const requestedAction = form?.get("action");
   const memberAction = ["invite", "cancel-invite", "revoke"].includes(requestedAction);
@@ -145,7 +147,7 @@ export function projectPage({ route, form, method, principal, origin, catalog, a
       return page("Invitation ready", `<section class="project-panel"><p>For <strong>${escape(email)}</strong>. This code expires in 48 hours.</p>
         <p><code class="account-id">${code}</code></p>
         <p><a class="primary" href="mailto:${encodeURIComponent(mailbox)}@${domain}?subject=${subject}&amp;body=${message}">Open email draft</a></p>
-        <p class="muted">Send the draft to deliver the invitation.</p><p><a href="${route.path}">Back to members</a></p></section>`);
+        <p class="muted">Send the draft to deliver the invitation.</p><p><a href="${accountPath + route.path}">Back to members</a></p></section>`);
     }
     case "cancel-invite": {
       const email = normalizeEmail(form.get("email"));

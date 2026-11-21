@@ -204,11 +204,15 @@ function renderProduction(production, stale, loading) {
     loading && !production ? "Waiting for public endpoints." : "Production source is unavailable.";
   if (checkedAt) description.append(" Checked ", time(production.checkedAt));
 
-  get("production-domains").replaceChildren(...(production?.domains ?? []).map((domain) => {
+  get("production-domains").replaceChildren(...productionDomainRows(production));
+}
+
+function productionDomainRows(production, stale = false) {
+  return (production?.domains ?? []).map((domain) => {
     const [hostHealth] = healthLabels[domain.state] ?? healthLabels.unavailable;
     const state = Number.isInteger(domain.httpStatus) ? `${hostHealth} · HTTP ${domain.httpStatus}` : hostHealth;
     const item = element("li");
-    item.append(element("span", "", domain.hostname), element("span", "muted", ` · ${state}`));
+    item.append(element("span", "", domain.hostname), element("span", "muted", ` · ${stale ? "Last observed: " : ""}${state}`));
     if (production.identity === "mismatch") {
       for (const [name, commit] of [["Frontend", domain.frontendCommit], ["Hosting", domain.cloudCommit]]) {
         if (typeof commit !== "string" || !/^[a-f0-9]{40}$/.test(commit)) continue;
@@ -218,6 +222,73 @@ function renderProduction(production, stale, loading) {
       }
     }
     return item;
+  });
+}
+
+const canonicalGitHub = "https://github.com/Paige-Agent-AI/Paige-Agent-AI";
+
+function receiptLink(path, label) {
+  const link = element("a", "", label);
+  link.href = canonicalGitHub + path;
+  return link;
+}
+
+function renderProductionReceipts(production, stale, loading) {
+  const checkedAt = date(production?.checkedAt);
+  const old = stale || (checkedAt && Date.now() - checkedAt.getTime() >= staleAfterMs);
+  const [label, tone] = old ? ["Stale", "warn"] : loading && !production ? ["Checking", ""]
+    : healthLabels[production?.state] ?? healthLabels.unavailable;
+  status("receipt-health", label, tone);
+  const match = get("receipt-match");
+  if (old) {
+    match.textContent = production?.receiptCommit ? "The last observed release matched a recorded GitHub commit."
+      : production?.frontendCommit ? "The last observed release had no matching receipt."
+        : "The last production source check was unavailable.";
+  } else {
+    match.textContent = production?.receiptCommit ? "Production domains report a recorded GitHub commit."
+      : production?.frontendCommit ? "The live release has no matching receipt."
+        : loading ? "Checking production domains." : "Live production source is unavailable.";
+  }
+  if (checkedAt) match.append(" Checked ", time(production.checkedAt), ".");
+  get("receipt-domains").replaceChildren(...productionDomainRows(production, old));
+
+  const container = get("receipt-rows");
+  const receipts = production?.receipts ?? [];
+  const open = new Set([...container.querySelectorAll("details[open]")].map((row) => row.dataset.run));
+  const hadRecords = !!container.querySelector("details");
+  if (!receipts.length) {
+    container.replaceChildren(...(loading ? [] : [element("p", "small muted", "No verified production receipts are available.")]));
+    return;
+  }
+  container.replaceChildren(...receipts.map((receipt, index) => {
+    const row = element("details", "production-receipt");
+    row.dataset.run = receipt.runId + "/" + receipt.attempt;
+    row.open = hadRecords ? open.has(row.dataset.run) : index === 0;
+    const summary = element("summary");
+    summary.append(element("strong", "", "PR #" + receipt.pullRequest),
+      element("code", "", receipt.commit.slice(0, 8)), time(receipt.finishedAt, historyDateFormat));
+    if (!old && receipt.commit === production.receiptCommit) {
+      summary.append(element("span", "status good", "Live commit match"));
+    }
+    const fields = element("dl", "row-fields");
+    for (const [name, value] of [
+      ["GitHub commit", receiptLink("/commit/" + receipt.commit, receipt.commit)],
+      ["Recorded image digest", element("code", "", receipt.image)],
+      ["Coolify deployment", element("code", "", receipt.deployment)],
+      ["Rollback commit", receiptLink("/commit/" + receipt.rollback.commit, receipt.rollback.commit)],
+      ["Rollback target", element("code", "", receipt.rollback.image)],
+      ["Rollback deployment", element("code", "", receipt.rollback.deployment)],
+    ]) {
+      const pair = element("div");
+      const entry = element("dd");
+      entry.append(value);
+      pair.append(element("dt", "", name), entry);
+      fields.append(pair);
+    }
+    const detail = element("div", "production-receipt-detail");
+    detail.append(fields, receiptLink("/actions/runs/" + receipt.runId, "View GitHub workflow run"));
+    row.append(summary, detail);
+    return row;
   }));
 }
 
@@ -254,6 +325,7 @@ function render({ loading = false, checked = false } = {}) {
 
   setNotices(messageList);
   renderProduction(snapshot?.production, stale, loading);
+  renderProductionReceipts(snapshot?.production, stale, loading);
   status("health", healthLabel, healthTone);
   get("current-title").textContent = stale ? "Last observed release" : "Current release";
   setIdentity("current", current, loading && !snapshot ? "Checking" : "Unconfirmed");
@@ -322,7 +394,7 @@ async function refreshStatus() {
   render({ loading: true });
   announcement.textContent = "Checking production and preview health and source.";
   try {
-    const response = await fetch("/api/organizations/paige/projects/paige-agent-ai/status",
+    const response = await fetch(accountPath + "/api/organizations/paige/projects/paige-agent-ai/status",
       { cache: "no-store", redirect: "error", signal: request.signal });
     if (activeRequest !== request) return;
     if (response.status === 401) {
@@ -371,8 +443,10 @@ async function refreshStatus() {
   }
 }
 
+const accountPath = location.pathname.match(/^\/accounts\/[1-9][0-9]{11}(?=\/|$)/)?.[0] ?? "";
+
 function showSection() {
-  const deployments = location.pathname === "/deployments";
+  const deployments = location.pathname === accountPath + "/deployments";
   const section = deployments ? "deployments" : "overview";
   const title = deployments ? "Deployments" : "Overview";
   pageTitle.textContent = title;
@@ -386,9 +460,9 @@ function showSection() {
   }
 }
 
-if (location.pathname === "/") {
+if (location.pathname === accountPath + "/" || location.pathname === accountPath || location.hash === "#deployments" || location.hash === "#overview") {
   const route = location.hash === "#deployments" ? "/deployments" : "/overview";
-  history.replaceState(null, "", route);
+  history.replaceState(null, "", accountPath + route);
 }
 document.querySelector(".skip-link").addEventListener("click", (event) => {
   event.preventDefault();

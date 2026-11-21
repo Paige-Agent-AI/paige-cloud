@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
+import { productionHosts, productionReceipts } from "./production-receipts.mjs";
 
 const evidence = JSON.parse(readFileSync(new URL("./release-ledger.json", import.meta.url), "utf8"));
 const appId = "izwrky18u9ixdhstnulxpjs5";
 const previewOrigin = "https://izwrky18u9ixdhstnulxpjs5.179.66.154.248.sslip.io";
 const providerOrigin = "https://app.coolify.io/api/v1";
 const imagePackage = "ghcr.io/paige-agent-ai/paige-cloud-preview";
-const productionHosts = ["paigeagent.ai", "www.paigeagent.ai", "app.paigeagent.ai"];
 const deploymentId = /^[a-z0-9]{20,32}$/;
 const commitId = /^[a-f0-9]{40}$/;
 const visibleStatuses = new Set(["queued", "in_progress", "finished", "failed", "cancelled", "cancelled-by-user"]);
@@ -176,12 +176,17 @@ export async function readProductionStatus(fetchFrom = fetch) {
   const sources = domains.filter((domain) => domain.frontendCommit);
   const revisions = new Set(sources.map(({ frontendCommit, cloudCommit }) => `${frontendCommit}:${cloudCommit}`));
   const identity = revisions.size > 1 ? "mismatch" : sources.length === domains.length ? "matched" : "unavailable";
+  const frontend = identity === "matched" ? sources[0].frontendCommit : null;
+  const matchingReceipt = frontend && frontend === sources[0].cloudCommit &&
+    productionReceipts.find((receipt) => receipt.commit === frontend);
   return {
     checkedAt: new Date().toISOString(),
     state: domains.every((domain) => domain.state === "healthy") ? "healthy" :
       domains.some((domain) => domain.state === "unhealthy") ? "unhealthy" : "unavailable",
     identity,
-    frontendCommit: identity === "matched" ? sources[0].frontendCommit : null,
+    frontendCommit: frontend,
+    receipts: productionReceipts,
+    receiptCommit: matchingReceipt?.commit ?? null,
     domains,
   };
 }

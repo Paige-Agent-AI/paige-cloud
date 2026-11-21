@@ -21,6 +21,49 @@ const readFromGrants = (grants) => (principalId, organizationId, projectId) =>
 
 const ownerEmail = "owner@example.test";
 
+test("backfills account numbers for existing credential records and preserves them on reopen", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "paige-account-numbers-"));
+  const path = join(dir, "accounts.sqlite");
+  try {
+    initializeAccounts(path);
+    const old = new DatabaseSync(path);
+    try {
+      old.exec("DROP TABLE account_numbers");
+      const insert = old.prepare("INSERT INTO accounts VALUES (?, ?, ?, ?)");
+      insert.run(ownerId, ownerEmail, randomBytes(16), randomBytes(32));
+      insert.run("member-legacy", "member@example.test", randomBytes(16), randomBytes(32));
+    } finally {
+      old.close();
+    }
+    const first = openAccounts(path);
+    const numbers = [first.numberFor(ownerId), first.numberFor("member-legacy")];
+    const rollingOldImage = new DatabaseSync(path);
+    try {
+      rollingOldImage.prepare("INSERT INTO accounts VALUES (?, ?, ?, ?)")
+        .run("member-during-roll", "rolling@example.test", randomBytes(16), randomBytes(32));
+    } finally {
+      rollingOldImage.close();
+    }
+    assert.equal(first.numberFor("member-during-roll"), undefined);
+    const rollingNumber = first.ensureNumberFor("member-during-roll");
+    assert.match(rollingNumber, /^[1-9][0-9]{11}$/);
+    assert.equal(first.ensureNumberFor("unknown-principal"), undefined);
+    first.close();
+    for (const number of numbers) assert.match(number, /^[1-9][0-9]{11}$/);
+    assert.notEqual(numbers[0], numbers[1]);
+    const restarted = openAccounts(path);
+    try {
+      assert.deepEqual([restarted.numberFor(ownerId), restarted.numberFor("member-legacy")], numbers);
+      assert.equal(restarted.numberFor("member-during-roll"), rollingNumber);
+    } finally {
+      restarted.close();
+    }
+  } finally {
+    unlinkSync(path);
+    rmdirSync(dir);
+  }
+});
+
 async function startServer(t, projectAccess, principalId = ownerId, realAccounts, catalog) {
   const password = randomBytes(32).toString("base64url");
   const key = randomBytes(32).toString("base64url");
@@ -284,23 +327,33 @@ test("owner can manage two projects and invitations grant only the selected proj
   const owner = { email: ownerEmail, password: "fixture owner password" };
   await accounts.create(owner.email, owner.password, { owner: true });
   const seen = [];
-  const access = createProjectAccess(["amber", "violet"].map((organizationId) => ({
+  const readers = ["amber", "violet"].map((organizationId) => ({
     organizationId, projectId: "demo",
     readStatus: async () => { seen.push(organizationId); return { organizationId }; },
     environments: { preview: async () => ({ organizationId }) },
-  })), catalog.hasProjectRead);
-  const { request } = await startServer(t, access, ownerId, accounts, catalog);
-  const form = (path, fields, cookie, suppliedOrigin = origin) => request(path, {
+  }));
+  readers.push({ ...firstProject, readStatus: async () => ({ receipt: "fixture" }), environments: {} });
+  const access = createProjectAccess(readers, catalog.hasProjectRead);
+  let resolutions = 0;
+  const { request } = await startServer(t, (...args) => { resolutions++; return access(...args); }, ownerId, accounts, catalog);
+  const scopes = new Map();
+  const scoped = (path, cookie) => cookie && scopes.has(cookie) && /^\/(projects|join|api)(?:\/|$)/.test(path)
+    ? scopes.get(cookie) + path : path;
+  const form = (path, fields, cookie, suppliedOrigin = origin) => request(scoped(path, cookie), {
     method: "POST", headers: { origin: suppliedOrigin, cookie: cookie ?? "", "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(fields).toString(),
   });
   const signIn = async (account) => {
     const response = await form("/session", account);
     assert.equal(response.status, 303);
-    return response.headers.get("set-cookie").split(";")[0];
+    const cookie = response.headers.get("set-cookie").split(";")[0];
+    const scope = response.headers.get("location").match(/^\/accounts\/[1-9][0-9]{11}(?=\/)/)?.[0];
+    assert.ok(scope);
+    scopes.set(cookie, scope);
+    return cookie;
   };
   const ownerCookie = await signIn(owner);
-  const at = (path, cookie) => request(path, { headers: { cookie } });
+  const at = (path, cookie) => request(scoped(path, cookie), { headers: { cookie } });
   const amber = "/projects/amber/demo";
   const violet = "/projects/violet/demo";
   const amberMembers = amber + "/members";
@@ -309,14 +362,15 @@ test("owner can manage two projects and invitations grant only the selected proj
   const violetApi = "/api/organizations/violet/projects/demo";
   assert.equal((await request("/projects")).status, 303);
   assert.equal((await form("/projects", { name: "Wrong origin", organization: "other", project: "demo" }, ownerCookie, alias)).status, 403);
-  assert.equal((await form("/projects", { name: "Amber & <workspace>", organization: "amber", project: "demo" }, ownerCookie)).headers.get("location"), amber);
-  assert.equal((await form("/projects", { name: "Violet", organization: "violet", project: "demo" }, ownerCookie)).headers.get("location"), violet);
+  assert.equal((await request("/projects", { headers: { cookie: ownerCookie } })).headers.get("location"), scopes.get(ownerCookie) + "/projects");
+  assert.equal((await form("/projects", { name: "Amber & <workspace>", organization: "amber", project: "demo" }, ownerCookie)).headers.get("location"), scopes.get(ownerCookie) + amber);
+  assert.equal((await form("/projects", { name: "Violet", organization: "violet", project: "demo" }, ownerCookie)).headers.get("location"), scopes.get(ownerCookie) + violet);
   assert.equal((await form("/projects", { name: "Duplicate", organization: "violet", project: "demo" }, ownerCookie)).status, 409);
   assert.match(await (await at(amber, ownerCookie)).text(), /Amber &amp; &lt;workspace&gt;/);
   assert.equal((await form(amber, { action: "rename", name: "Amber Studio" }, ownerCookie)).status, 303);
   assert.equal((await form("/projects/paige/paige-agent-ai", { action: "archive" }, ownerCookie)).status, 400);
   assert.equal((await form("/projects/paige/paige-agent-ai", { action: "rename", name: "Rename canonical" }, ownerCookie)).status, 400);
-  assert.match(await (await at(amber, ownerCookie)).text(), /href="\/projects\/amber\/demo\/members"/);
+  assert.ok((await (await at(amber, ownerCookie)).text()).includes(`href="${scopes.get(ownerCookie)}${amberMembers}"`));
   assert.equal((await form(amber, { action: "invite", email: "misrouted@example.test" }, ownerCookie)).status, 400);
   assert.equal((await form(amberMembers, { action: "invite", email: owner.email }, ownerCookie)).status, 400);
   const amberUser = { email: "amber@example.test", password: "fixture amber password" };
@@ -352,8 +406,8 @@ test("owner can manage two projects and invitations grant only the selected proj
   assert.equal((await form("/join", { invite: amberCode }, violetCookie)).status, 400);
   const joined = await Promise.all([form("/join", { invite: amberCode }, amberCookie), form("/join", { invite: amberCode }, amberCookie)]);
   assert.deepEqual(joined.map(({ status }) => status).sort(), [303, 400]);
-  assert.equal(joined.find(({ status }) => status === 303).headers.get("location"), amber);
-  assert.equal((await form("/join", { invite: violetCode }, violetCookie)).headers.get("location"), violet);
+  assert.equal(joined.find(({ status }) => status === 303).headers.get("location"), scopes.get(amberCookie) + amber);
+  assert.equal((await form("/join", { invite: violetCode }, violetCookie)).headers.get("location"), scopes.get(violetCookie) + violet);
   assert.equal((await form("/join", { invite: amberCode }, amberCookie)).status, 400);
   assert.match(await (await at("/projects", amberCookie)).text(), /Amber Studio/);
   assert.doesNotMatch(await (await at("/projects", amberCookie)).text(), /Violet/);
@@ -369,8 +423,28 @@ test("owner can manage two projects and invitations grant only the selected proj
   assert.deepEqual(seen, ["amber", "violet"]);
   assert.doesNotMatch(await (await at(amber, amberCookie)).text(), /Invite by email|Revoke access|amber@example.test/);
   const amberId = await accounts.verify(amberUser.email, amberUser.password);
+  for (const [cookie, principal] of [[amberCookie, amberId], [ownerCookie, ownerId]]) {
+    if (principal !== ownerId) updateProjectMembership(membershipPath, "grant", principal, "paige", "paige-agent-ai");
+    assert.deepEqual(await (await at("/api/status", cookie)).json(), { receipt: "fixture" });
+  }
+  const beforeCrossing = resolutions;
+  const ownerPath = scopes.get(ownerCookie);
+  const amberPath = scopes.get(amberCookie);
+  assert.notEqual(ownerPath, amberPath);
+  for (const [cookie, otherPath] of [[ownerCookie, amberPath], [amberCookie, ownerPath]]) {
+    for (const path of ["/overview", "/deployments", "/projects", amberMembers, "/api/status"]) {
+      assert.equal((await request(otherPath + path, { headers: { cookie } })).status, 404);
+    }
+    assert.equal((await form(otherPath + amberMembers, { action: "invite", email: "wrong-scope@example.test" }, cookie)).status, 404);
+  }
+  assert.equal((await request("/accounts/000000000000/projects", { headers: { cookie: ownerCookie } })).status, 404);
+  assert.equal(resolutions, beforeCrossing);
+  const reopenedAccounts = openAccounts(accountsPath, membershipPath);
+  stores.push(reopenedAccounts);
+  assert.equal("/accounts/" + reopenedAccounts.numberFor(amberId), amberPath);
+  assert.equal("/accounts/" + reopenedAccounts.numberFor(ownerId), ownerPath);
   const waiting = await issue(amber, amberUser.email);
-  assert.equal((await form(amberMembers, { action: "revoke", member: amberId }, ownerCookie)).headers.get("location"), amberMembers);
+  assert.equal((await form(amberMembers, { action: "revoke", member: amberId }, ownerCookie)).headers.get("location"), ownerPath + amberMembers);
   assert.equal((await at(amberApi + "/status", amberCookie)).status, 404);
   assert.equal((await at(amber, amberCookie)).status, 404);
   assert.equal((await form("/join", { invite: waiting }, amberCookie)).status, 400);

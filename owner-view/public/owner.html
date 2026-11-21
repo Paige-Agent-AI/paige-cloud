@@ -10,14 +10,14 @@
 <body class="workspace">
 <a class="skip-link" href="#main">Skip to main content</a>
 <header><div class="topbar">
-  <a class="brand" href="/overview" aria-label="PAIGE Cloud overview"><svg viewBox="0 0 48 48" aria-hidden="true"><polygon points="21,13.6 30.5,13.6 21,34.4 11.5,34.4"/><circle cx="34.5" cy="30.5" r="5.5"/></svg><span>PAIGE <span class="brand-cloud">Cloud</span></span></a>
+  <a class="brand" href="{{ACCOUNT_PATH}}/overview" aria-label="PAIGE Cloud overview"><svg viewBox="0 0 48 48" aria-hidden="true"><polygon points="21,13.6 30.5,13.6 21,34.4 11.5,34.4"/><circle cx="34.5" cy="30.5" r="5.5"/></svg><span>PAIGE <span class="brand-cloud">Cloud</span></span></a>
   <form action="/sign-out" method="post" class="sign-out-form"><button class="sign-out" type="submit">Sign out</button></form>
 </div></header>
 <div class="workspace-layout">
 <nav class="workspace-menu" aria-label="Workspace">
-  <a href="/overview" data-section="overview" aria-current="page">Overview</a>
-  <a href="/deployments" data-section="deployments">Deployments</a>
-  <a href="/projects">Projects</a>
+  <a href="{{ACCOUNT_PATH}}/overview" data-section="overview" aria-current="page">Overview</a>
+  <a href="{{ACCOUNT_PATH}}/deployments" data-section="deployments">Deployments</a>
+  <a href="{{ACCOUNT_PATH}}/projects">Projects</a>
 </nav>
 <main id="main" tabindex="-1">
   <div class="page-head">
@@ -76,7 +76,13 @@
       </div>
     </div>
     <section class="history" id="deployments-panel" aria-labelledby="history-title" hidden>
-      <div class="history-head"><h2 id="history-title">Deployment history</h2><p class="small muted" id="history-source">Coolify · newest first</p></div>
+      <section class="production-panel production-receipts" aria-labelledby="production-receipts-title">
+        <div class="history-head"><h2 id="production-receipts-title">Production release receipts</h2><span class="status" id="receipt-health">Checking</span></div>
+        <p class="small muted" id="receipt-match"></p>
+        <ul class="production-domains" id="receipt-domains" aria-label="Production health checks"></ul>
+        <div id="receipt-rows"></div>
+      </section>
+      <div class="history-head"><h2 id="history-title">Preview deployment history</h2><p class="small muted" id="history-source">Coolify · newest first</p></div>
       <div class="history-filters" id="history-filters" hidden>
         <label><span class="sr">Search deployments</span><input id="deployment-search" type="search" placeholder="Search deployments" autocomplete="off"></label>
         <label><span class="sr">Deployment status</span><select id="deployment-status"><option value="">All statuses</option><option value="finished">Finished</option><option value="failed">Failed</option><option value="in_progress">In progress</option><option value="queued">Queued</option><option value="cancelled">Cancelled</option></select></label>

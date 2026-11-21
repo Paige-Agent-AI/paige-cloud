@@ -1,4 +1,4 @@
-import { createHash, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomInt, scrypt, timingSafeEqual } from "node:crypto";
 import { closeSync, lstatSync, openSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -91,6 +91,37 @@ export function openAccounts(path, membershipPath) {
       throw new Error("Unrecognized Cloud accounts database.");
     }
     const lookup = db.prepare("SELECT principal_id, salt, digest FROM accounts WHERE email = ?");
+    // Keep the original credential schema readable by the previous console image.
+    db.exec(`CREATE TABLE IF NOT EXISTS account_numbers (
+      principal_id TEXT PRIMARY KEY NOT NULL REFERENCES accounts(principal_id),
+      number TEXT UNIQUE NOT NULL CHECK (length(number) = 12 AND number NOT GLOB '*[^0-9]*')
+    ) STRICT`);
+    const numberLookup = db.prepare("SELECT number FROM account_numbers WHERE principal_id = ?");
+    const principalExists = db.prepare("SELECT 1 FROM accounts WHERE principal_id = ?");
+    const missingNumbers = db.prepare(`SELECT principal_id FROM accounts
+      WHERE principal_id NOT IN (SELECT principal_id FROM account_numbers)`);
+    const addNumber = db.prepare("INSERT INTO account_numbers VALUES (?, ?) ON CONFLICT(number) DO NOTHING");
+    function assignNumber(principal) {
+      for (let attempt = 0; attempt < 16; attempt++) {
+        const number = String(randomInt(100_000_000_000, 1_000_000_000_000));
+        if (addNumber.run(principal, number).changes === 1) return;
+      }
+      throw new Error("Could not assign a Cloud account number.");
+    }
+    function inTransaction(run) {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const result = run();
+        db.exec("COMMIT");
+        return result;
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    }
+    inTransaction(() => {
+      for (const { principal_id } of missingNumbers.all()) assignNumber(principal_id);
+    });
     const accountEmail = db.prepare("SELECT email FROM accounts WHERE principal_id = ?");
     const hasOwner = db.prepare("SELECT 1 FROM accounts WHERE principal_id = ?");
     const invitation = db.prepare("SELECT 1 FROM invitations WHERE email = ? AND digest = ? AND expires_at > ?");
@@ -119,6 +150,14 @@ export function openAccounts(path, membershipPath) {
       hasOwner: () => !!hasOwner.get(ownerId),
       isOwnerEmail: (email) => lookup.get(email)?.principal_id === ownerId,
       emailFor: (principal) => accountEmail.get(principal)?.email,
+      numberFor: (principal) => numberLookup.get(principal)?.number,
+      ensureNumberFor(principal) {
+        return numberLookup.get(principal)?.number ?? inTransaction(() => {
+          if (!principalExists.get(principal)) return undefined;
+          if (!numberLookup.get(principal)) assignNumber(principal);
+          return numberLookup.get(principal).number;
+        });
+      },
       issueInvitation(email) {
         if (!hasOwner.get(ownerId)) throw new Error("Complete owner setup before issuing an invitation.");
         if (lookup.get(email)) throw new Error("An account already exists for this email.");
@@ -134,23 +173,22 @@ export function openAccounts(path, membershipPath) {
       async create(email, password, { owner = false, code, allowProjectSignup } = {}) {
         const salt = randomBytes(16);
         const digest = await derive(password, salt, 32, scryptOptions);
-        if (owner) return addOwner.run(ownerId, email, salt, digest).changes === 1;
-        const id = "member-" + randomBytes(16).toString("hex");
-        db.exec("BEGIN IMMEDIATE");
-        try {
-          const hashedCode = invitationDigest(code);
-          const now = Date.now();
-          const existing = invitation.get(email, hashedCode, now);
-          const project = allowProjectSignup && projectInvitation?.get(email, hashedCode, now);
-          const added = (!!existing || !!project) &&
-            addMember.run(id, email, salt, digest, ownerId).changes === 1;
-          if (added && existing) removeInvitation.run(email);
-          db.exec("COMMIT");
+        const id = owner ? ownerId : "member-" + randomBytes(16).toString("hex");
+        return inTransaction(() => {
+          let added;
+          if (owner) {
+            added = addOwner.run(id, email, salt, digest).changes === 1;
+          } else {
+            const hashedCode = invitationDigest(code);
+            const now = Date.now();
+            const existing = invitation.get(email, hashedCode, now);
+            const project = allowProjectSignup && projectInvitation?.get(email, hashedCode, now);
+            added = (!!existing || !!project) && addMember.run(id, email, salt, digest, ownerId).changes === 1;
+            if (added && existing) removeInvitation.run(email);
+          }
+          if (added) assignNumber(id);
           return added;
-        } catch (error) {
-          db.exec("ROLLBACK");
-          throw error;
-        }
+        });
       },
       async verify(email, password) {
         const account = lookup.get(email);

@@ -111,6 +111,13 @@ main { min-width: 0; padding: clamp(1.5rem, 3vw, 2.5rem) clamp(1rem, 4vw, 3.25re
   background: var(--panel);
 }
 .production-panel .history-head { margin-bottom: .4rem; }
+.production-receipts { margin-bottom: 1.35rem; }
+.production-receipt { margin-top: .8rem; border-top: 1px solid var(--line); }
+.production-receipt summary { cursor: pointer; padding: .8rem 0 .35rem; }
+.production-receipt summary > * { margin-inline-end: .65rem; }
+.production-receipt summary time { color: var(--muted); font-size: .85rem; }
+.production-receipt-detail { display: grid; gap: .75rem; padding-block: .6rem .2rem; }
+.production-receipt-detail > a { justify-self: start; }
 #production-commit { overflow-wrap: anywhere; font-size: .8rem; }
 .production-domains {
   display: flex;
