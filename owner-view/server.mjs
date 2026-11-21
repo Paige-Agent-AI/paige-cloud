@@ -2,6 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
+import { openMembershipStore } from "./memberships.mjs";
 import { createPaigeProjectAccess, ownerId, parseProjectStatusPath } from "./projects.mjs";
 
 const readAsset = (file) => readFileSync(new URL("./public/" + file, import.meta.url));
@@ -49,7 +50,7 @@ async function readPassword(request) {
   return /^[A-Za-z0-9_-]{43}$/.test(password ?? "") ? password : null;
 }
 
-export function createOwnerServer({ origin, aliasOrigin, passwordHash, token, projectAccess, principalId = ownerId }) {
+export function createOwnerServer({ origin, aliasOrigin, passwordHash, projectAccess: resolveRead, principalId = ownerId }) {
   const allowedOrigins = new Map();
   for (const value of aliasOrigin ? [origin, aliasOrigin] : [origin]) {
     const url = new URL(value);
@@ -57,8 +58,7 @@ export function createOwnerServer({ origin, aliasOrigin, passwordHash, token, pr
     allowedOrigins.set(url.host, url.origin);
   }
   if (!/^[a-f0-9]{64}$/.test(passwordHash ?? "")) throw new Error("A 32-byte owner password hash is required.");
-  if (!projectAccess && !/^[\x21-\x7e]{16,512}$/.test(token ?? "")) throw new Error("A scoped Coolify read token is required.");
-  const resolveRead = projectAccess ?? createPaigeProjectAccess(token);
+  if (typeof resolveRead !== "function") throw new Error("A Cloud project access provider is required.");
 
   const expectedHash = Buffer.from(passwordHash, "hex");
   const login = readAsset("login.html").toString("utf8");
@@ -179,10 +179,13 @@ export function createOwnerServer({ origin, aliasOrigin, passwordHash, token, pr
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
-  createOwnerServer({
+  const store = openMembershipStore(process.env.OWNER_VIEW_MEMBERSHIP_DB);
+  const server = createOwnerServer({
     origin: process.env.OWNER_VIEW_ORIGIN,
     aliasOrigin: process.env.OWNER_VIEW_ALIAS_ORIGIN,
     passwordHash: process.env.OWNER_VIEW_PASSWORD_SHA256,
-    token: process.env.OWNER_VIEW_COOLIFY_TOKEN,
-  }).listen(8080, "0.0.0.0", () => console.log("PAIGE Cloud owner view is ready"));
+    projectAccess: createPaigeProjectAccess(process.env.OWNER_VIEW_COOLIFY_TOKEN, store.hasProjectRead),
+  });
+  server.once("close", store.close);
+  server.listen(8080, "0.0.0.0", () => console.log("PAIGE Cloud owner view is ready"));
 }

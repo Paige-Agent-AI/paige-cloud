@@ -1,7 +1,7 @@
 import { readOwnerStatus, readPreviewStatus, readProductionStatus } from "./status.mjs";
 
 export const ownerId = "cloud-owner";
-const firstProject = Object.freeze({ organizationId: "paige", projectId: "paige-agent-ai" });
+export const firstProject = Object.freeze({ organizationId: "paige", projectId: "paige-agent-ai" });
 const slug = "[a-z0-9][a-z0-9-]{0,62}";
 const validSlug = new RegExp(`^${slug}$`);
 const statusPath = new RegExp(
@@ -14,38 +14,36 @@ export function parseProjectStatusPath(path) {
   return match?.[0] === path ? match.groups : undefined;
 }
 
-export function createProjectAccess(projects, memberships) {
+export function isProjectSlug(value) {
+  return typeof value === "string" && validSlug.exec(value)?.[0] === value;
+}
+
+export function createProjectAccess(projects, hasProjectRead) {
+  if (typeof hasProjectRead !== "function") throw new Error("A Cloud membership reader is required.");
   const registry = new Map();
   for (const { organizationId, projectId, readStatus, environments } of projects) {
     const key = `${organizationId}/${projectId}`;
-    if (!validSlug.test(organizationId) || !validSlug.test(projectId) || registry.has(key) || typeof readStatus !== "function") {
+    if (!isProjectSlug(organizationId) || !isProjectSlug(projectId) || registry.has(key) || typeof readStatus !== "function") {
       throw new Error("Invalid or duplicate Cloud project.");
     }
     const environmentReaders = new Map();
     for (const [id, read] of Object.entries(environments)) {
-      if (!validSlug.test(id) || typeof read !== "function") throw new Error("Invalid Cloud environment.");
+      if (!isProjectSlug(id) || typeof read !== "function") throw new Error("Invalid Cloud environment.");
       environmentReaders.set(id, Object.freeze({ read }));
     }
     registry.set(key, { status: Object.freeze({ read: readStatus }), environmentReaders });
   }
 
-  const grants = new Map();
-  for (const { principalId, organizationId, projectId } of memberships) {
-    const key = `${organizationId}/${projectId}`;
-    if (!registry.has(key)) throw new Error("Cloud membership refers to an unknown project.");
-    if (!grants.has(principalId)) grants.set(principalId, new Set());
-    grants.get(principalId).add(key);
-  }
-
   return function resolveRead(principalId, { organizationId, projectId, environmentId }) {
     const key = `${organizationId}/${projectId}`;
-    if (!grants.get(principalId)?.has(key)) return undefined;
     const project = registry.get(key);
-    return environmentId === undefined ? project.status : project.environmentReaders.get(environmentId);
+    const reader = environmentId === undefined ? project?.status : project?.environmentReaders.get(environmentId);
+    return reader && hasProjectRead(principalId, organizationId, projectId) === true ? reader : undefined;
   };
 }
 
-export function createPaigeProjectAccess(token) {
+export function createPaigeProjectAccess(token, hasProjectRead) {
+  if (!/^[\x21-\x7e]{16,512}$/.test(token ?? "")) throw new Error("A scoped Coolify read token is required.");
   return createProjectAccess([{
     ...firstProject,
     readStatus: () => readOwnerStatus(token),
@@ -53,5 +51,5 @@ export function createPaigeProjectAccess(token) {
       production: () => readProductionStatus(),
       "f2-preview": () => readPreviewStatus(token),
     },
-  }], [{ principalId: ownerId, ...firstProject }]);
+  }], hasProjectRead);
 }

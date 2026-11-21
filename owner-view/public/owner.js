@@ -329,6 +329,15 @@ async function refreshStatus() {
       returnToSignIn();
       return;
     }
+    if (response.status === 404) {
+      snapshot = null;
+      fetchFailed = false;
+      clearTimeout(staleTimer);
+      render();
+      setNotices([["Project access is unavailable.", "warn"]]);
+      announcement.textContent = "Project access is unavailable.";
+      return;
+    }
     if (!response.ok) throw new Error("Status read failed");
     const data = await response.json();
     if (activeRequest !== request) return;

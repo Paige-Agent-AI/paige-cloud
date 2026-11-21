@@ -1,13 +1,21 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import { once } from "node:events";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { createProjectAccess, ownerId } from "./projects.mjs";
+import { initializeMembershipStore, openMembershipStore, updateProjectMembership } from "./memberships.mjs";
+import { createProjectAccess, firstProject, ownerId } from "./projects.mjs";
 import { createOwnerServer } from "./server.mjs";
 
 const origin = "https://owner.example.test";
 const alias = "https://cloud.example.test";
+const readFromGrants = (grants) => (principalId, organizationId, projectId) =>
+  grants.some((grant) => grant.principalId === principalId &&
+    grant.organizationId === organizationId && grant.projectId === projectId);
 
 async function startServer(t, projectAccess, principalId = ownerId) {
   const password = randomBytes(32).toString("base64url");
@@ -47,7 +55,7 @@ test("owner HTTP surface gates assets and data, rejects tampering, and invalidat
     ...firstProject,
     readStatus: async () => { reads++; return { value: "verified-owner-only" }; },
     environments: {},
-  }], [{ principalId: ownerId, ...firstProject }]);
+  }], readFromGrants([{ principalId: ownerId, ...firstProject }]));
   const { request, login, password } = await startServer(t, projectAccess);
   const status = () => request("/api/status");
   assert.equal((await status()).status, 401);
@@ -124,12 +132,12 @@ test("project status checks organization and project grants before reading envir
       environments: { production: makeReader(label + "/production"), preview: makeReader(label + "/preview") },
     };
   });
-  const access = createProjectAccess(projects, [
+  const access = createProjectAccess(projects, readFromGrants([
     { principalId: "studio-owner", ...studio },
     { principalId: "labs-owner", ...labs },
     { principalId: "observer", ...studio },
     { principalId: "observer", ...labs },
-  ]);
+  ]));
   const studioServer = await startServer(t, access, "studio-owner");
   const labsServer = await startServer(t, access, "labs-owner");
   const studioPath = "/api/organizations/studio/projects/website";
@@ -183,4 +191,76 @@ test("project status checks organization and project grants before reading envir
     { value: "studio/website/production" },
   ]);
   assert.deepEqual(reads.slice(3).sort(), ["labs/website/production", "studio/website/production"]);
+});
+
+test("persistent revocation denies warm and pending reads and survives initialization and restart", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "paige-cloud-memberships-"));
+  const path = join(dir, "memberships.sqlite");
+  const started = Promise.withResolvers();
+  const pending = Promise.withResolvers();
+  let store;
+  t.after(() => {
+    pending.resolve({ value: "delayed" });
+    store?.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const { organizationId, projectId } = firstProject;
+  const change = (action, principal = ownerId, org = organizationId) =>
+    updateProjectMembership(path, action, principal, org, projectId);
+  const unknownFile = join(dir, "other.sqlite");
+  writeFileSync(unknownFile, "");
+  assert.throws(() => initializeMembershipStore(unknownFile), /Unrecognized Cloud membership database/);
+  assert.equal(readFileSync(unknownFile).length, 0);
+  assert.throws(() => openMembershipStore(path));
+  assert.throws(() => change("grant"));
+  assert.equal(initializeMembershipStore(path), true);
+  assert.equal(initializeMembershipStore(path), false);
+  assert.throws(() => change("grant", ownerId, "unknown"), /FOREIGN KEY/);
+
+  // Both organizations use the same project ID, which remains an exact tuple lookup.
+  const fixture = new DatabaseSync(path);
+  try {
+    fixture.prepare("INSERT INTO projects VALUES (?, ?)").run("studio", projectId);
+  } finally {
+    fixture.close();
+  }
+  assert.equal(change("grant", "studio-owner", "studio"), true);
+  assert.equal(change("grant", "studio-owner", "studio"), false);
+  store = openMembershipStore(path);
+  assert.equal(store.hasProjectRead("studio-owner", organizationId, projectId), false);
+  assert.equal(store.hasProjectRead("studio-owner", "studio", projectId), true);
+  assert.equal(store.hasProjectRead(ownerId, "studio", projectId), false);
+  assert.equal(store.hasProjectRead("CLOUD-OWNER", organizationId, projectId), false);
+
+  let reads = 0;
+  const projects = [{
+    ...firstProject,
+    readStatus: () => { reads++; return { value: "cached" }; },
+    environments: { preview: () => { started.resolve(); return pending.promise; } },
+  }];
+  const fixtureServer = await startServer(t, createProjectAccess(projects, store.hasProjectRead));
+  const cookie = (await fixtureServer.login()).headers.get("set-cookie").split(";")[0];
+  const options = { headers: { cookie } };
+  const projectPath = `/api/organizations/${organizationId}/projects/${projectId}`;
+  assert.equal((await fixtureServer.request(projectPath + "/status", options)).status, 200);
+  const delayed = fixtureServer.request(projectPath + "/environments/preview/status", options);
+  await started.promise;
+
+  assert.equal(change("revoke"), true);
+  assert.equal(change("revoke"), false);
+  assert.equal((await fixtureServer.request("/api/status", options)).status, 404);
+  pending.resolve({ value: "private" });
+  assert.equal((await delayed).status, 404);
+  assert.equal(reads, 1);
+  assert.equal(initializeMembershipStore(path), false);
+  assert.equal(store.hasProjectRead(ownerId, organizationId, projectId), false);
+
+  store.close();
+  store = openMembershipStore(path);
+  const restartedServer = await startServer(t, createProjectAccess(projects, store.hasProjectRead));
+  const restartedCookie = (await restartedServer.login()).headers.get("set-cookie").split(";")[0];
+  const restartedOptions = { headers: { cookie: restartedCookie } };
+  assert.equal((await restartedServer.request(projectPath + "/status", restartedOptions)).status, 404);
+  assert.equal(change("grant"), true);
+  assert.equal((await restartedServer.request(projectPath + "/status", restartedOptions)).status, 200);
 });
