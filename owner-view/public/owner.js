@@ -322,7 +322,8 @@ async function refreshStatus() {
   render({ loading: true });
   announcement.textContent = "Checking production and preview health and source.";
   try {
-    const response = await fetch("/api/status", { cache: "no-store", redirect: "error", signal: request.signal });
+    const response = await fetch("/api/organizations/paige/projects/paige-agent-ai/status",
+      { cache: "no-store", redirect: "error", signal: request.signal });
     if (activeRequest !== request) return;
     if (response.status === 401) {
       returnToSignIn();

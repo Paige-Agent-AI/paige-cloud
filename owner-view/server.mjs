@@ -2,7 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
-import { readOwnerStatus } from "./status.mjs";
+import { createPaigeProjectAccess, ownerId, parseProjectStatusPath } from "./projects.mjs";
 
 const readAsset = (file) => readFileSync(new URL("./public/" + file, import.meta.url));
 const sessionName = "__Host-paige_owner";
@@ -49,7 +49,7 @@ async function readPassword(request) {
   return /^[A-Za-z0-9_-]{43}$/.test(password ?? "") ? password : null;
 }
 
-export function createOwnerServer({ origin, aliasOrigin, passwordHash, token, statusReader = readOwnerStatus }) {
+export function createOwnerServer({ origin, aliasOrigin, passwordHash, token, projectAccess, principalId = ownerId }) {
   const allowedOrigins = new Map();
   for (const value of aliasOrigin ? [origin, aliasOrigin] : [origin]) {
     const url = new URL(value);
@@ -57,7 +57,8 @@ export function createOwnerServer({ origin, aliasOrigin, passwordHash, token, st
     allowedOrigins.set(url.host, url.origin);
   }
   if (!/^[a-f0-9]{64}$/.test(passwordHash ?? "")) throw new Error("A 32-byte owner password hash is required.");
-  if (!/^[\x21-\x7e]{16,512}$/.test(token ?? "")) throw new Error("A scoped Coolify read token is required.");
+  if (!projectAccess && !/^[\x21-\x7e]{16,512}$/.test(token ?? "")) throw new Error("A scoped Coolify read token is required.");
+  const resolveRead = projectAccess ?? createPaigeProjectAccess(token);
 
   const expectedHash = Buffer.from(passwordHash, "hex");
   const login = readAsset("login.html").toString("utf8");
@@ -67,18 +68,18 @@ export function createOwnerServer({ origin, aliasOrigin, passwordHash, token, st
   const css = readAsset("owner.css");
   const javascript = readAsset("owner.js");
   const sessions = new Map();
-  let pendingStatus;
-  let cachedStatus;
-  let cachedAt = 0;
+  const statusCache = new WeakMap();
 
-  function getStatus() {
-    if (Date.now() - cachedAt < 3500) return Promise.resolve(cachedStatus);
-    pendingStatus ??= statusReader(token).then((snapshot) => {
-      cachedStatus = snapshot;
-      cachedAt = Date.now();
+  function getStatus(reader) {
+    const entry = statusCache.get(reader) ?? { cachedAt: -Infinity };
+    statusCache.set(reader, entry);
+    if (Date.now() - entry.cachedAt < 3500) return Promise.resolve(entry.snapshot);
+    entry.pending ??= Promise.resolve().then(reader.read).then((snapshot) => {
+      entry.snapshot = snapshot;
+      entry.cachedAt = Date.now();
       return snapshot;
-    }).finally(() => { pendingStatus = undefined; });
-    return pendingStatus;
+    }).finally(() => { entry.pending = undefined; });
+    return entry.pending;
   }
 
   async function handle(request, response) {
@@ -129,24 +130,34 @@ export function createOwnerServer({ origin, aliasOrigin, passwordHash, token, st
       for (const [oldId, entry] of sessions) if (entry.expires <= now) sessions.delete(oldId);
       if (sessions.size >= 12) sessions.delete(sessions.keys().next().value);
       const created = randomBytes(32).toString("base64url");
-      sessions.set(created, { origin: requestOrigin, expires: now + sessionLifetime * 1000 });
+      sessions.set(created, { principalId, origin: requestOrigin, expires: now + sessionLifetime * 1000 });
       send(response, 303, text, "", { Location: "/", "Set-Cookie": sessionName + "=" + created + cookieFields + sessionLifetime });
       return;
     }
+    const scope = parseProjectStatusPath(path);
     if (path === "/") {
       send(response, 200, html, authorized ? owner : login);
     } else if (path === "/sign-in") {
       send(response, 200, html, login);
     } else if (path === "/assets/owner.css") {
       send(response, 200, "text/css; charset=utf-8", css);
-    } else if (path === "/api/status") {
+    } else if (scope) {
       if (!authorized) {
         send(response, 401, json, '{"error":"Sign in required"}');
         return;
       }
-      const snapshot = await getStatus();
+      const reader = resolveRead(session.principalId, scope);
+      if (!reader) {
+        send(response, 404, json, '{"error":"Not found"}');
+        return;
+      }
+      const snapshot = await getStatus(reader);
       if (sessions.get(id) !== session || session.expires <= Date.now()) {
         send(response, 401, json, '{"error":"Sign in required"}');
+        return;
+      }
+      if (resolveRead(session.principalId, scope) !== reader) {
+        send(response, 404, json, '{"error":"Not found"}');
         return;
       }
       send(response, 200, json, JSON.stringify(snapshot), {
