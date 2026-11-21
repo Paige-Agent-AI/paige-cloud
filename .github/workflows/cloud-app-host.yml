@@ -6,6 +6,11 @@ on:
   repository_dispatch:
     types: [paige-frontend-main]
   workflow_dispatch:
+    inputs:
+      frontend_commit:
+        description: Full approved PAIGE frontend main commit SHA
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -30,7 +35,7 @@ jobs:
           persist-credentials: false
       - name: Build the full frontend and verify routes
         env:
-          MERGED_COMMIT: ${{ github.event.client_payload.commit }}
+          REQUESTED_COMMIT: ${{ inputs.frontend_commit || github.event.client_payload.commit }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
@@ -38,8 +43,9 @@ jobs:
             frontend="$(cat app-host/frontend.commit)"
           else
             frontend="$(git ls-remote --exit-code https://github.com/Paige-Agent-AI/Paige-Agent-AI.git refs/heads/main | cut -f1)"
-            if [[ "$GITHUB_EVENT_NAME" == repository_dispatch ]]; then
-              [[ "$MERGED_COMMIT" =~ ^[a-f0-9]{40}$ && "$MERGED_COMMIT" == "$frontend" ]]
+            if [[ ! "$REQUESTED_COMMIT" =~ ^[a-f0-9]{40}$ || "$REQUESTED_COMMIT" != "$frontend" ]]; then
+              echo 'The requested commit must equal the current PAIGE frontend main commit.' >&2
+              exit 1
             fi
           fi
           [[ "$frontend" =~ ^[a-f0-9]{40}$ ]]
@@ -52,7 +58,8 @@ jobs:
           curl -fsS --max-time 3 --retry 10 --retry-delay 1 --retry-all-errors "$base/healthz"
           curl -fsS "$base/release.json" | jq -e --arg cloud "$GITHUB_SHA" --arg frontend "$frontend" \
             '.cloudCommit == $cloud and .frontendCommit == $frontend'
-          for pair in auth:auth.html privacy:privacy.html sms-terms:sms-terms.html operator/workspaces:index.html; do
+          for pair in ':index.html' 'auth?mode=login:auth.html' 'auth?mode=signup:auth.html' 'signup:index.html' \
+                       'privacy:privacy.html' 'sms-terms:sms-terms.html' 'operator/workspaces:index.html'; do
             curl -fsS "$base/${pair%:*}" -o "$RUNNER_TEMP/paige-route.html"
             curl -fsS "$base/${pair#*:}" -o "$RUNNER_TEMP/paige-entry.html"
             test -s "$RUNNER_TEMP/paige-entry.html"
@@ -81,4 +88,11 @@ jobs:
           test "$(docker buildx imagetools inspect --format '{{json .Manifest.Digest}}' "$IMAGE_REPO:$tag" | tr -d '"')" = "$digest"
           jq -n --arg cloud "$GITHUB_SHA" --arg frontend "$FRONTEND_COMMIT" \
             --arg image "$IMAGE_REPO@$digest" --arg tag "$tag" \
-            '{cloudCommit:$cloud,frontendCommit:$frontend,image:$image,coolifyTag:$tag}' | tee -a "$GITHUB_STEP_SUMMARY"
+            --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            '{cloudCommit:$cloud,frontendCommit:$frontend,image:$image,coolifyTag:$tag,run:$run}' \
+            | tee "$RUNNER_TEMP/paige-app-release.json" "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: paige-app-release-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/paige-app-release.json
+          if-no-files-found: error

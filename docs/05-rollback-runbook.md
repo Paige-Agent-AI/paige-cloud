@@ -34,3 +34,11 @@ Capture the UTC timestamps, environment, app UUID and URL, source SHAs, GHCR dig
 ## Legacy app history
 
 The Dockerfile-in-Coolify deployments were separate apps using mutable local tags and a floating upstream clone. Their two healthy URLs establish no same-app rollback or exact image mapping. The historical review receipt is preserved.
+
+## Deploy the full PAIGE app
+
+1. After an approved merge into `Paige-Agent-AI/Paige-Agent-AI` `main`, copy the full merge SHA. In the private Cloud repository, use **Actions → Publish PAIGE app for Coolify → Run workflow** on the default branch and supply that SHA. The workflow rejects a SHA that differs from canonical `main`. If the dispatch integration is enabled, it accepts the same SHA in the `paige-frontend-main` event. The build publishes only after the running image passes the homepage, sign-in and signup route checks. These checks serve the pages without submitting forms.
+2. Open the successful Actions run and keep its `paige-app-release-*` artifact. Check the Cloud SHA, frontend SHA, GHCR image digest and `coolifyTag`. Confirm that the frontend SHA is the approved release. Keep the current live digest and `/release.json` as the rollback reference.
+3. In Coolify, select `paige-full-app` in the `production` environment. Check that the app is healthy and there is no active deployment. Update only **Docker Image Tag or Hash** to the release artifact's `coolifyTag`, then deploy. The existing server's GHCR package-reader login is sufficient. The Actions workflow never changes Coolify. Release operators carry out the promotion in Coolify.
+4. Wait for Coolify to finish. Confirm the deployment log pulled the intended digest, `/healthz` returns `200`, and `/release.json` matches both source SHAs. Check the homepage and the auth entry on the branded domain and record the Coolify deployment ID. EXP00 and EXP01 own functional validation of signup and onboarding.
+5. If the release fails, wait until Coolify has finished the attempt, put the prior verified `coolifyTag` back and redeploy on `paige-full-app`. Verify health and the prior `/release.json` again. Keep Release B, its preview app and the Cloud dashboard out of this deployment path.
