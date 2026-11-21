@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { readPreviewStatus } from "./status.mjs";
+import { readOwnerStatus, readPreviewStatus, readProductionStatus } from "./status.mjs";
 
 const ledger = JSON.parse(readFileSync(new URL("./release-ledger.json", import.meta.url)));
 const f2Id = "izwrky18u9ixdhstnulxpjs5";
@@ -107,4 +107,70 @@ test("reports provider timings without attributing a different deployment to a k
   assert.equal(history[0].source, null);
   assert.equal(history[0].imageDigest, null);
   assert.ok(history[0].elapsedSeconds > 0);
+});
+
+test("checks the approved production domains without sending the preview credential", async () => {
+  const releases = [];
+  const previewReads = [];
+  const productionHosts = ["paigeagent.ai", "www.paigeagent.ai", "app.paigeagent.ai"];
+  const previewSource = fakeSource({}, previewReads);
+  const snapshot = await readOwnerStatus(token, async (url, options) => {
+    const { hostname, pathname } = new URL(url);
+    if (!productionHosts.includes(hostname)) return previewSource(url, options);
+    assert.equal(options.method, "GET");
+    assert.equal(options.redirect, "error");
+    assert.equal(new Headers(options.headers).has("authorization"), false);
+    releases.push(`${hostname}${pathname}`);
+    return pathname === "/healthz" ? new Response("ok") : Response.json({
+      ...sampleManifest, unknown: "provider data is never copied into readback",
+    });
+  });
+
+  assert.equal(releases.length, 6);
+  assert.equal(new Set(releases).size, 6);
+  assert.equal(snapshot.identity, "verified");
+  assert.equal(snapshot.current.name, ledger.releases.B.name);
+  assert.equal(snapshot.production.state, "healthy");
+  assert.equal(snapshot.production.identity, "matched");
+  assert.equal(snapshot.production.frontendCommit, sampleManifest.frontendCommit);
+  assert.deepEqual(snapshot.production.domains.map(({ hostname }) => hostname), productionHosts);
+  assert.doesNotMatch(JSON.stringify(snapshot.production), /unknown|imageDigest|provider data/);
+  assert.equal(previewReads.length, 4);
+});
+
+test("shows partial failure and disagreed source without claiming a production revision", async () => {
+  const production = await readProductionStatus(async (url) => {
+    const { hostname, pathname } = new URL(url);
+    if (pathname === "/healthz") {
+      if (hostname === "app.paigeagent.ai") throw new Error("No response");
+      return hostname === "www.paigeagent.ai" ? new Response("Failure", { status: 503 }) : new Response("ok");
+    }
+    if (hostname === "app.paigeagent.ai") return new Response("malformed metadata");
+    return Response.json({ ...sampleManifest, frontendCommit: hostname === "www.paigeagent.ai" ? "a".repeat(40) : sampleManifest.frontendCommit });
+  });
+
+  assert.equal(production.state, "unhealthy");
+  assert.equal(production.identity, "mismatch");
+  assert.equal(production.frontendCommit, null);
+  assert.deepEqual(production.domains.map(({ state, httpStatus }) => [state, httpStatus]), [
+    ["healthy", 200], ["unhealthy", 503], ["unavailable", null],
+  ]);
+
+  const unavailable = await readProductionStatus(async (url) => new URL(url).pathname === "/healthz"
+    ? new Response("ok") : new Response("", { status: 404 }));
+  assert.equal(unavailable.state, "healthy");
+  assert.equal(unavailable.identity, "unavailable");
+  assert.equal(unavailable.frontendCommit, null);
+});
+
+test("rejects partial responses and non-string source revisions from production domains", async () => {
+  const production = await readProductionStatus(async (url) => {
+    const { hostname, pathname } = new URL(url);
+    if (pathname === "/healthz") return new Response("ok");
+    if (hostname === "paigeagent.ai") return Response.json({ ...sampleManifest, frontendCommit: [sampleManifest.frontendCommit] });
+    return Response.json(sampleManifest, { status: hostname === "www.paigeagent.ai" ? 206 : 200 });
+  });
+  assert.equal(production.identity, "unavailable");
+  assert.equal(production.frontendCommit, null);
+  assert.deepEqual(production.domains.map(({ frontendCommit }) => frontendCommit), [null, null, sampleManifest.frontendCommit]);
 });

@@ -2,6 +2,8 @@
 
 [ANT-177](https://linear.app/paigeagentai/issue/ANT-177) tracks the private dashboard. The public F2 preview is a separate Coolify app. The dashboard reads its HTTPS `/healthz` and `/release.json` endpoints and the provider's application and deployment history metadata. It does not promote or rebuild releases. The accepted [F2 release evidence](https://linear.app/paigeagentai/issue/ANT-176) supplies the deployment-to-digest mapping. A new or ambiguous deployment, a changed digest, and a conflicting source manifest all leave the release unconfirmed.
 
+The owner overview also checks PAIGE Agent AI's three production domains through public HTTPS GET requests. It reports a shared source commit when all three release manifests agree. Production digest verification remains tied to the release and provider evidence. The Coolify read token stays scoped to the F2 application. See the [SaaS readiness assessment](../docs/11-saas-readiness.md).
+
 ## Publish and host
 
 1. Test with `node --test owner-view/status.test.mjs owner-view/server.test.mjs` from the Cloud checkout. Have a non-author review the exact source. Push a dedicated `ant-177-owner-view-*` release tag to the private Cloud repo to run the image build. Record the Actions run and immutable GHCR manifest digest from its summary.

@@ -5,6 +5,7 @@ const appId = "izwrky18u9ixdhstnulxpjs5";
 const previewOrigin = "https://izwrky18u9ixdhstnulxpjs5.179.66.154.248.sslip.io";
 const providerOrigin = "https://app.coolify.io/api/v1";
 const imagePackage = "ghcr.io/paige-agent-ai/paige-cloud-preview";
+const productionHosts = ["paigeagent.ai", "www.paigeagent.ai", "app.paigeagent.ai"];
 const deploymentId = /^[a-z0-9]{20,32}$/;
 const commitId = /^[a-f0-9]{40}$/;
 const visibleStatuses = new Set(["queued", "in_progress", "finished", "failed", "cancelled", "cancelled-by-user"]);
@@ -131,4 +132,63 @@ export async function readPreviewStatus(token, fetchFrom = fetch) {
     ...identityOf(app, manifest, history),
     history: history?.map(({ createdAt, code, ...row }) => row) ?? null,
   };
+}
+
+export async function readProductionStatus(fetchFrom = fetch) {
+  const request = (url, type) => fetchFrom(url, {
+    method: "GET", headers: { Accept: type }, redirect: "error", cache: "no-store",
+    signal: AbortSignal.timeout(6500),
+  });
+
+  const domains = await Promise.all(productionHosts.map(async (hostname) => {
+    const origin = "https://" + hostname;
+    const [health, source] = await Promise.allSettled([
+      (async () => {
+        const response = await request(origin + "/healthz", "text/plain");
+        if (response.status !== 200) {
+          await response.body?.cancel();
+          return { state: "unhealthy", httpStatus: response.status };
+        }
+        const healthy = (await readBody(response, 1024)).trim() === "ok";
+        return { state: healthy ? "healthy" : "unhealthy", httpStatus: response.status };
+      })(),
+      (async () => {
+        const response = await request(origin + "/release.json", "application/json");
+        if (response.status !== 200) {
+          await response.body?.cancel();
+          return null;
+        }
+        const manifest = JSON.parse(await readBody(response, 8192));
+        return typeof manifest?.frontendCommit === "string" && commitId.test(manifest.frontendCommit) &&
+          typeof manifest.cloudCommit === "string" && commitId.test(manifest.cloudCommit)
+          ? { frontendCommit: manifest.frontendCommit, cloudCommit: manifest.cloudCommit } : null;
+      })(),
+    ]);
+    return {
+      hostname,
+      state: health.value?.state ?? "unavailable",
+      httpStatus: health.value?.httpStatus ?? null,
+      frontendCommit: source.value?.frontendCommit ?? null,
+      cloudCommit: source.value?.cloudCommit ?? null,
+    };
+  }));
+
+  const sources = domains.filter((domain) => domain.frontendCommit);
+  const revisions = new Set(sources.map(({ frontendCommit, cloudCommit }) => `${frontendCommit}:${cloudCommit}`));
+  const identity = revisions.size > 1 ? "mismatch" : sources.length === domains.length ? "matched" : "unavailable";
+  return {
+    checkedAt: new Date().toISOString(),
+    state: domains.every((domain) => domain.state === "healthy") ? "healthy" :
+      domains.some((domain) => domain.state === "unhealthy") ? "unhealthy" : "unavailable",
+    identity,
+    frontendCommit: identity === "matched" ? sources[0].frontendCommit : null,
+    domains,
+  };
+}
+
+export async function readOwnerStatus(token, fetchFrom = fetch) {
+  const [preview, production] = await Promise.all([
+    readPreviewStatus(token, fetchFrom), readProductionStatus(fetchFrom),
+  ]);
+  return { ...preview, production };
 }

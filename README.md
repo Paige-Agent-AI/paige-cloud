@@ -5,6 +5,7 @@ The private `Paige-Agent-AI/paige-cloud-preview` repository builds the public PA
 - [Existing F1 preview](https://fxfz4l18wzsufmveobxljvce.179.66.154.248.sslip.io)
 - [Release, rollback and recovery](docs/05-rollback-runbook.md)
 - [Monitoring and observed infrastructure costs](docs/10-monitoring-cost-visibility.md)
+- [SaaS readiness and build sequence](docs/11-saas-readiness.md)
 - [Historical F2 review receipt](docs/08-f2-review-receipt.md)
 
 Run the candidate build and smoke tests from the independently reviewed commit using Docker and Node.js:

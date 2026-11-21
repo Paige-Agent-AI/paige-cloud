@@ -20,7 +20,7 @@
 </nav>
 <main id="main" tabindex="-1">
   <div class="page-head">
-    <div><h1 id="page-title" tabindex="-1">Overview</h1><p class="muted">PAIGE Cloud Preview <span aria-hidden="true"> / </span> <code>f2-preview</code></p></div>
+    <div><h1 id="page-title" tabindex="-1">Overview</h1><p class="muted" id="page-scope">PAIGE Agent AI</p></div>
     <div class="page-actions">
       <button id="refresh" type="button">Refresh status</button>
       <a class="primary" href="https://paige-ant178-auth.179.66.154.248.sslip.io/" target="_blank" rel="noreferrer">Open app preview<span class="sr"> (PAIGE sign-in pilot, new tab)</span></a>
@@ -30,7 +30,14 @@
   <noscript><p class="notice warn">Enable JavaScript to view deployment status.</p></noscript>
   <div id="deployment-view" hidden>
     <div class="notice-list" id="notices" hidden></div>
-    <div class="releases" id="overview-panel">
+    <div id="overview-panel">
+      <section class="production-panel" aria-labelledby="production-title">
+        <div class="history-head"><h2 id="production-title">Production</h2><span class="status" id="production-health">Checking</span></div>
+        <p class="small muted" id="production-readback"></p>
+        <code id="production-commit" hidden></code>
+        <ul class="production-domains" id="production-domains" aria-label="Production domain checks"></ul>
+      </section>
+      <div class="releases">
       <table class="release-table" aria-label="Preview releases" role="table">
         <colgroup><col><col><col><col></colgroup>
         <thead role="rowgroup"><tr role="row"><th scope="col" role="columnheader">Release</th><th scope="col" role="columnheader">Status</th><th scope="col" role="columnheader">Source</th><th scope="col" role="columnheader">Image digest</th></tr></thead>
@@ -65,6 +72,7 @@
           </tr>
         </tbody>
       </table>
+      </div>
     </div>
     <section class="history" id="deployments-panel" aria-labelledby="history-title" hidden>
       <div class="history-head"><h2 id="history-title">Deployment history</h2><p class="small muted" id="history-source">Coolify · newest first</p></div>
