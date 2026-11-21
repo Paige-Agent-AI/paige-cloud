@@ -65,6 +65,27 @@ function settingsPanel(project, accountPath) {
   ${button(project.archived ? "Restore project" : "Archive project")}</form></section>`;
 }
 
+function customerPanel(catalog, path) {
+  const invitations = catalog.pendingCustomers().map(({ email, name, expiresAt }) =>
+    `<li><span><strong>${escape(email)}</strong><br>${escape(name)}<br><small class="muted">Expires ${new Date(expiresAt).toISOString().slice(0, 10)} UTC</small></span>
+      <form method="post" action="${path}">${action("cancel-customer")}<input type="hidden" name="email" value="${escape(email)}">${button("Cancel invitation")}</form></li>`);
+  return `<section class="project-panel" aria-labelledby="invite-customer"><h2 id="invite-customer">Invite a customer</h2>
+    <form class="project-form" method="post" action="${path}">${action("invite-customer")}
+    <label for="customer-email">Customer email</label><input type="email" id="customer-email" name="email" maxlength="254" required>
+    <label for="first-project">First project name</label><input id="first-project" name="name" maxlength="80" required>
+    <p class="muted">PAIGE Cloud assigns the organization and project IDs when the customer signs up.</p>
+    ${button("Prepare customer invitation", true)}</form>
+    ${invitations.length ? `<h3>Pending customer invitations</h3><ul class="project-list">${invitations.join("")}</ul>` : ""}</section>`;
+}
+
+function invitationPanel(email, code, subject, message, back, backLabel) {
+  const [mailbox, domain] = email.split("@");
+  return `<section class="project-panel"><p>For <strong>${escape(email)}</strong>. This code expires in 48 hours.</p>
+    <p><code class="account-id">${code}</code></p>
+    <p><a class="primary" href="mailto:${encodeURIComponent(mailbox)}@${domain}?subject=${encodeURIComponent(subject)}&amp;body=${encodeURIComponent(message)}">Open email draft</a></p>
+    <p class="muted">Send the draft to deliver the invitation.</p><p><a href="${back}">${backLabel}</a></p></section>`;
+}
+
 export function projectPage({ route, form, method, principal, origin, catalog, accounts, showDeployments, remaining, accountPath = "" }) {
   const manage = principal === ownerId;
   const page = (title, body, status = 200) => ({ status, html: shell(title, body, showDeployments, remaining, accountPath) });
@@ -83,6 +104,22 @@ export function projectPage({ route, form, method, principal, origin, catalog, a
   if (post && !manage) return { status: 404 };
   if (route.path === "/projects") {
     if (post) {
+      const requestedAction = form?.get("action");
+      if (requestedAction === "invite-customer") {
+        const email = normalizeEmail(form.get("email"));
+        const name = form.get("name")?.trim();
+        if (form.size !== 3 || !email || !validName(name)) return error("Enter the customer’s email and first project name.", "/projects");
+        const code = accounts.issueCustomerInvitation(email, name);
+        if (!code) return error("This email already has an account. Use the project’s Members page to invite them.", "/projects", 409);
+        const message = `You’re invited to set up a PAIGE Cloud workspace.\n\nCreate your account at ${origin}/signup using ${email} and this invitation code:\n${code}\n\nThe code expires after 48 hours. Sign in after signup to open your first project, ${name}.`;
+        return page("Customer invitation ready", invitationPanel(email, code, "Set up your PAIGE Cloud workspace", message, accountPath + "/projects", "Back to projects"));
+      }
+      if (requestedAction === "cancel-customer") {
+        const email = normalizeEmail(form.get("email"));
+        if (form.size !== 2 || !email) return error("Select a pending customer invitation.", "/projects");
+        catalog.cancelCustomerInvitation(email);
+        return redirect("/projects");
+      }
       const organization = form?.get("organization");
       const id = form?.get("project");
       const name = form?.get("name")?.trim();
@@ -101,7 +138,7 @@ export function projectPage({ route, form, method, principal, origin, catalog, a
         `<li><div><a href="${accountPath + url(project)}"><strong>${escape(project.name)}</strong></a><br><code class="muted">${escape(project.organizationId)}/${escape(project.projectId)}</code></div>
         ${project.archived ? '<span class="status">Archived</span>' : ""}</li>`).join("")}</ul>` :
       `<p>No projects yet. Accept an invitation to get access.</p><p class="muted">Account ID <code class="account-id">${escape(principal)}</code></p>`}</section>
-      ${manage ? `<section class="project-panel"><h2>Create a project</h2>
+      ${manage ? customerPanel(catalog, accountPath + "/projects") + `<section class="project-panel"><h2>Create a project</h2>
         <form class="project-form" method="post" action="${accountPath}/projects">
         <label for="name">Display name</label><input id="name" name="name" maxlength="80" required>
         <label for="organization">Organization ID</label><input id="organization" name="organization" required pattern="[a-z0-9][a-z0-9\u005c-]{0,62}" maxlength="63" spellcheck="false">
@@ -141,13 +178,8 @@ export function projectPage({ route, form, method, principal, origin, catalog, a
       if (accounts.isOwnerEmail(email)) return error("The Cloud owner account does not need a project invitation.", route.path);
       const code = catalog.issue(organizationId, projectId, email);
       if (!code) return error("The project is unavailable.", route.path);
-      const subject = encodeURIComponent(`PAIGE Cloud invitation to ${project.name}`);
-      const [mailbox, domain] = email.split("@");
-      const message = encodeURIComponent(`You’re invited to join ${project.name} on PAIGE Cloud.\n\nNew accounts: ${origin}/signup\nSign in: ${origin}/sign-in\nAccept invitation: ${origin}/join\n\nUse ${email} and invitation code ${code}. The code expires after 48 hours. If you just created an account, sign in and enter the same code to accept.`);
-      return page("Invitation ready", `<section class="project-panel"><p>For <strong>${escape(email)}</strong>. This code expires in 48 hours.</p>
-        <p><code class="account-id">${code}</code></p>
-        <p><a class="primary" href="mailto:${encodeURIComponent(mailbox)}@${domain}?subject=${subject}&amp;body=${message}">Open email draft</a></p>
-        <p class="muted">Send the draft to deliver the invitation.</p><p><a href="${accountPath + route.path}">Back to members</a></p></section>`);
+      const message = `You’re invited to join ${project.name} on PAIGE Cloud.\n\nNew accounts: ${origin}/signup\nSign in: ${origin}/sign-in\nAccept invitation: ${origin}/join\n\nUse ${email} and invitation code ${code}. The code expires after 48 hours. If you just created an account, sign in and enter the same code to accept.`;
+      return page("Invitation ready", invitationPanel(email, code, `PAIGE Cloud invitation to ${project.name}`, message, accountPath + route.path, "Back to members"));
     }
     case "cancel-invite": {
       const email = normalizeEmail(form.get("email"));

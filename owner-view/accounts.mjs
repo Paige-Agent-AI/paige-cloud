@@ -126,15 +126,29 @@ export function openAccounts(path, membershipPath) {
     const hasOwner = db.prepare("SELECT 1 FROM accounts WHERE principal_id = ?");
     const invitation = db.prepare("SELECT 1 FROM invitations WHERE email = ? AND digest = ? AND expires_at > ?");
     let projectInvitation;
+    let customerInvitation;
+    let pendingCustomer;
+    let saveCustomerInvite;
+    let cleanupCustomerInvites;
+    let provisionCustomer;
     if (membershipPath) {
       if (accountPath(membershipPath) !== path || membershipPath === path) throw new Error("Invalid Cloud membership path.");
       db.prepare("ATTACH DATABASE ? AS project_store").run(membershipPath);
-      if (["main", "project_store"].some((schema) => db.prepare(`PRAGMA ${schema}.journal_mode`).get().journal_mode === "wal")) {
+      const journals = ["delete", "truncate", "persist"];
+      if (["main", "project_store"].some((schema) => !journals.includes(db.prepare(`PRAGMA ${schema}.journal_mode`).get().journal_mode))) {
         throw new Error("Project invitations require the rollback journal.");
       }
+      db.exec("PRAGMA main.synchronous = FULL; PRAGMA project_store.synchronous = FULL;");
       projectInvitation = db.prepare(`SELECT 1 FROM project_store.project_invitations i
         LEFT JOIN project_store.project_details d USING (organization_id, project_id)
         WHERE i.email = ? AND i.digest = ? AND i.expires_at > ? AND COALESCE(d.archived, 0) = 0`);
+      customerInvitation = db.prepare(`SELECT name FROM project_store.customer_invitations
+        WHERE email = ? AND digest = ? AND expires_at > ?`);
+      pendingCustomer = db.prepare("SELECT 1 FROM project_store.customer_invitations WHERE email = ? AND expires_at > ?");
+      saveCustomerInvite = db.prepare(`INSERT INTO project_store.customer_invitations (email, name, digest, expires_at) VALUES (?, ?, ?, ?)
+        ON CONFLICT (email) DO UPDATE SET name=excluded.name, digest=excluded.digest, expires_at=excluded.expires_at`);
+      cleanupCustomerInvites = db.prepare("DELETE FROM project_store.customer_invitations WHERE expires_at <= ?");
+      provisionCustomer = prepareCustomerWorkspace(db);
     }
     const removeInvitation = db.prepare("DELETE FROM invitations WHERE email = ?");
     const addOwner = db.prepare(`
@@ -170,7 +184,18 @@ export function openAccounts(path, membershipPath) {
         return code;
       },
       hasInvitation: (email, code) => !!invitation.get(email, invitationDigest(code), Date.now()),
-      async create(email, password, { owner = false, code, allowProjectSignup } = {}) {
+      issueCustomerInvitation(email, name) {
+        if (!saveCustomerInvite) throw new Error("The project database is required for customer invitations.");
+        return inTransaction(() => {
+          if (lookup.get(email)) return undefined;
+          const code = randomBytes(32).toString("base64url");
+          const now = Date.now();
+          cleanupCustomerInvites.run(now);
+          saveCustomerInvite.run(email, name, invitationDigest(code), now + invitationLifetime);
+          return code;
+        });
+      },
+      async create(email, password, { owner = false, code, allowProjectSignup, allowCustomerSignup } = {}) {
         const salt = randomBytes(16);
         const digest = await derive(password, salt, 32, scryptOptions);
         const id = owner ? ownerId : "member-" + randomBytes(16).toString("hex");
@@ -183,7 +208,10 @@ export function openAccounts(path, membershipPath) {
             const now = Date.now();
             const existing = invitation.get(email, hashedCode, now);
             const project = allowProjectSignup && projectInvitation?.get(email, hashedCode, now);
-            added = (!!existing || !!project) && addMember.run(id, email, salt, digest, ownerId).changes === 1;
+            const customer = allowCustomerSignup && customerInvitation?.get(email, hashedCode, now);
+            const eligible = customer || ((existing || project) && !pendingCustomer?.get(email, now));
+            added = !!eligible && addMember.run(id, email, salt, digest, ownerId).changes === 1;
+            if (added && customer) provisionCustomer(id, email, customer.name);
             if (added && existing) removeInvitation.run(email);
           }
           if (added) assignNumber(id);
@@ -201,6 +229,35 @@ export function openAccounts(path, membershipPath) {
     db.close();
     throw error;
   }
+}
+
+// The caller already holds the transaction across both databases.
+function prepareCustomerWorkspace(db) {
+  const usedOrganization = db.prepare("SELECT 1 FROM project_store.projects WHERE organization_id = ? LIMIT 1");
+  const usedProject = db.prepare("SELECT 1 FROM project_store.projects WHERE project_id = ? LIMIT 1");
+  const project = db.prepare("INSERT INTO project_store.projects (organization_id, project_id) VALUES (?, ?)");
+  const details = db.prepare("INSERT INTO project_store.project_details (organization_id, project_id, name) VALUES (?, ?, ?)");
+  const organization = db.prepare(`INSERT INTO project_store.customer_organizations
+    (organization_id, customer_id, first_project_id) VALUES (?, ?, ?)`);
+  const grant = db.prepare(`INSERT INTO project_store.project_memberships (principal_id, organization_id, project_id) VALUES (?, ?, ?)`);
+  const consumed = db.prepare("DELETE FROM project_store.customer_invitations WHERE email = ?");
+  function uniqueId(prefix, used) {
+    for (let attempt = 0; attempt < 16; attempt++) {
+      const id = prefix + randomBytes(16).toString("hex");
+      if (!used.get(id)) return id;
+    }
+    throw new Error("Could not assign a Cloud workspace identifier.");
+  }
+  return (principal, email, name) => {
+    const org = uniqueId("org-", usedOrganization);
+    const id = uniqueId("prj-", usedProject);
+    project.run(org, id);
+    details.run(org, id, name);
+    organization.run(org, principal, id);
+    grant.run(principal, org, id);
+    grant.run(ownerId, org, id);
+    consumed.run(email);
+  };
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
