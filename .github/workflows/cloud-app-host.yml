@@ -11,10 +11,17 @@ on:
         description: Full approved PAIGE frontend main commit SHA
         required: true
         type: string
+      merge_pr:
+        description: Canonical pull request number for automatic promotion
+        required: false
+        type: string
+      verify_coolify:
+        description: Verify the scoped Coolify credential and live domains without deploying
+        type: boolean
+        default: false
 
 permissions:
   contents: read
-  packages: write
 
 concurrency:
   group: cloud-app-host-publish
@@ -24,15 +31,28 @@ jobs:
   publish:
     if: >-
       github.repository == 'Paige-Agent-AI/paige-cloud-preview' &&
-      (startsWith(github.ref, 'refs/tags/cloud-app-host-') || github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+      (startsWith(github.ref, 'refs/tags/cloud-app-host-') || github.ref == 'refs/heads/main') &&
+      !inputs.verify_coolify
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      frontend: ${{ steps.release.outputs.frontend }}
+      digest: ${{ steps.release.outputs.digest }}
     env:
       IMAGE_REPO: ghcr.io/paige-agent-ai/paige-cloud-preview
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
+      - name: Verify the canonical merge and the authorized merger
+        if: github.event_name == 'workflow_dispatch' && inputs.merge_pr != ''
+        env:
+          FRONTEND_COMMIT: ${{ inputs.frontend_commit }}
+          MERGE_PR: ${{ inputs.merge_pr }}
+        run: node scripts/verify-paige-main.mjs "$FRONTEND_COMMIT" "$MERGE_PR"
       - name: Build the full frontend and verify routes
         env:
           REQUESTED_COMMIT: ${{ inputs.frontend_commit || github.event.client_payload.commit }}
@@ -71,6 +91,7 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/auth")" = 405
           printf 'CANDIDATE=%s\nFRONTEND_COMMIT=%s\n' "$image" "$frontend" >> "$GITHUB_ENV"
       - name: Publish the verified image
+        id: release
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -86,6 +107,7 @@ jobs:
           docker tag "$CANDIDATE" "$IMAGE_REPO:$tag"
           docker push "$IMAGE_REPO:$tag"
           test "$(docker buildx imagetools inspect --format '{{json .Manifest.Digest}}' "$IMAGE_REPO:$tag" | tr -d '"')" = "$digest"
+          printf 'frontend=%s\ndigest=%s\n' "$FRONTEND_COMMIT" "$digest" >> "$GITHUB_OUTPUT"
           jq -n --arg cloud "$GITHUB_SHA" --arg frontend "$FRONTEND_COMMIT" \
             --arg image "$IMAGE_REPO@$digest" --arg tag "$tag" \
             --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
@@ -96,3 +118,36 @@ jobs:
           name: paige-app-release-${{ github.run_attempt }}
           path: ${{ runner.temp }}/paige-app-release.json
           if-no-files-found: error
+  verify-coolify:
+    if: >-
+      github.repository == 'Paige-Agent-AI/paige-cloud-preview' && github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' && inputs.verify_coolify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Verify credential scope and serving domains
+        env:
+          PAIGE_COOLIFY_DEPLOY_TOKEN: ${{ secrets.PAIGE_COOLIFY_DEPLOY_TOKEN }}
+        run: node scripts/deploy-paige-main.mjs --check
+  promote:
+    needs: publish
+    if: >-
+      github.repository == 'Paige-Agent-AI/paige-cloud-preview' && github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' && inputs.merge_pr != '' &&
+      vars.PAIGE_AUTO_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Deploy the verified digest to PAIGE
+        env:
+          PAIGE_COOLIFY_DEPLOY_TOKEN: ${{ secrets.PAIGE_COOLIFY_DEPLOY_TOKEN }}
+          FRONTEND_COMMIT: ${{ needs.publish.outputs.frontend }}
+          IMAGE_DIGEST: ${{ needs.publish.outputs.digest }}
+          MERGE_PR: ${{ inputs.merge_pr }}
+        run: node scripts/deploy-paige-main.mjs --promote "$FRONTEND_COMMIT" "$GITHUB_SHA" "$IMAGE_DIGEST" "$MERGE_PR"
