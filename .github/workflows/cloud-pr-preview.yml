@@ -1,0 +1,76 @@
+name: Build a PAIGE pull-request preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      pull_request:
+        description: Pull request number in the canonical PAIGE Agent AI repository
+        required: true
+        type: string
+      head_sha:
+        description: Full SHA of the reviewed pull request head
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: paige-pr-preview-${{ inputs.pull_request }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.repository == 'Paige-Agent-AI/paige-cloud-preview' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      APP_REPO: Paige-Agent-AI/Paige-Agent-AI
+      IMAGE_REPO: ghcr.io/paige-agent-ai/paige-agent-ai-pr-preview
+      PULL_REQUEST: ${{ inputs.pull_request }}
+      FRONTEND_COMMIT: ${{ inputs.head_sha }}
+    steps:
+      - name: Verify the requested pull request head
+        run: |
+          set -euo pipefail
+          [[ "$PULL_REQUEST" =~ ^[1-9][0-9]{0,9}$ ]]
+          [[ "$FRONTEND_COMMIT" =~ ^[a-f0-9]{40}$ ]]
+          curl --fail --silent --show-error --max-time 20 --retry 2 \
+            "https://api.github.com/repos/$APP_REPO/pulls/$PULL_REQUEST" \
+            | jq -ce --arg repo "$APP_REPO" --arg sha "$FRONTEND_COMMIT" '
+                select(.state == "open" and .base.ref == "main" and
+                  .base.repo.full_name == $repo and .head.repo.full_name == $repo and .head.sha == $sha)
+                | {branch:.head.ref, pullRequestUrl:.html_url}' > "$RUNNER_TEMP/paige-preview-source.json"
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Build and verify the isolated preview
+        run: |
+          set -euo pipefail
+          image="$IMAGE_REPO:pr-$PULL_REQUEST-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          bash pr-preview/build.sh "$image" "$PULL_REQUEST" "$FRONTEND_COMMIT" "$GITHUB_SHA"
+          echo "CANDIDATE=$image" >> "$GITHUB_ENV"
+      - name: Publish exact preview image and record provenance
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          trap 'docker logout ghcr.io >/dev/null' EXIT
+          docker push "$CANDIDATE"
+          digest="$(docker buildx imagetools inspect --format '{{json .Manifest.Digest}}' "$CANDIDATE" | tr -d '"')"
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          docker pull "$IMAGE_REPO@$digest"
+          [[ "$(docker image inspect --format '{{.Id}}' "$CANDIDATE")" == "$(docker image inspect --format '{{.Id}}' "$IMAGE_REPO@$digest")" ]]
+          jq --argjson pr "$PULL_REQUEST" --arg frontend "$FRONTEND_COMMIT" --arg cloud "$GITHUB_SHA" \
+            --arg image "$IMAGE_REPO@$digest" --arg tag "${CANDIDATE##*:}" \
+            '. + {environment:"pull-request-preview",pullRequest:$pr,frontendCommit:$frontend,cloudCommit:$cloud,image:$image,tag:$tag,verification:"image-smoke-passed"}' \
+            "$RUNNER_TEMP/paige-preview-source.json" \
+            | tee "$RUNNER_TEMP/paige-pr-preview.json" "$GITHUB_STEP_SUMMARY"
+      - name: Retain preview build receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: paige-pr-preview-${{ inputs.pull_request }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/paige-pr-preview.json
+          if-no-files-found: error

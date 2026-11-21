@@ -1,0 +1,5 @@
+**
+!app-host/
+!app-host/prepare-frontend.mjs
+!pr-preview/
+!pr-preview/nginx.conf
