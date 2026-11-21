@@ -4,6 +4,14 @@
 
 The owner overview also checks PAIGE Agent AI's three production domains through public HTTPS GET requests. It reports a shared source commit when all three release manifests agree. Production digest verification remains tied to the release and provider evidence. The Coolify read token stays scoped to the F2 application. See the [SaaS readiness assessment](../docs/11-saas-readiness.md).
 
+## Project access
+
+The owner key creates a session for the configured Cloud owner. The server grants that identity read access to the `paige` organization's `paige-agent-ai` project. Its registered environments are `production` and `f2-preview`. Each environment inherits the project's read grant and has its own status reader. Production reads public manifests and health endpoints. The F2 reader alone uses the Coolify token.
+
+The console uses `GET /api/organizations/paige/projects/paige-agent-ai/status`. Add `/environments/{environmentId}` before `/status` to read a single environment. The legacy `GET /api/status` checks the same project grant. The server checks the session and grant before it consults the cache or calls a reader. Unknown and unauthorized scopes share the same HTTP 404 response.
+
+Project and membership records are defined in source for this increment. The HTTP tests use two synthetic organizations with the same project slug and different sign-in identities. Persistent membership management and independent sign-in for multiple Cloud users are future work.
+
 ## Publish and host
 
 1. Test with `node --test owner-view/status.test.mjs owner-view/server.test.mjs` from the Cloud checkout. Have a non-author review the exact source. Push a dedicated `ant-177-owner-view-*` release tag to the private Cloud repo to run the image build. Record the Actions run and immutable GHCR manifest digest from its summary.
