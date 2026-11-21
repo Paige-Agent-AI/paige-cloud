@@ -4,6 +4,8 @@ const get = (id) => document.getElementById(id);
 const view = get("deployment-view");
 const refresh = get("refresh");
 const announcement = get("announcement");
+const pageTitle = get("page-title");
+const navigation = document.querySelectorAll(".workspace-menu [data-section]");
 const staleAfterMs = 120_000;
 const dateFormat = new Intl.DateTimeFormat(undefined, {
   month: "short", day: "numeric", year: "numeric", hour: "numeric",
@@ -280,6 +282,27 @@ async function refreshStatus() {
   }
 }
 
+function showSection(moveFocus = false) {
+  const deployments = location.hash === "#deployments";
+  const section = deployments ? "deployments" : "overview";
+  const title = deployments ? "Deployments" : "Overview";
+  pageTitle.textContent = title;
+  document.title = title + " · PAIGE Cloud";
+  get("overview-panel").hidden = deployments;
+  get("deployments-panel").hidden = !deployments;
+  for (const link of navigation) {
+    if (link.dataset.section === section) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  }
+  if (moveFocus) pageTitle.focus({ preventScroll: true });
+}
+
+window.addEventListener("hashchange", (event) => {
+  const hash = new URL(event.newURL).hash;
+  if (hash === "#main") return;
+  showSection(true);
+});
+showSection();
 refresh.addEventListener("click", refreshStatus);
 for (const button of document.querySelectorAll("[data-copy]")) {
   button.addEventListener("click", async () => {

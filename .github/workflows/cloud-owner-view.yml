@@ -43,5 +43,9 @@ jobs:
           [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
           docker pull "$IMAGE_REPO@$digest"
           [[ "$(docker image inspect --format '{{.Id}}' "$CANDIDATE")" == "$(docker image inspect --format '{{.Id}}' "$IMAGE_REPO@$digest")" ]]
-          jq -n --arg commit "$GITHUB_SHA" --arg tag "$CANDIDATE" --arg image "$IMAGE_REPO@$digest" \
-            '{commit:$commit,tag:$tag,image:$image}' | tee -a "$GITHUB_STEP_SUMMARY"
+          alias="$IMAGE_REPO:${digest/:/-}"
+          docker tag "$CANDIDATE" "$alias"
+          docker push "$alias"
+          [[ "$(docker buildx imagetools inspect --format '{{json .Manifest.Digest}}' "$alias" | tr -d '"')" == "$digest" ]]
+          jq -n --arg commit "$GITHUB_SHA" --arg tag "$CANDIDATE" --arg image "$IMAGE_REPO@$digest" --arg coolifyTag "$alias" \
+            '{commit:$commit,tag:$tag,image:$image,coolifyTag:$coolifyTag}' | tee -a "$GITHUB_STEP_SUMMARY"
