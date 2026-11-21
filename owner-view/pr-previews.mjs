@@ -9,6 +9,11 @@ const pilot = {
   url: "https://pr-3365-56f13b6.179.66.154.248.sslip.io", state: "built",
 };
 
+function timestamp(value) {
+  const milliseconds = typeof value === "string" ? Date.parse(value) : NaN;
+  return Number.isFinite(milliseconds) ? new Date(milliseconds).toISOString() : undefined;
+}
+
 async function readJson(url, fetchFrom, headers, signal) {
   try {
     const result = await fetchFrom(url, { headers, redirect: "error", signal });
@@ -26,7 +31,7 @@ function pullRows(pulls) {
         typeof pr.title !== "string" || typeof pr.head.ref !== "string") continue;
     byNumber.set(pr.number, {
       number: pr.number, title: pr.title.slice(0, 240), branch: pr.head.ref.slice(0, 200),
-      commit: pr.head.sha, eligible: pr.head.repo?.full_name === canonical,
+      commit: pr.head.sha, eligible: pr.head.repo?.full_name === canonical, updatedAt: timestamp(pr.updated_at),
     });
   }
   return [...byNumber.values()];
@@ -44,7 +49,7 @@ function buildRecords(runs) {
     if (!state) continue;
     const key = `${intent[1]}/${intent[2]}`;
     if (!newest.has(key) || Number(newest.get(key).run) < run.id) {
-      newest.set(key, { state, cloud: run.head_sha, run: String(run.id) });
+      newest.set(key, { state, cloud: run.head_sha, run: String(run.id), createdAt: timestamp(run.created_at) });
     }
   }
   return newest;
@@ -80,7 +85,10 @@ export function createPrPreviewReader(actionsToken, fetchFrom = fetch, clock = D
       const firstPilot = row.number === pilot.number && row.commit === pilot.head ? pilot : undefined;
       const latest = records.get(`${row.number}/${row.commit}`) ?? firstPilot;
       row.build = !row.eligible ? "external" : latest?.state ?? (canResolve ? "not-built" : "unknown");
-      row.run = latest?.run;
+      if (row.eligible) {
+        row.run = latest?.run;
+        row.buildCreatedAt = latest?.createdAt;
+      }
       if (row.build === "built") {
         const url = row.number === pilot.number ? pilot.url : `https://pr-${row.number}.preview.179.66.154.248.sslip.io`;
         candidates.push({ row, url, cloud: latest.cloud });
