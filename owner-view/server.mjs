@@ -2,7 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
-import { readPreviewStatus } from "./status.mjs";
+import { readOwnerStatus } from "./status.mjs";
 
 const readAsset = (file) => readFileSync(new URL("./public/" + file, import.meta.url));
 const sessionName = "__Host-paige_owner";
@@ -49,7 +49,7 @@ async function readPassword(request) {
   return /^[A-Za-z0-9_-]{43}$/.test(password ?? "") ? password : null;
 }
 
-export function createOwnerServer({ origin, aliasOrigin, passwordHash, token, statusReader = readPreviewStatus }) {
+export function createOwnerServer({ origin, aliasOrigin, passwordHash, token, statusReader = readOwnerStatus }) {
   const allowedOrigins = new Map();
   for (const value of aliasOrigin ? [origin, aliasOrigin] : [origin]) {
     const url = new URL(value);

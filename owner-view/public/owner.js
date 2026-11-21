@@ -188,6 +188,39 @@ function setHistory(deployments, stale, loading) {
 deploymentSearch.addEventListener("input", () => render());
 deploymentStatus.addEventListener("change", () => render());
 
+function renderProduction(production, stale, loading) {
+  const checkedAt = date(production?.checkedAt);
+  const [label, tone] = stale || (checkedAt && Date.now() - checkedAt.getTime() >= staleAfterMs) ? ["Stale", "warn"] :
+    loading && !production ? ["Checking", ""] : healthLabels[production?.state] ?? healthLabels.unavailable;
+  status("production-health", label, tone);
+  const commit = get("production-commit");
+  const matched = production?.identity === "matched" && /^[a-f0-9]{40}$/.test(production.frontendCommit ?? "");
+  commit.hidden = !matched;
+  commit.textContent = matched ? production.frontendCommit : "";
+
+  const description = get("production-readback");
+  description.textContent = production?.identity === "mismatch" ? "Domains reported different release metadata." :
+    matched ? "Frontend commit reported by all domains." :
+    loading && !production ? "Waiting for public endpoints." : "Production source is unavailable.";
+  if (checkedAt) description.append(" Checked ", time(production.checkedAt));
+
+  get("production-domains").replaceChildren(...(production?.domains ?? []).map((domain) => {
+    const [hostHealth] = healthLabels[domain.state] ?? healthLabels.unavailable;
+    const state = Number.isInteger(domain.httpStatus) ? `${hostHealth} · HTTP ${domain.httpStatus}` : hostHealth;
+    const item = element("li");
+    item.append(element("span", "", domain.hostname), element("span", "muted", ` · ${state}`));
+    if (production.identity === "mismatch") {
+      for (const [name, commit] of [["Frontend", domain.frontendCommit], ["Hosting", domain.cloudCommit]]) {
+        if (typeof commit !== "string" || !/^[a-f0-9]{40}$/.test(commit)) continue;
+        const revision = element("code", "", commit.slice(0, 7));
+        revision.title = commit;
+        item.append(` · ${name} `, revision);
+      }
+    }
+    return item;
+  }));
+}
+
 function render({ loading = false, checked = false } = {}) {
   const checkedAt = date(snapshot?.checkedAt);
   const stale = Boolean(checkedAt && (fetchFailed || Date.now() - checkedAt.getTime() >= staleAfterMs));
@@ -199,7 +232,7 @@ function render({ loading = false, checked = false } = {}) {
     loading && !snapshot ? ["Checking", ""] : healthLabels[health?.state] ?? healthLabels.unavailable;
   const messageList = [];
 
-  if (loading) messageList.push(["Checking preview health and deployment information.", ""]);
+  if (loading) messageList.push(["Checking production and preview status.", ""]);
   if (stale) {
     messageList.push([
       (fetchFailed ? "Refresh failed. " : "") +
@@ -220,6 +253,7 @@ function render({ loading = false, checked = false } = {}) {
   ]);
 
   setNotices(messageList);
+  renderProduction(snapshot?.production, stale, loading);
   status("health", healthLabel, healthTone);
   get("current-title").textContent = stale ? "Last observed release" : "Current release";
   setIdentity("current", current, loading && !snapshot ? "Checking" : "Unconfirmed");
@@ -286,7 +320,7 @@ async function refreshStatus() {
   activeRequest = request;
   const timeout = setTimeout(() => request.abort(), 12_000);
   render({ loading: true });
-  announcement.textContent = "Checking preview health and release identity.";
+  announcement.textContent = "Checking production and preview health and source.";
   try {
     const response = await fetch("/api/status", { cache: "no-store", redirect: "error", signal: request.signal });
     if (activeRequest !== request) return;
@@ -312,7 +346,9 @@ async function refreshStatus() {
         announcement.textContent = "The displayed deployment data is stale. Refresh to check again.";
       }, staleIn);
     }
-    announcement.textContent = "Preview " + healthLabels[data.health.state][0].toLowerCase() +
+    const productionHealth = healthLabels[data.production?.state] ?? healthLabels.unavailable;
+    announcement.textContent = "Production " + productionHealth[0].toLowerCase() +
+      ". Preview " + healthLabels[data.health.state][0].toLowerCase() +
       ". Release identity " + data.identity + ".";
   } catch {
     if (activeRequest !== request) return;
@@ -331,6 +367,7 @@ function showSection(moveFocus = false) {
   const title = deployments ? "Deployments" : "Overview";
   pageTitle.textContent = title;
   document.title = title + " · PAIGE Cloud";
+  get("page-scope").textContent = deployments ? "PAIGE Cloud Preview / f2-preview" : "PAIGE Agent AI";
   get("overview-panel").hidden = deployments;
   get("deployments-panel").hidden = !deployments;
   for (const link of navigation) {

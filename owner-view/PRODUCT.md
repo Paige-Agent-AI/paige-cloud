@@ -8,15 +8,15 @@ web
 
 ## Users
 
-The owner of PAIGE Cloud opens the deployment view to see what the public preview is serving and to find the last verified rollback image.
+The owner of PAIGE Cloud opens the deployment view to check what PAIGE Agent AI's production domains and the public preview are serving and to find the last verified preview rollback image.
 
 ## Product Purpose
 
-Make live preview health, release provenance, and deployment history verifiable on one page. Use actual Coolify records, the preview's live readback, and the accepted F2 release evidence.
+Show production health and source from live domain readback. Keep preview health, verified release provenance and deployment history in the same workspace using Coolify and the accepted F2 evidence.
 
 ## Capabilities and Constraints
 
-The view covers the single governed preview. The owner signs in separately. Deployment data is read-only. Show when data is stale, missing, or inconsistent. Release B continues serving the public preview independently of this view.
+The owner signs in separately. Deployment data is read-only. Show when data is stale, missing, or inconsistent. The production check reads fixed public endpoints. The Coolify credential stays scoped to the governed preview, which serves Release B independently of the owner view.
 
 ## Evidence on Hand
 

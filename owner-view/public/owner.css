@@ -102,6 +102,25 @@ main { min-width: 0; padding: clamp(1.5rem, 3vw, 2.5rem) clamp(1rem, 4vw, 3.25re
 .status.good { background: #25382c; }
 .status.warn { background: #493b28; }
 .status.bad { background: #482e2d; }
+
+.production-panel {
+  margin-bottom: 1rem;
+  padding: .9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: .75rem;
+  background: var(--panel);
+}
+.production-panel .history-head { margin-bottom: .4rem; }
+#production-commit { overflow-wrap: anywhere; font-size: .8rem; }
+.production-domains {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .45rem 1rem;
+  margin: .65rem 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: .8rem;
+}
 #rollback-state.good { color: var(--violet); background: #3c344a; }
 .notice { margin-bottom: 1rem; padding: .8rem 1rem; border: 1px solid var(--line); background: var(--raised); border-radius: 9px; color: var(--muted); font-size: .9rem; }
 .notice.warn { color: var(--amber); border-color: #796242; }
