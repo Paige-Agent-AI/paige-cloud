@@ -7,14 +7,15 @@ const announcement = get("announcement");
 const pageTitle = get("page-title");
 const deploymentSearch = get("deployment-search");
 const deploymentStatus = get("deployment-status");
+const deploymentViews = document.querySelectorAll("[data-deployment-view]");
 const navigation = document.querySelectorAll(".workspace-menu [data-section]");
 const staleAfterMs = 120_000;
 const dateFormat = new Intl.DateTimeFormat(undefined, {
   month: "short", day: "numeric", year: "numeric", hour: "numeric",
   minute: "2-digit", second: "2-digit", timeZoneName: "short",
 });
-const historyDateFormat = new Intl.DateTimeFormat(undefined, {
-  month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit", timeZoneName: "short",
+const activityDateFormat = new Intl.DateTimeFormat(undefined, {
+  month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
 });
 const healthLabels = {
   healthy: ["Healthy", "good"],
@@ -22,13 +23,13 @@ const healthLabels = {
   unavailable: ["Unknown", "warn"],
 };
 const deploymentLabels = {
-  finished: ["Finished", "good"],
-  failed: ["Failed", "bad"],
-  cancelled: ["Cancelled", "warn"],
-  canceled: ["Cancelled", "warn"],
-  "cancelled-by-user": ["Cancelled", "warn"],
-  queued: ["Queued", "warn"],
-  in_progress: ["In progress", "warn"],
+  finished: ["Finished", "good", "ready"],
+  failed: ["Failed", "bad", "failed"],
+  cancelled: ["Cancelled", "warn", "cancelled"],
+  canceled: ["Cancelled", "warn", "cancelled"],
+  "cancelled-by-user": ["Cancelled", "warn", "cancelled"],
+  queued: ["Queued", "warn", "queued"],
+  in_progress: ["In progress", "warn", "in-progress"],
 };
 let snapshot = null;
 let activeRequest = null;
@@ -37,14 +38,17 @@ let sessionTimer;
 let sessionDeadline;
 const sessionEvents = new BroadcastChannel("paige-owner-session");
 let fetchFailed = false;
-let renderedHistory;
+let deploymentView = "all";
+let lastDeploymentKey;
 let previewRunData;
 let previewRequest;
 let previewStaleTimer;
+let previewFetchFailed = false;
 const previewLabels = {
-  queued: ["Queued", "warn"], building: ["Building", "warn"], built: ["Build passed", "good"],
-  failed: ["Build failed", "bad"], cancelled: ["Cancelled", "warn"], "not-built": ["No recorded build", ""],
-  unknown: ["Build status unavailable", "warn"], external: ["External PR", ""],
+  queued: ["Queued", "warn", "queued"], building: ["Building", "warn", "in-progress"],
+  built: ["Build passed", "good", "built"], failed: ["Build failed", "bad", "failed"],
+  cancelled: ["Cancelled", "warn", "cancelled"], "not-built": ["No recorded build", "", "not-built"],
+  unknown: ["Build status unavailable", "warn", "unknown"], external: ["External PR", "", "external"],
 };
 
 function date(value) {
@@ -105,97 +109,6 @@ function buildRunLink(value) {
   return link;
 }
 
-function deploymentRow(deployment) {
-  const [label, tone] = Object.hasOwn(deploymentLabels, deployment.status)
-    ? deploymentLabels[deployment.status] : ["Unknown", "warn"];
-  const row = document.createElement("details");
-  row.dataset.deploymentId = deployment.id;
-  const summary = document.createElement("summary");
-  const release = element("span", "row-label", deployment.release || "Deployment");
-  if (deployment.event) release.append(element("span", "row-event", deployment.event));
-  const checkedAt = element("span", "row-time muted");
-  checkedAt.append(time(deployment.at, historyDateFormat));
-  const source = element("span", "row-source");
-  source.append(deployment.frontendCommit ? element("code", "", deployment.frontendCommit.slice(0, 7)) : "Unverified");
-  const result = element("span", "row-outcome");
-  result.append(element("span", "row-result " + tone, label));
-  if (Number.isSafeInteger(deployment.elapsedSeconds) && deployment.elapsedSeconds >= 0) {
-    const seconds = deployment.elapsedSeconds;
-    const minutes = Math.floor(seconds / 60);
-    const elapsed = element("span", "row-elapsed", minutes ? `${minutes}m ${seconds % 60}s` : `${seconds}s`);
-    elapsed.title = "Elapsed time from queue to completion";
-    result.append(elapsed);
-  }
-  const arrow = element("span", "chevron");
-  arrow.setAttribute("aria-hidden", "true");
-  summary.append(
-    release, source, element("span", "row-environment", "Preview"), checkedAt, result, arrow,
-  );
-  const detail = element("div", "row-detail");
-  if (deployment.source?.title) detail.append(element("p", "row-subject", deployment.source.title));
-  const fields = element("dl", "row-fields");
-  for (const [name, value, mono] of [
-    ["GitHub author", deployment.source?.author],
-    ["Frontend commit", deployment.frontendCommit, true],
-    ["Cloud commit", deployment.cloudCommit, true],
-    ["Image digest", deployment.imageDigest, true],
-    ["Deployment ID", deployment.id, true],
-  ]) {
-    if (!value) continue;
-    const pair = element("div");
-    const entry = element("dd");
-    entry.append(mono ? element("code", "", value) : document.createTextNode(value));
-    pair.append(element("dt", "", name), entry);
-    fields.append(pair);
-  }
-  detail.append(fields, buildRunLink(deployment.run) || element("p", "muted", "No source build is linked to this deployment."));
-  row.append(summary, detail);
-  return row;
-}
-
-function setHistory(deployments, stale, loading) {
-  const rows = get("deployment-rows");
-  const empty = get("empty");
-  const available = Array.isArray(deployments);
-  const query = deploymentSearch.value.trim().toLowerCase();
-  const statusFilter = deploymentStatus.value;
-  const matches = available ? deployments.filter((row) => {
-    const status = row.status === "cancelled-by-user" ? "cancelled" : row.status;
-    if (statusFilter && status !== statusFilter) return false;
-    return !query || [row.id, row.release, row.event, row.frontendCommit, row.cloudCommit, row.source?.title,
-      row.source?.author, "preview"].some((value) => value?.toLowerCase().includes(query));
-  }) : [];
-  const hasEntries = matches.length > 0;
-  get("history-filters").hidden = !available || deployments.length === 0;
-  get("history-source").textContent = stale ? "Last recorded Coolify history" : "Coolify · newest first";
-  get("history-table").hidden = !hasEntries;
-  empty.hidden = hasEntries;
-  empty.textContent = loading ? "Waiting for Coolify deployment history." :
-    deployments?.length ? "No deployments match these filters." :
-      available ? "Coolify reported no deployments for this preview." : "Coolify deployment history is unavailable.";
-  const historyKey = JSON.stringify(matches);
-  if (historyKey === renderedHistory) return;
-  const openIds = new Set([...rows.children].filter((row) => row.open).map((row) => row.dataset.deploymentId));
-  const active = document.activeElement;
-  const activeId = rows.contains(active) ? active.closest("details")?.dataset.deploymentId : null;
-  const updated = matches.map((deployment) => {
-    const row = deploymentRow(deployment);
-    row.open = openIds.has(deployment.id);
-    return row;
-  });
-  rows.replaceChildren(...updated);
-  if (activeId) {
-    const row = updated.find((item) => item.dataset.deploymentId === activeId);
-    const replacement = row?.querySelector(active.matches("a") ? "a" : "summary") ??
-      row?.querySelector("summary") ?? refresh;
-    replacement.focus({ preventScroll: true });
-  }
-  renderedHistory = historyKey;
-}
-
-deploymentSearch.addEventListener("input", () => render());
-deploymentStatus.addEventListener("change", () => render());
-
 function renderProduction(production, stale, loading) {
   const checkedAt = date(production?.checkedAt);
   const [label, tone] = stale || (checkedAt && Date.now() - checkedAt.getTime() >= staleAfterMs) ? ["Stale", "warn"] :
@@ -241,12 +154,20 @@ function receiptLink(path, label) {
   return link;
 }
 
-function renderProductionReceipts(production, stale, loading) {
+function renderProductionReadback(production, stale, loading) {
   const checkedAt = date(production?.checkedAt);
   const old = stale || (checkedAt && Date.now() - checkedAt.getTime() >= staleAfterMs);
   const [label, tone] = old ? ["Stale", "warn"] : loading && !production ? ["Checking", ""]
     : healthLabels[production?.state] ?? healthLabels.unavailable;
   status("receipt-health", label, tone);
+  const current = get("receipt-current");
+  const liveCommit = production?.frontendCommit;
+  current.replaceChildren();
+  if (/^[a-f0-9]{40}$/.test(liveCommit ?? "")) {
+    const commit = element("code", "", liveCommit.slice(0, 8));
+    commit.title = liveCommit;
+    current.append(old ? "Last seen on main " : "main ", commit);
+  }
   const match = get("receipt-match");
   if (old) {
     match.textContent = production?.receiptCommit ? "The last observed release matched a recorded GitHub commit."
@@ -259,45 +180,222 @@ function renderProductionReceipts(production, stale, loading) {
   }
   if (checkedAt) match.append(" Checked ", time(production.checkedAt), ".");
   get("receipt-domains").replaceChildren(...productionDomainRows(production, old));
+}
 
-  const container = get("receipt-rows");
-  const receipts = production?.receipts ?? [];
-  const open = new Set([...container.querySelectorAll("details[open]")].map((row) => row.dataset.run));
-  const hadRecords = !!container.querySelector("details");
-  if (!receipts.length) {
-    container.replaceChildren(...(loading ? [] : [element("p", "small muted", "No verified production receipts are available.")]));
-    return;
-  }
-  container.replaceChildren(...receipts.map((receipt, index) => {
-    const row = element("details", "production-receipt");
-    row.dataset.run = receipt.runId + "/" + receipt.attempt;
-    row.open = hadRecords ? open.has(row.dataset.run) : index === 0;
-    const summary = element("summary");
-    summary.append(element("strong", "", "PR #" + receipt.pullRequest),
-      element("code", "", receipt.commit.slice(0, 8)), time(receipt.finishedAt, historyDateFormat));
-    if (!old && receipt.commit === production.receiptCommit) {
-      summary.append(element("span", "status good", "Live commit match"));
-    }
-    const fields = element("dl", "row-fields");
-    for (const [name, value] of [
+function productionEntry(receipt, production, stale) {
+  const current = !stale && receipt.commit === production.receiptCommit;
+  return {
+    id: "release-" + receipt.runId + "-" + receipt.attempt,
+    title: "PR #" + receipt.pullRequest + " · Production release",
+    environment: "Production", branch: "main", commit: receipt.commit, at: receipt.finishedAt, timeLabel: "Release verified",
+    status: "ready", label: current ? "Current release" : "Verified", tone: "good",
+    fields: [
       ["GitHub commit", receiptLink("/commit/" + receipt.commit, receipt.commit)],
       ["Recorded image digest", element("code", "", receipt.image)],
       ["Coolify deployment", element("code", "", receipt.deployment)],
       ["Rollback commit", receiptLink("/commit/" + receipt.rollback.commit, receipt.rollback.commit)],
       ["Rollback target", element("code", "", receipt.rollback.image)],
       ["Rollback deployment", element("code", "", receipt.rollback.deployment)],
-    ]) {
-      const pair = element("div");
-      const entry = element("dd");
-      entry.append(value);
-      pair.append(element("dt", "", name), entry);
-      fields.append(pair);
-    }
-    const detail = element("div", "production-receipt-detail");
-    detail.append(fields, receiptLink("/actions/runs/" + receipt.runId, "View GitHub workflow run"));
-    row.append(summary, detail);
-    return row;
-  }));
+    ],
+    links: [receiptLink("/pull/" + receipt.pullRequest, "View PR #" + receipt.pullRequest),
+      receiptLink("/actions/runs/" + receipt.runId, "View GitHub workflow run")],
+    search: "PR #" + receipt.pullRequest + " " + receipt.deployment,
+  };
+}
+
+function historyEntry(deployment) {
+  const [label, tone, state] = Object.hasOwn(deploymentLabels, deployment.status)
+    ? deploymentLabels[deployment.status] : ["Unknown", "warn", "unknown"];
+  return {
+    id: "history-" + deployment.id, title: deployment.release || "Preview deployment",
+    environment: "Preview", commit: deployment.frontendCommit, at: deployment.at, timeLabel: "Deployment recorded",
+    status: state, label, tone, elapsed: deployment.elapsedSeconds,
+    fields: [
+      ["Release", deployment.release], ["Event", deployment.event], ["GitHub subject", deployment.source?.title],
+      ["GitHub author", deployment.source?.author],
+      ["Frontend commit", deployment.frontendCommit && element("code", "", deployment.frontendCommit)],
+      ["Cloud commit", deployment.cloudCommit && element("code", "", deployment.cloudCommit)],
+      ["Image digest", deployment.imageDigest && element("code", "", deployment.imageDigest)],
+      ["Deployment ID", element("code", "", deployment.id)],
+    ],
+    links: [buildRunLink(deployment.run)],
+    search: [deployment.id, deployment.release, deployment.event, deployment.cloudCommit,
+      deployment.source?.title, deployment.source?.author].join(" "),
+  };
+}
+
+function pullEntry(row, stale) {
+  const expected = "https://pr-" + row.number + ".preview.179.66.154.248.sslip.io";
+  const knownUrl = row.previewUrl === expected || (row.number === 3365 &&
+    row.previewUrl === "https://pr-3365-56f13b6.179.66.154.248.sslip.io");
+  const previewUrl = knownUrl && !stale && row.build === "built" ? row.previewUrl : undefined;
+  const [label, tone, state] = previewUrl ? ["Ready", "good", "ready"] :
+    Object.hasOwn(previewLabels, row.build) ? previewLabels[row.build] : previewLabels.unknown;
+  const pull = receiptLink("/pull/" + row.number, "View PR #" + row.number);
+  const links = [pull, buildRunLink(row.run)];
+  const previewNote = previewUrl ? "Verified against this PR commit."
+    : knownUrl && stale ? "Verification expired. Refresh to check the preview again."
+      : row.build === "built" ? "No verified preview URL for this build." : "";
+  return {
+    id: "pr-" + row.number, title: "#" + row.number + " " + row.title, environment: "Preview",
+    branch: row.branch, commit: row.commit, at: row.buildCreatedAt, updatedAt: row.updatedAt, timeLabel: "Build created",
+    status: state, label, tone, previewUrl, hasBuild: Boolean(row.run),
+    refreshPreview: knownUrl && stale,
+    fields: [
+      ["Branch", row.branch], ["GitHub commit", receiptLink("/commit/" + row.commit, row.commit)],
+      ["Preview", previewNote],
+    ],
+    links,
+  };
+}
+
+function appendFields(container, entries) {
+  const fields = element("dl", "row-fields");
+  for (const [name, value] of entries) {
+    if (!value) continue;
+    const pair = element("div");
+    const entry = element("dd");
+    entry.append(value);
+    pair.append(element("dt", "", name), entry);
+    fields.append(pair);
+  }
+  container.append(fields);
+}
+
+function deploymentEntry(row, expanded, prView) {
+  const item = element("li", "deployment-entry");
+  item.dataset.entry = row.id;
+  const cells = element("div", "deployment-row");
+  const expand = element("button", "deployment-title");
+  expand.type = "button";
+  expand.title = row.title;
+  expand.append(element("span", "chevron"), element("span", "deployment-truncate", row.title));
+  expand.firstChild.setAttribute("aria-hidden", "true");
+  expand.setAttribute("aria-expanded", String(expanded));
+
+  const result = element("span", "deployment-outcome");
+  result.append(element("span", "deployment-state " + row.tone, row.label));
+  if (Number.isSafeInteger(row.elapsed) && row.elapsed >= 0) {
+    const minutes = Math.floor(row.elapsed / 60);
+    const elapsed = minutes ? minutes + "m " + row.elapsed % 60 + "s" : row.elapsed + "s";
+    result.append(element("span", "row-elapsed", elapsed));
+  }
+  const environment = element("span", "deployment-environment " + row.environment.toLowerCase(), row.environment);
+  const source = element("span", "deployment-commit");
+  const commit = row.commit ? element("code", "", row.commit.slice(0, 8)) : element("span", "empty-value", "—");
+  if (row.commit) commit.title = row.commit;
+  else commit.setAttribute("aria-label", "Commit unavailable");
+  source.append(commit);
+
+  const branch = element("span", "deployment-branch deployment-truncate", row.branch || "—");
+  if (row.branch) branch.title = row.branch;
+  else branch.setAttribute("aria-label", "Branch unavailable");
+  const when = element("span", "deployment-time");
+  const timestamp = row.at || (prView ? row.updatedAt : undefined);
+  if (timestamp) when.append(time(timestamp, activityDateFormat));
+  else when.append(element("span", "empty-value", "—"));
+  if (when.firstChild instanceof HTMLTimeElement) {
+    const stamp = when.firstChild;
+    stamp.title = (row.at ? row.timeLabel : "PR updated") + " " + stamp.title;
+    stamp.setAttribute("aria-label", stamp.title);
+  }
+
+  const action = element("span", "deployment-action");
+  if (row.previewUrl) {
+    const link = element("a", "preview-action", "Open preview");
+    link.href = row.previewUrl;
+    link.target = "_blank";
+    link.rel = "noreferrer";
+    link.append(element("span", "sr", " (new tab)"));
+    action.append(link);
+  } else if (row.refreshPreview) {
+    const button = element("button", "preview-action", "Recheck link");
+    button.type = "button";
+    button.addEventListener("click", refreshStatus);
+    action.append(button);
+  }
+
+  const detail = element("div", "deployment-detail");
+  detail.id = "deployment-detail-" + row.id;
+  detail.hidden = !expanded;
+  expand.setAttribute("aria-controls", detail.id);
+  expand.addEventListener("click", () => {
+    detail.hidden = !detail.hidden;
+    expand.setAttribute("aria-expanded", String(!detail.hidden));
+  });
+  appendFields(detail, row.fields);
+  const links = row.links.filter(Boolean);
+  if (links.length) {
+    const actions = element("div", "deployment-detail-links");
+    actions.append(...links);
+    detail.append(actions);
+  }
+  cells.append(expand, result, environment, source, branch, when, action);
+  item.append(cells, detail);
+  return item;
+}
+
+function renderDeployments(loading = false, stale = false) {
+  if (get("deployments-panel").hidden) return;
+  const output = get("deployment-rows");
+  const list = get("deployment-summary");
+  const empty = get("empty");
+  const previewAt = date(previewRunData?.checkedAt);
+  const previewStale = previewFetchFailed || !previewAt || Date.now() - previewAt.getTime() >= staleAfterMs;
+  const production = snapshot?.production;
+  const productionAt = date(production?.checkedAt);
+  const productionStale = stale || !productionAt || Date.now() - productionAt.getTime() >= staleAfterMs;
+  const prView = deploymentView === "pull-requests";
+  const pullRows = (previewRunData?.rows ?? []).map((row) => pullEntry(row, previewStale));
+  const receipts = (production?.receipts ?? []).map((receipt) => productionEntry(receipt, production, productionStale));
+  const history = (snapshot?.history ?? []).map(historyEntry);
+  const previewRows = [...pullRows.filter((row) => row.hasBuild), ...history];
+  const entries = prView ? pullRows : deploymentView === "production" ? receipts :
+    deploymentView === "preview" ? previewRows : [...receipts, ...previewRows];
+  const query = deploymentSearch.value.trim().toLowerCase();
+  const statusFilter = deploymentStatus.value;
+  const rows = entries
+    .filter((row) => (!statusFilter || row.status === statusFilter) &&
+      (!query || [row.title, row.environment, row.branch, row.commit, row.search, row.label]
+        .join(" ").toLowerCase().includes(query)))
+    .sort((a, b) => (date(b.at || (prView && b.updatedAt))?.getTime() ?? 0)
+      - (date(a.at || (prView && a.updatedAt))?.getTime() ?? 0));
+  const notes = [];
+  if (deploymentView !== "production") {
+    if (previewRequest || (loading && !previewRunData)) notes.push("Checking PR previews");
+    else if (!previewRunData || previewFetchFailed) notes.push("PR preview status unavailable");
+    else if (previewRunData.builds !== "available") notes.push("GitHub build activity unavailable");
+    if (previewRunData && previewStale) notes.push("Preview links need a fresh check");
+    if (previewRunData?.partial) notes.push("Showing the first " + pullRows.length + " open PRs");
+    if (!prView && snapshot && !Array.isArray(snapshot.history)) notes.push("Coolify history unavailable");
+  }
+  const count = rows.length === entries.length ? String(rows.length) : rows.length + " of " + entries.length;
+  list.textContent = [count + (prView ? " open PRs" : " deployments"), ...notes].join(" · ");
+  if (prView) output.setAttribute("aria-label", "Open pull requests");
+  else output.setAttribute("aria-label", "Deployments");
+  empty.hidden = rows.length > 0;
+  empty.textContent = loading || (previewRequest && deploymentView !== "production") ? "Checking deployment activity…"
+    : entries.length ? "No results match your filters." : prView && !previewRunData ? "Open pull requests could not be loaded."
+      : prView ? "There are no open pull requests." : "No deployment activity is available.";
+
+  const key = JSON.stringify([rows, prView, productionStale, previewStale, previewRunData?.checkedAt, snapshot?.checkedAt]);
+  if (key === lastDeploymentKey) return;
+  lastDeploymentKey = key;
+  const open = new Set([...output.children].filter((item) =>
+    item.querySelector('.deployment-title[aria-expanded="true"]')).map((item) => item.dataset.entry));
+  const active = document.activeElement;
+  const activeRow = output.contains(active) ? active.closest(".deployment-entry") : null;
+  const activeControls = activeRow && [...activeRow.querySelectorAll("button, a")];
+  const activeIndex = activeControls ? activeControls.indexOf(active) : -1;
+  const items = rows.map((row) => deploymentEntry(row, open.has(row.id), prView));
+  output.replaceChildren(...items);
+  if (activeRow) {
+    const item = items.find((entry) => entry.dataset.entry === activeRow.dataset.entry);
+    const next = item?.querySelectorAll("button, a")[activeIndex];
+    const replacement = next?.textContent === active.textContent ? next
+      : item?.querySelector(".deployment-title") ?? deploymentSearch;
+    replacement.focus({ preventScroll: true });
+  }
 }
 
 function render({ loading = false, checked = false } = {}) {
@@ -333,7 +431,7 @@ function render({ loading = false, checked = false } = {}) {
 
   setNotices(messageList);
   renderProduction(snapshot?.production, stale, loading);
-  renderProductionReceipts(snapshot?.production, stale, loading);
+  renderProductionReadback(snapshot?.production, stale, loading);
   status("health", healthLabel, healthTone);
   get("current-title").textContent = stale ? "Last observed release" : "Current release";
   setIdentity("current", current, loading && !snapshot ? "Checking" : "Unconfirmed");
@@ -357,7 +455,7 @@ function render({ loading = false, checked = false } = {}) {
       "A verified rollback target is unavailable.";
   }
   get("evidence").hidden = !rollback;
-  setHistory(snapshot?.history, stale, loading && !snapshot);
+  renderDeployments(loading, stale);
 
   refresh.setAttribute("aria-disabled", String(loading));
   refresh.textContent = loading ? "Checking status…" : "Refresh status";
@@ -399,69 +497,35 @@ function clearPrPreviews() {
   previewRequest?.abort();
   previewRequest = undefined;
   previewRunData = undefined;
+  previewFetchFailed = false;
   clearTimeout(previewStaleTimer);
-  renderPrPreviews();
-}
-
-function renderPrPreviews(loading = false) {
-  const text = get("pr-preview-summary");
-  const output = get("pr-preview-rows");
-  if (previewRunData?.state !== "ready") {
-    text.textContent = loading ? "Checking open pull requests…" : "Pull request status is unavailable.";
-    output.replaceChildren();
-    return;
-  }
-  const search = get("pr-search").value.trim().toLowerCase();
-  const checkedAt = date(previewRunData.checkedAt);
-  const outdated = !checkedAt || Date.now() - checkedAt.getTime() >= staleAfterMs;
-  const rows = previewRunData.rows.filter((row) => !search || `${row.number} ${row.title} ${row.branch} ${row.commit}`.toLowerCase().includes(search));
-  const descriptions = [`${rows.length} ${previewRunData.partial ? "of the first " : "of "}${previewRunData.rows.length} open pull requests`];
-  if (previewRunData.builds !== "available") descriptions.push("GitHub build activity is unavailable");
-  if (outdated) descriptions.push("Preview checks are stale. Refresh status to verify links.");
-  text.textContent = descriptions.join(" · ");
-  output.replaceChildren(...rows.map((row) => {
-    const item = element("li");
-    const source = element("div", "pr-preview-source");
-    const pr = element("a", "", `#${row.number} ${row.title}`);
-    pr.href = `https://github.com/Paige-Agent-AI/Paige-Agent-AI/pull/${row.number}`;
-    const commit = element("code", "", row.commit.slice(0, 8));
-    commit.title = row.commit;
-    source.append(pr, element("span", "small muted", row.branch), commit);
-    const state = element("div", "pr-preview-build");
-    const [label, tone] = Object.hasOwn(previewLabels, row.build) ? previewLabels[row.build] : previewLabels.unknown;
-    state.append(element("span", "status " + tone, label));
-    const build = buildRunLink(row.run);
-    if (build) state.append(build);
-    const expected = `https://pr-${row.number}.preview.179.66.154.248.sslip.io`;
-    const live = !outdated && (row.previewUrl === expected || (row.number === 3365 &&
-      row.previewUrl === "https://pr-3365-56f13b6.179.66.154.248.sslip.io"));
-    const preview = live ? element("a", "", "Open preview") : element("span", "small muted", "No verified URL");
-    if (live) preview.href = row.previewUrl;
-    item.append(source, state, preview);
-    return item;
-  }));
 }
 
 async function refreshPrPreviews() {
   if (location.pathname !== accountPath + "/deployments" || previewRequest) return;
   const request = new AbortController();
   previewRequest = request;
-  previewRunData = undefined;
-  clearTimeout(previewStaleTimer);
-  renderPrPreviews(true);
+  let received = false;
+  render();
   const timeout = setTimeout(() => request.abort(), 8000);
   try {
     const response = await fetch(accountPath + "/api/organizations/paige/projects/paige-agent-ai/environments/pr-previews/status",
       { cache: "no-store", redirect: "error", signal: request.signal });
     if (previewRequest !== request) return;
-    if (response.status === 401) returnToSignIn();
+    if (response.status === 401) {
+      returnToSignIn();
+      return;
+    }
+    if (response.status === 404) previewRunData = undefined;
     if (!response.ok) return;
     const data = await response.json();
-    if (previewRequest === request && Array.isArray(data.rows)) {
+    if (previewRequest === request && data.state === "ready" && Array.isArray(data.rows)) {
       previewRunData = data;
+      received = true;
+      clearTimeout(previewStaleTimer);
       const checkedAt = date(data.checkedAt);
       const staleIn = checkedAt && staleAfterMs - (Date.now() - checkedAt.getTime());
-      if (staleIn > 0) previewStaleTimer = setTimeout(renderPrPreviews, staleIn);
+      if (staleIn > 0) previewStaleTimer = setTimeout(() => render({ loading: !!activeRequest }), staleIn);
     }
   } catch {
     // Preview inventory failures do not change production readback.
@@ -469,7 +533,8 @@ async function refreshPrPreviews() {
     clearTimeout(timeout);
     if (previewRequest === request) {
       previewRequest = undefined;
-      renderPrPreviews();
+      previewFetchFailed = !received;
+      render({ loading: !!activeRequest });
     }
   }
 }
@@ -541,7 +606,13 @@ function showSection() {
   const title = deployments ? "Deployments" : "Overview";
   pageTitle.textContent = title;
   document.title = title + " · PAIGE Cloud";
-  get("page-scope").textContent = deployments ? "PAIGE Cloud Preview / f2-preview" : "PAIGE Agent AI";
+  document.body.classList.toggle("workspace-deployments", deployments);
+  if (deployments) {
+    const pilotLabel = get("pilot-link");
+    pilotLabel.textContent = "Sign-in pilot";
+    pilotLabel.classList.remove("primary");
+    pilotLabel.append(element("span", "sr", " (new tab)"));
+  }
   get("overview-panel").hidden = deployments;
   get("deployments-panel").hidden = !deployments;
   for (const link of navigation) {
@@ -559,7 +630,15 @@ document.querySelector(".skip-link").addEventListener("click", (event) => {
   get("main").focus();
 });
 showSection();
-get("pr-search").addEventListener("input", () => renderPrPreviews(Boolean(previewRequest)));
+for (const button of deploymentViews) {
+  button.addEventListener("click", () => {
+    deploymentView = button.dataset.deploymentView;
+    for (const tab of deploymentViews) tab.setAttribute("aria-pressed", String(tab === button));
+    render({ loading: !!activeRequest });
+  });
+}
+deploymentSearch.addEventListener("input", () => render({ loading: !!activeRequest }));
+deploymentStatus.addEventListener("change", () => render({ loading: !!activeRequest }));
 refresh.addEventListener("click", refreshStatus);
 for (const button of document.querySelectorAll("[data-copy]")) {
   button.addEventListener("click", async () => {

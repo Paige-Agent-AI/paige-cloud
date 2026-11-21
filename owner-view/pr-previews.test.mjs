@@ -15,12 +15,14 @@ const pr = (number, commit = head, headRepo = repo) => ({
 const run = (number, id, status, conclusion, commit = head) => ({
   display_title: `Preview PR #${number} @ ${commit}`, id, status, conclusion,
   head_sha: builder, event: "workflow_dispatch", head_branch: "main",
+  created_at: "2026-11-21T21:00:00Z",
 });
 
 test("shows the current PR's build and only links an exact live preview", async () => {
   let fetches = 0;
   let now = 0;
   const pulls = [pr(1), pr(2), pr(3), pr(4), pr(5, head, "untrusted/fork"), pr(6)];
+  pulls[0].updated_at = "2026-11-21T22:00:00Z";
   const runs = [run(1, 101, "completed", "success"), run(2, 102, "in_progress"),
     run(3, 103, "completed", "failure"), run(4, 104, "completed", "success", previous),
     run(5, 105, "completed", "success"), run(6, 106, "completed", "success")];
@@ -44,6 +46,10 @@ test("shows the current PR's build and only links an exact live preview", async 
   const result = await read();
   assert.deepEqual(result.rows.map((entry) => entry.build), ["built", "building", "failed", "not-built", "external", "built"]);
   assert.equal(result.rows[0].previewUrl, "https://pr-1.preview.179.66.154.248.sslip.io");
+  assert.equal(result.rows[0].buildCreatedAt, "2026-11-21T21:00:00.000Z");
+  assert.equal(result.rows[0].updatedAt, "2026-11-21T22:00:00.000Z");
+  assert.equal(result.rows[3].buildCreatedAt, undefined);
+  assert.equal(result.rows[4].run, undefined);
   assert.ok(result.rows.slice(1).every((entry) => entry.previewUrl === undefined));
   assert.equal(fetches, 4);
   assert.equal(await read(), result);

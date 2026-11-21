@@ -24,7 +24,7 @@
     <div><h1 id="page-title" tabindex="-1">Overview</h1><p class="muted" id="page-scope">PAIGE Agent AI</p></div>
     <div class="page-actions">
       <button id="refresh" type="button">Refresh status</button>
-      <a class="primary" href="https://paige-ant178-auth.179.66.154.248.sslip.io/" target="_blank" rel="noreferrer">Open app preview<span class="sr"> (PAIGE sign-in pilot, new tab)</span></a>
+      <a class="primary" id="pilot-link" href="https://paige-ant178-auth.179.66.154.248.sslip.io/" target="_blank" rel="noreferrer">Open app preview<span class="sr"> (PAIGE sign-in pilot, new tab)</span></a>
     </div>
   </div>
   <div id="announcement" class="sr" role="status" aria-live="polite" aria-atomic="true"></div>
@@ -75,28 +75,47 @@
       </table>
       </div>
     </div>
-    <section class="history" id="deployments-panel" aria-labelledby="history-title" hidden>
-      <section class="production-panel production-receipts" aria-labelledby="production-receipts-title">
-        <div class="history-head"><h2 id="production-receipts-title">Production release receipts</h2><span class="status" id="receipt-health">Checking</span></div>
+    <section id="deployments-panel" aria-label="Deployment activity" hidden>
+      <details class="production-strip">
+        <summary>
+          <span class="production-strip-name">Production domains</span>
+          <span class="status" id="receipt-health">Checking</span>
+          <span class="production-strip-commit" id="receipt-current"></span>
+          <span class="chevron" aria-hidden="true"></span>
+        </summary>
         <p class="small muted" id="receipt-match"></p>
         <ul class="production-domains" id="receipt-domains" aria-label="Production health checks"></ul>
-        <div id="receipt-rows"></div>
-      </section>
-      <section class="production-panel pr-previews" aria-labelledby="pr-previews-title">
-        <div class="history-head"><h2 id="pr-previews-title">Pull request previews</h2></div>
-        <label class="pr-filter"><span class="sr">Search pull requests</span><input id="pr-search" type="search" placeholder="Search pull requests" autocomplete="off"></label>
-        <p class="small muted" id="pr-preview-summary" role="status"></p>
-        <ul class="pr-preview-list" id="pr-preview-rows"></ul>
-      </section>
-      <div class="history-head"><h2 id="history-title">Preview deployment history</h2><p class="small muted" id="history-source">Coolify · newest first</p></div>
-      <div class="history-filters" id="history-filters" hidden>
-        <label><span class="sr">Search deployments</span><input id="deployment-search" type="search" placeholder="Search deployments" autocomplete="off"></label>
-        <label><span class="sr">Deployment status</span><select id="deployment-status"><option value="">All statuses</option><option value="finished">Finished</option><option value="failed">Failed</option><option value="in_progress">In progress</option><option value="queued">Queued</option><option value="cancelled">Cancelled</option></select></label>
+      </details>
+      <div class="deployment-toolbar">
+        <div class="deployment-views" role="group" aria-label="Deployment view">
+          <button type="button" data-deployment-view="all" aria-pressed="true">All deployments</button>
+          <button type="button" data-deployment-view="production" aria-pressed="false">Production</button>
+          <button type="button" data-deployment-view="preview" aria-pressed="false">Previews</button>
+          <button type="button" data-deployment-view="pull-requests" aria-pressed="false">Open PRs</button>
+        </div>
+        <div class="deployment-filters">
+          <label class="deployment-search"><span class="sr">Search by PR, branch, or commit</span><input id="deployment-search" type="search" placeholder="Search deployments" autocomplete="off"></label>
+          <label><span class="sr">Deployment status</span><select id="deployment-status">
+            <option value="">All statuses</option>
+            <option value="ready">Successful</option>
+            <option value="built">Build passed</option>
+            <option value="in-progress">In progress</option>
+            <option value="queued">Queued</option>
+            <option value="failed">Failed</option>
+            <option value="cancelled">Cancelled</option>
+            <option value="not-built">No recorded build</option>
+            <option value="unknown">Unavailable</option>
+            <option value="external">External PR</option>
+          </select></label>
+        </div>
       </div>
-      <p class="notice" id="empty" role="status" hidden></p>
-      <div class="history-list" id="history-table" hidden>
-        <div class="history-columns" aria-hidden="true"><span>Release</span><span>Source</span><span>Environment</span><span>Time</span><span>Result</span></div>
-        <div id="deployment-rows"></div>
+      <p class="deployment-summary small muted" id="deployment-summary" role="status"></p>
+      <div class="deployment-log">
+        <div class="deployment-columns" aria-hidden="true">
+          <span>Deployment</span><span>Status</span><span>Environment</span><span>Commit</span><span>Branch</span><span>Time</span><span></span>
+        </div>
+        <ul class="deployment-rows" id="deployment-rows" aria-label="Deployments"></ul>
+        <p id="empty" class="deployment-empty muted" hidden></p>
       </div>
     </section>
   </div>
