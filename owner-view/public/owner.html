@@ -82,6 +82,12 @@
         <ul class="production-domains" id="receipt-domains" aria-label="Production health checks"></ul>
         <div id="receipt-rows"></div>
       </section>
+      <section class="production-panel pr-previews" aria-labelledby="pr-previews-title">
+        <div class="history-head"><h2 id="pr-previews-title">Pull request previews</h2></div>
+        <label class="pr-filter"><span class="sr">Search pull requests</span><input id="pr-search" type="search" placeholder="Search pull requests" autocomplete="off"></label>
+        <p class="small muted" id="pr-preview-summary" role="status"></p>
+        <ul class="pr-preview-list" id="pr-preview-rows"></ul>
+      </section>
       <div class="history-head"><h2 id="history-title">Preview deployment history</h2><p class="small muted" id="history-source">Coolify · newest first</p></div>
       <div class="history-filters" id="history-filters" hidden>
         <label><span class="sr">Search deployments</span><input id="deployment-search" type="search" placeholder="Search deployments" autocomplete="off"></label>

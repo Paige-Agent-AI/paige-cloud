@@ -38,6 +38,14 @@ let sessionDeadline;
 const sessionEvents = new BroadcastChannel("paige-owner-session");
 let fetchFailed = false;
 let renderedHistory;
+let previewRunData;
+let previewRequest;
+let previewStaleTimer;
+const previewLabels = {
+  queued: ["Queued", "warn"], building: ["Building", "warn"], built: ["Build passed", "good"],
+  failed: ["Build failed", "bad"], cancelled: ["Cancelled", "warn"], "not-built": ["No recorded build", ""],
+  unknown: ["Build status unavailable", "warn"], external: ["External PR", ""],
+};
 
 function date(value) {
   const milliseconds = typeof value === "string" ? Date.parse(value) : NaN;
@@ -365,6 +373,7 @@ function clearPrivateView() {
   clearTimeout(staleTimer);
   clearTimeout(sessionTimer);
   sessionDeadline = undefined;
+  clearPrPreviews();
   snapshot = null;
   fetchFailed = false;
   render();
@@ -386,6 +395,85 @@ function scheduleSessionExpiry(response) {
   sessionTimer = setTimeout(returnToSignIn, remaining);
 }
 
+function clearPrPreviews() {
+  previewRequest?.abort();
+  previewRequest = undefined;
+  previewRunData = undefined;
+  clearTimeout(previewStaleTimer);
+  renderPrPreviews();
+}
+
+function renderPrPreviews(loading = false) {
+  const text = get("pr-preview-summary");
+  const output = get("pr-preview-rows");
+  if (previewRunData?.state !== "ready") {
+    text.textContent = loading ? "Checking open pull requests…" : "Pull request status is unavailable.";
+    output.replaceChildren();
+    return;
+  }
+  const search = get("pr-search").value.trim().toLowerCase();
+  const checkedAt = date(previewRunData.checkedAt);
+  const outdated = !checkedAt || Date.now() - checkedAt.getTime() >= staleAfterMs;
+  const rows = previewRunData.rows.filter((row) => !search || `${row.number} ${row.title} ${row.branch} ${row.commit}`.toLowerCase().includes(search));
+  const descriptions = [`${rows.length} ${previewRunData.partial ? "of the first " : "of "}${previewRunData.rows.length} open pull requests`];
+  if (previewRunData.builds !== "available") descriptions.push("GitHub build activity is unavailable");
+  if (outdated) descriptions.push("Preview checks are stale. Refresh status to verify links.");
+  text.textContent = descriptions.join(" · ");
+  output.replaceChildren(...rows.map((row) => {
+    const item = element("li");
+    const source = element("div", "pr-preview-source");
+    const pr = element("a", "", `#${row.number} ${row.title}`);
+    pr.href = `https://github.com/Paige-Agent-AI/Paige-Agent-AI/pull/${row.number}`;
+    const commit = element("code", "", row.commit.slice(0, 8));
+    commit.title = row.commit;
+    source.append(pr, element("span", "small muted", row.branch), commit);
+    const state = element("div", "pr-preview-build");
+    const [label, tone] = Object.hasOwn(previewLabels, row.build) ? previewLabels[row.build] : previewLabels.unknown;
+    state.append(element("span", "status " + tone, label));
+    const build = buildRunLink(row.run);
+    if (build) state.append(build);
+    const expected = `https://pr-${row.number}.preview.179.66.154.248.sslip.io`;
+    const live = !outdated && (row.previewUrl === expected || (row.number === 3365 &&
+      row.previewUrl === "https://pr-3365-56f13b6.179.66.154.248.sslip.io"));
+    const preview = live ? element("a", "", "Open preview") : element("span", "small muted", "No verified URL");
+    if (live) preview.href = row.previewUrl;
+    item.append(source, state, preview);
+    return item;
+  }));
+}
+
+async function refreshPrPreviews() {
+  if (location.pathname !== accountPath + "/deployments" || previewRequest) return;
+  const request = new AbortController();
+  previewRequest = request;
+  previewRunData = undefined;
+  clearTimeout(previewStaleTimer);
+  renderPrPreviews(true);
+  const timeout = setTimeout(() => request.abort(), 8000);
+  try {
+    const response = await fetch(accountPath + "/api/organizations/paige/projects/paige-agent-ai/environments/pr-previews/status",
+      { cache: "no-store", redirect: "error", signal: request.signal });
+    if (previewRequest !== request) return;
+    if (response.status === 401) returnToSignIn();
+    if (!response.ok) return;
+    const data = await response.json();
+    if (previewRequest === request && Array.isArray(data.rows)) {
+      previewRunData = data;
+      const checkedAt = date(data.checkedAt);
+      const staleIn = checkedAt && staleAfterMs - (Date.now() - checkedAt.getTime());
+      if (staleIn > 0) previewStaleTimer = setTimeout(renderPrPreviews, staleIn);
+    }
+  } catch {
+    // Preview inventory failures do not change production readback.
+  } finally {
+    clearTimeout(timeout);
+    if (previewRequest === request) {
+      previewRequest = undefined;
+      renderPrPreviews();
+    }
+  }
+}
+
 async function refreshStatus() {
   if (activeRequest) return;
   const request = new AbortController();
@@ -405,6 +493,7 @@ async function refreshStatus() {
       snapshot = null;
       fetchFailed = false;
       clearTimeout(staleTimer);
+      clearPrPreviews();
       render();
       setNotices([["Project access is unavailable.", "warn"]]);
       announcement.textContent = "Project access is unavailable.";
@@ -420,6 +509,7 @@ async function refreshStatus() {
     snapshot = data;
     fetchFailed = false;
     render({ checked: true });
+    void refreshPrPreviews();
     clearTimeout(staleTimer);
     const staleIn = staleAfterMs - (Date.now() - date(data.checkedAt).getTime());
     if (staleIn > 0) {
@@ -469,6 +559,7 @@ document.querySelector(".skip-link").addEventListener("click", (event) => {
   get("main").focus();
 });
 showSection();
+get("pr-search").addEventListener("input", () => renderPrPreviews(Boolean(previewRequest)));
 refresh.addEventListener("click", refreshStatus);
 for (const button of document.querySelectorAll("[data-copy]")) {
   button.addEventListener("click", async () => {
