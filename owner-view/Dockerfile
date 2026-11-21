@@ -8,7 +8,7 @@ RUN node --test
 
 FROM base
 LABEL org.opencontainers.image.source="https://github.com/Paige-Agent-AI/paige-cloud-preview"
-COPY --chown=node:node server.mjs projects.mjs project-console.mjs memberships.mjs accounts.mjs status.mjs release-ledger.json production-receipts.mjs production-receipts.json ./
+COPY --chown=node:node server.mjs projects.mjs project-console.mjs memberships.mjs accounts.mjs status.mjs release-ledger.json production-receipts.mjs production-receipts.json pr-previews.mjs ./
 COPY --chown=node:node public/ ./public/
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \

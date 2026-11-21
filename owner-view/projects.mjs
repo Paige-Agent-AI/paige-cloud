@@ -1,4 +1,5 @@
 import { readOwnerStatus, readPreviewStatus, readProductionStatus } from "./status.mjs";
+import { createPrPreviewReader } from "./pr-previews.mjs";
 
 export const ownerId = "cloud-owner";
 export const firstProject = Object.freeze({ organizationId: "paige", projectId: "paige-agent-ai" });
@@ -42,7 +43,7 @@ export function createProjectAccess(projects, hasProjectRead) {
   };
 }
 
-export function createPaigeProjectAccess(token, hasProjectRead) {
+export function createPaigeProjectAccess(token, hasProjectRead, actionsToken) {
   if (!/^[\x21-\x7e]{16,512}$/.test(token ?? "")) throw new Error("A scoped Coolify read token is required.");
   return createProjectAccess([{
     ...firstProject,
@@ -50,6 +51,7 @@ export function createPaigeProjectAccess(token, hasProjectRead) {
     environments: {
       production: () => readProductionStatus(),
       "f2-preview": () => readPreviewStatus(token),
+      "pr-previews": createPrPreviewReader(actionsToken),
     },
   }], hasProjectRead);
 }

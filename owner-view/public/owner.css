@@ -112,6 +112,24 @@ main { min-width: 0; padding: clamp(1.5rem, 3vw, 2.5rem) clamp(1rem, 4vw, 3.25re
 }
 .production-panel .history-head { margin-bottom: .4rem; }
 .production-receipts { margin-bottom: 1.35rem; }
+.pr-previews { margin-bottom: 1.35rem; }
+.pr-filter { display: block; max-width: 24rem; margin-block: .65rem; }
+.pr-preview-list { padding: 0; margin: .6rem 0 0; list-style: none; }
+.pr-preview-list li {
+  display: grid;
+  grid-template-columns: minmax(12rem, 2fr) minmax(8rem, 1fr) minmax(7rem, 1fr);
+  align-items: center;
+  gap: .65rem 1rem;
+  padding: .6rem 0;
+  border-top: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.pr-preview-source, .pr-preview-build { display: grid; gap: .2rem; justify-items: start; }
+.pr-preview-source code { color: var(--muted); font-size: .78rem; }
+@media (max-width: 680px) {
+  .pr-preview-list li { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .pr-preview-source { grid-column: 1 / -1; }
+}
 .production-receipt { margin-top: .8rem; border-top: 1px solid var(--line); }
 .production-receipt summary { cursor: pointer; padding: .8rem 0 .35rem; }
 .production-receipt summary > * { margin-inline-end: .65rem; }
@@ -185,12 +203,12 @@ main { min-width: 0; padding: clamp(1.5rem, 3vw, 2.5rem) clamp(1rem, 4vw, 3.25re
 .history-head h2 { font-size: 1.05rem; }
 .history-filters { display: flex; flex-wrap: wrap; gap: .55rem; margin-bottom: .75rem; }
 .history-filters label:first-child { flex: 1 1 15rem; max-width: 24rem; }
-.history-filters input, .history-filters select {
+.history-filters input, .history-filters select, .pr-filter input {
   width: 100%; min-height: 42px; border: 1px solid var(--line); border-radius: 9px;
   padding: .48rem .75rem; background: var(--panel); color: var(--fg); font: inherit; font-size: .84rem;
 }
-.history-filters input::placeholder { color: var(--muted); }
-.history-filters input:hover, .history-filters select:hover { border-color: var(--line-hover); }
+.history-filters input::placeholder, .pr-filter input::placeholder { color: var(--muted); }
+.history-filters input:hover, .history-filters select:hover, .pr-filter input:hover { border-color: var(--line-hover); }
 .history-list {
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
   --event-indent: 2.55rem;

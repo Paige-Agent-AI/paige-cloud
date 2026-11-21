@@ -1,4 +1,5 @@
 name: Build a PAIGE pull-request preview
+run-name: 'Preview PR #${{ inputs.pull_request }} @ ${{ inputs.head_sha }}'
 
 on:
   workflow_dispatch:
@@ -63,6 +64,10 @@ jobs:
           [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
           docker pull "$IMAGE_REPO@$digest"
           [[ "$(docker image inspect --format '{{.Id}}' "$CANDIDATE")" == "$(docker image inspect --format '{{.Id}}' "$IMAGE_REPO@$digest")" ]]
+          alias="$IMAGE_REPO:${digest/:/-}"
+          docker tag "$CANDIDATE" "$alias"
+          docker push "$alias"
+          [[ "$(docker buildx imagetools inspect --format '{{json .Manifest.Digest}}' "$alias" | tr -d '"')" == "$digest" ]]
           jq --argjson pr "$PULL_REQUEST" --arg frontend "$FRONTEND_COMMIT" --arg cloud "$GITHUB_SHA" \
             --arg image "$IMAGE_REPO@$digest" --arg tag "${CANDIDATE##*:}" \
             '. + {environment:"pull-request-preview",pullRequest:$pr,frontendCommit:$frontend,cloudCommit:$cloud,image:$image,tag:$tag,verification:"image-smoke-passed"}' \

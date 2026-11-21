@@ -381,7 +381,8 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
     passwordHash: process.env.OWNER_VIEW_PASSWORD_SHA256,
     accounts,
     catalog: store,
-    projectAccess: createPaigeProjectAccess(process.env.OWNER_VIEW_COOLIFY_TOKEN, store.hasProjectRead),
+    projectAccess: createPaigeProjectAccess(process.env.OWNER_VIEW_COOLIFY_TOKEN, store.hasProjectRead,
+      process.env.OWNER_VIEW_PREVIEW_ACTIONS_TOKEN),
   });
   server.once("close", () => { accounts.close(); store.close(); });
   server.listen(8080, "0.0.0.0", () => console.log("PAIGE Cloud owner view is ready"));
