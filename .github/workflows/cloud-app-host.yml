@@ -35,7 +35,7 @@ jobs:
           container=$(docker run -d -p 127.0.0.1::8080 "$image")
           trap 'docker logs "$container"; docker rm -f "$container"' EXIT
           base="http://$(docker port "$container" 8080/tcp)"
-          curl -fsS --retry 10 --retry-connrefused "$base/healthz"
+          curl -fsS --max-time 3 --retry 10 --retry-delay 1 --retry-all-errors "$base/healthz"
           curl -fsS "$base/release.json" | jq -e --arg cloud "$GITHUB_SHA" --arg frontend "$frontend" \
             '.cloudCommit == $cloud and .frontendCommit == $frontend'
           for pair in auth:auth.html privacy:privacy.html sms-terms:sms-terms.html operator/workspaces:index.html; do
