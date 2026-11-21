@@ -13,6 +13,7 @@ import { createOwnerServer } from "./server.mjs";
 
 const origin = "https://owner.example.test";
 const alias = "https://cloud.example.test";
+const cloudDomain = "https://paigecloud.example.test";
 const readFromGrants = (grants) => (principalId, organizationId, projectId) =>
   grants.some((grant) => grant.principalId === principalId &&
     grant.organizationId === organizationId && grant.projectId === projectId);
@@ -20,7 +21,8 @@ const readFromGrants = (grants) => (principalId, organizationId, projectId) =>
 async function startServer(t, projectAccess, principalId = ownerId) {
   const password = randomBytes(32).toString("base64url");
   const server = createOwnerServer({
-    origin, aliasOrigin: alias, passwordHash: createHash("sha256").update(password).digest("hex"),
+    origin, aliasOrigin: alias, additionalOrigins: [cloudDomain],
+    passwordHash: createHash("sha256").update(password).digest("hex"),
     projectAccess, principalId,
   });
   server.listen(0, "127.0.0.1");
@@ -94,6 +96,17 @@ test("owner HTTP surface gates assets and data, rejects tampering, and invalidat
   const aliasCookie = aliasLogin.headers.get("set-cookie").split(";")[0];
   assert.equal((await request("/api/status", { headers: { cookie: aliasCookie } })).status, 401);
   assert.equal((await request("/api/status", { headers: { host: aliasHost, cookie: aliasCookie } })).status, 200);
+  const cloudHost = new URL(cloudDomain).host;
+  assert.equal((await request("/api/status", { headers: { host: cloudHost, cookie: aliasCookie } })).status, 401);
+  const cloudLogin = await request("/session", {
+    method: "POST",
+    headers: { host: cloudHost, origin: cloudDomain, "content-type": "application/x-www-form-urlencoded" },
+    body: "password=" + password,
+  });
+  assert.equal(cloudLogin.status, 303);
+  const cloudCookie = cloudLogin.headers.get("set-cookie").split(";")[0];
+  assert.equal((await request("/api/status", { headers: { host: cloudHost, cookie: cloudCookie } })).status, 200);
+  assert.equal((await request("/api/status", { headers: { host: aliasHost, cookie: cloudCookie } })).status, 401);
   assert.equal((await request("/api/status", { headers: { cookie: cookie.slice(0, -1) + "?" } })).status, 401);
   const [first, second] = await Promise.all([
     request("/api/status", { headers: { cookie } }),
