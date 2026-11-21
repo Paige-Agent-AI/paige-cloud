@@ -302,6 +302,10 @@ window.addEventListener("hashchange", (event) => {
   if (hash === "#main") return;
   showSection(true);
 });
+document.querySelector(".skip-link").addEventListener("click", (event) => {
+  event.preventDefault();
+  get("main").focus();
+});
 showSection();
 refresh.addEventListener("click", refreshStatus);
 for (const button of document.querySelectorAll("[data-copy]")) {
