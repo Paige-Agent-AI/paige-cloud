@@ -131,7 +131,8 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
     if (samePrincipal.length >= 6) sessions.delete(samePrincipal[0]);
     const id = randomBytes(32).toString("base64url");
     sessions.set(id, { principalId, origin: requestOrigin, expires: now + sessionLifetime * 1000 });
-    send(response, 303, text, "", { Location: "/", "Set-Cookie": sessionName + "=" + id + cookieFields + sessionLifetime });
+    const location = resolveRead(principalId, firstProject) ? "/overview" : catalog ? "/projects" : "/";
+    send(response, 303, text, "", { Location: location, "Set-Cookie": sessionName + "=" + id + cookieFields + sessionLifetime });
   }
 
   function getStatus(reader) {
@@ -260,7 +261,7 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
       return;
     }
     const scope = parseProjectStatusPath(path);
-    if (path === "/") {
+    if (["/", "/overview", "/deployments"].includes(path)) {
       if (authorized && catalog && !resolveRead(session.principalId, firstProject)) {
         send(response, 303, text, "", { Location: "/projects" });
         return;

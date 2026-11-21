@@ -12,8 +12,10 @@ const action = (value) => `<input type="hidden" name="action" value="${value}">`
 export function matchProjectPage(path) {
   if (path === "/projects" || path === "/join") return { path };
   const parts = path?.split("/") ?? [];
-  if (parts.length !== 4 || parts[0] || parts[1] !== "projects" || !parts.slice(2).every(isProjectSlug)) return undefined;
-  return { path, organizationId: parts[2], projectId: parts[3] };
+  const members = parts.length === 5 && parts[4] === "members";
+  if ((parts.length !== 4 && !members) || parts[0] || parts[1] !== "projects" ||
+      !parts.slice(2, 4).every(isProjectSlug)) return undefined;
+  return { path, organizationId: parts[2], projectId: parts[3], members };
 }
 
 function shell(title, body, showDeployments, remaining) {
@@ -27,14 +29,14 @@ function shell(title, body, showDeployments, remaining) {
 <span>PAIGE <span class="brand-cloud">Cloud</span></span></a>
 <form action="/sign-out" method="post" class="sign-out-form">${button("Sign out")}</form></div></header>
 <div class="workspace-layout"><nav class="workspace-menu" aria-label="Workspace">
-${showDeployments ? '<a href="/#overview">Overview</a><a href="/#deployments">Deployments</a>' : ""}
+${showDeployments ? '<a href="/overview">Overview</a><a href="/deployments">Deployments</a>' : ""}
 <a href="/projects" aria-current="page">Projects</a></nav>
 <main id="main" class="project-main" tabindex="-1" data-session-remaining="${remaining}" hidden><h1>${escape(title)}</h1>${body}</main>
 <noscript><p>Enable JavaScript to open your projects.</p></noscript></div></body></html>`;
 }
 
-function controls(project, catalog, accounts) {
-  const path = url(project);
+function membersPanel(project, catalog, accounts) {
+  const path = url(project) + "/members";
   const items = catalog.members(project).map(({ id }) => {
     const email = accounts.emailFor(id);
     const identity = email ? `<strong>${escape(email)}</strong>` : `<code>${escape(id)}</code>`;
@@ -49,13 +51,18 @@ function controls(project, catalog, accounts) {
   ${project.archived ? "" : `<form class="project-form" method="post" action="${path}">${action("invite")}
   <label for="invite-email">Invite by email</label><input type="email" name="email" id="invite-email" maxlength="254" required>
   ${button("Prepare invitation", true)}</form>`}
-  ${invites.length ? `<h3>Pending invitations</h3><ul class="project-list">${invites.join("")}</ul>` : ""}</section>
-  ${canonical(project) ? "" : `<section class="project-panel" aria-labelledby="settings"><h2 id="settings">Project settings</h2>
+  ${invites.length ? `<h3>Pending invitations</h3><ul class="project-list">${invites.join("")}</ul>` : ""}</section>`;
+}
+
+function settingsPanel(project) {
+  if (canonical(project)) return "";
+  const path = url(project);
+  return `<section class="project-panel" aria-labelledby="settings"><h2 id="settings">Project settings</h2>
   <form class="project-form" method="post" action="${path}">${action("rename")}
   <label for="project-name">Display name</label><input name="name" id="project-name" required maxlength="80" value="${escape(project.name)}">${button("Save name")}</form>
   <form class="project-form" method="post" action="${path}">${action(project.archived ? "restore" : "archive")}
   <p class="muted">${project.archived ? "Restoring the project returns access to its remaining members." : "Archiving hides the project from members and cancels pending invitations."}</p>
-  ${button(project.archived ? "Restore project" : "Archive project")}</form></section>`}`;
+  ${button(project.archived ? "Restore project" : "Archive project")}</form></section>`;
 }
 
 export function projectPage({ route, form, method, principal, origin, catalog, accounts, showDeployments, remaining }) {
@@ -102,12 +109,18 @@ export function projectPage({ route, form, method, principal, origin, catalog, a
 
   const { organizationId, projectId } = route;
   const project = catalog.get(route);
-  if (!project || (!manage && !catalog.hasProjectRead(principal, organizationId, projectId))) return { status: 404 };
+  if (!project || (!manage && (route.members || !catalog.hasProjectRead(principal, organizationId, projectId)))) return { status: 404 };
+  if (!post && route.members) return page("Members", `<p class="muted"><a href="/projects">All projects</a> /
+    <a href="${url(project)}">${escape(project.name)}</a> / Members</p>` + membersPanel(project, catalog, accounts));
   const detail = `<p class="muted"><a href="/projects">All projects</a> / ${escape(organizationId)}/${escape(projectId)}${project.archived ? ' · Archived' : ''}</p>
-    ${canonical(project) && catalog.hasProjectRead(principal, organizationId, projectId) ? '<p><a href="/#deployments">View deployments</a></p>' : !project.archived ? '<p class="muted">No deployment source is connected.</p>' : ""}`;
-  if (!post) return page(project.name, detail + (manage ? controls(project, catalog, accounts) : ""));
+    ${canonical(project) && catalog.hasProjectRead(principal, organizationId, projectId) ? '<p><a href="/deployments">View deployments</a></p>' : !project.archived ? '<p class="muted">No deployment source is connected.</p>' : ""}
+    ${manage ? `<p><a href="${url(project)}/members">Manage members</a></p>` : ""}`;
+  if (!post) return page(project.name, detail + (manage ? settingsPanel(project) : ""));
 
-  switch (form?.get("action")) {
+  const requestedAction = form?.get("action");
+  const memberAction = ["invite", "cancel-invite", "revoke"].includes(requestedAction);
+  if (memberAction !== route.members) return error("Select a project action.", route.path);
+  switch (requestedAction) {
     case "rename": {
       const name = form.get("name")?.trim();
       if (form.size !== 2 || !validName(name)) return error("Enter a valid display name.", route.path);
@@ -132,7 +145,7 @@ export function projectPage({ route, form, method, principal, origin, catalog, a
       return page("Invitation ready", `<section class="project-panel"><p>For <strong>${escape(email)}</strong>. This code expires in 48 hours.</p>
         <p><code class="account-id">${code}</code></p>
         <p><a class="primary" href="mailto:${encodeURIComponent(mailbox)}@${domain}?subject=${subject}&amp;body=${message}">Open email draft</a></p>
-        <p class="muted">Send the draft to deliver the invitation.</p><p><a href="${route.path}">Back to project</a></p></section>`);
+        <p class="muted">Send the draft to deliver the invitation.</p><p><a href="${route.path}">Back to members</a></p></section>`);
     }
     case "cancel-invite": {
       const email = normalizeEmail(form.get("email"));

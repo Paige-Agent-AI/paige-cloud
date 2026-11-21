@@ -18,6 +18,8 @@ After owner setup, approved evaluators can create an account at `/signup`. The o
 
 Open **Projects** to create a project, edit its display name, or archive and restore it. Organization and project IDs remain stable. PAIGE Agent AI has a fixed display name and stays connected to its reviewed deployment readers. New projects are private records until connected to their own deployment source.
 
+Overview and Deployments use `/overview` and `/deployments`. The projects list uses `/projects`. Project details use `/projects/{organizationId}/{projectId}` and owner-only Members uses that project URL followed by `/members`. Invitation acceptance uses `/join`.
+
 In a project, the Cloud owner can prepare an invitation for one email. **Open email draft** opens the selected mail app with the address, setup instructions, and a 48-hour code. The owner sends the draft. An invited evaluator creates an account if needed, signs in, and enters the same code under **Accept an invitation**. Acceptance grants access to that one project. Pending invitations can be cancelled. Revocation takes effect on the member's next project request and cancels any pending invitation to the same member for that project.
 
 The console extends the existing membership file on startup in a SQLite transaction. Existing grants are preserved. Archived projects retain their IDs and grants for restoration, while active member access and pending invitations are closed. Keep both database files on the **same** private local volume in rollback-journal mode.

@@ -371,8 +371,8 @@ async function refreshStatus() {
   }
 }
 
-function showSection(moveFocus = false) {
-  const deployments = location.hash === "#deployments";
+function showSection() {
+  const deployments = location.pathname === "/deployments";
   const section = deployments ? "deployments" : "overview";
   const title = deployments ? "Deployments" : "Overview";
   pageTitle.textContent = title;
@@ -384,14 +384,12 @@ function showSection(moveFocus = false) {
     if (link.dataset.section === section) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   }
-  if (moveFocus) pageTitle.focus({ preventScroll: true });
 }
 
-window.addEventListener("hashchange", (event) => {
-  const hash = new URL(event.newURL).hash;
-  if (hash === "#main") return;
-  showSection(true);
-});
+if (location.pathname === "/") {
+  const route = location.hash === "#deployments" ? "/deployments" : "/overview";
+  history.replaceState(null, "", route);
+}
 document.querySelector(".skip-link").addEventListener("click", (event) => {
   event.preventDefault();
   get("main").focus();
