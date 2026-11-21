@@ -17,7 +17,8 @@ const sampleManifest = {
   frontendCommit: ledger.releases.B.frontendCommit,
 };
 const sampleHistory = ledger.deployments.map((row) => ({
-  deployment_uuid: row.id, finished_at: row.finishedAt, created_at: row.finishedAt,
+  deployment_uuid: row.id, finished_at: row.finishedAt,
+  created_at: new Date(Date.parse(row.finishedAt) - 77_000).toISOString(),
   status: "finished", logs: "private log must never be returned", configuration_snapshot: "private config",
 }));
 
@@ -48,6 +49,10 @@ test("verifies B and rollback A from independent sources and excludes provider i
   assert.equal(snapshot.current.imageDigest, ledger.releases.B.imageDigest);
   assert.equal(snapshot.rollback.imageDigest, ledger.releases.A.imageDigest);
   assert.equal(snapshot.history.length, 4);
+  assert.equal(snapshot.history[0].elapsedSeconds, 77);
+  assert.equal(snapshot.history[0].frontendCommit, sampleManifest.frontendCommit);
+  assert.equal(snapshot.history[0].imageDigest, ledger.releases.B.imageDigest);
+  assert.equal(snapshot.history[0].source.author, "mrmogulmaker-bot");
   assert.ok(!JSON.stringify(snapshot).includes("private log"));
   assert.ok(!JSON.stringify(snapshot).includes("private config"));
   assert.equal(reads.length, 4);
@@ -93,4 +98,13 @@ test("handles partial outages and preview health errors without inventing provid
   const badRows = await readPreviewStatus(token, fakeSource({ history: [sampleHistory[0], sampleHistory[0]] }));
   assert.equal(badRows.history, null);
   assert.equal(badRows.identity, "unavailable");
+});
+
+test("reports provider timings without attributing a different deployment to a known source", async () => {
+  const input = { ...sampleHistory[0], finished_at: "2026-11-20T19:39:00Z", commit: sampleManifest.frontendCommit };
+  const { history } = await readPreviewStatus(token, fakeSource({ history: [input] }));
+  assert.equal(history[0].frontendCommit, null);
+  assert.equal(history[0].source, null);
+  assert.equal(history[0].imageDigest, null);
+  assert.ok(history[0].elapsedSeconds > 0);
 });

@@ -1,4 +1,10 @@
 {
+  "frontendSources": {
+    "89d72496470b28e39392d72746f2fbcd6eb4f519": {
+      "title": "fix(ci): renew C0b pin and align fallback test for ANT-166 OpenRouter wire-field repair (#3363)",
+      "author": "mrmogulmaker-bot"
+    }
+  },
   "releases": {
     "A": {
       "name": "Release A",

@@ -45,13 +45,20 @@ function normaliseHistory(data) {
     if (!createdAt) return null;
     const matched = row.status === "finished" && recorded && finishedAt === isoDate(recorded.finishedAt);
     const release = matched ? evidence.releases[recorded.release] : null;
+    const elapsed = finishedAt ? Date.parse(finishedAt) - Date.parse(createdAt) : -1;
+    const source = release && evidence.frontendSources[release.frontendCommit];
     return {
       id: row.deployment_uuid,
       status: visibleStatuses.has(row.status) ? row.status : "unknown",
       at: finishedAt ?? createdAt,
       createdAt,
+      elapsedSeconds: elapsed >= 0 ? Math.floor(elapsed / 1000) : null,
       event: matched ? recorded.event : null,
       release: release?.name ?? null,
+      frontendCommit: release?.frontendCommit ?? null,
+      cloudCommit: release?.cloudCommit ?? null,
+      imageDigest: release?.imageDigest ?? null,
+      source: source || null,
       run: release?.run ?? null,
       code: matched ? recorded.release : null,
     };

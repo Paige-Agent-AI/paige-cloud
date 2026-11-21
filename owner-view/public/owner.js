@@ -5,6 +5,8 @@ const view = get("deployment-view");
 const refresh = get("refresh");
 const announcement = get("announcement");
 const pageTitle = get("page-title");
+const deploymentSearch = get("deployment-search");
+const deploymentStatus = get("deployment-status");
 const navigation = document.querySelectorAll(".workspace-menu [data-section]");
 const staleAfterMs = 120_000;
 const dateFormat = new Intl.DateTimeFormat(undefined, {
@@ -24,6 +26,7 @@ const deploymentLabels = {
   failed: ["Failed", "bad"],
   cancelled: ["Cancelled", "warn"],
   canceled: ["Cancelled", "warn"],
+  "cancelled-by-user": ["Cancelled", "warn"],
   queued: ["Queued", "warn"],
   in_progress: ["In progress", "warn"],
 };
@@ -104,14 +107,40 @@ function deploymentRow(deployment) {
   if (deployment.event) release.append(element("span", "row-event", deployment.event));
   const checkedAt = element("span", "row-time muted");
   checkedAt.append(time(deployment.at, historyDateFormat));
+  const source = element("span", "row-source");
+  source.append(deployment.frontendCommit ? element("code", "", deployment.frontendCommit.slice(0, 7)) : "Unverified");
+  const result = element("span", "row-outcome");
+  result.append(element("span", "row-result " + tone, label));
+  if (Number.isSafeInteger(deployment.elapsedSeconds) && deployment.elapsedSeconds >= 0) {
+    const seconds = deployment.elapsedSeconds;
+    const minutes = Math.floor(seconds / 60);
+    const elapsed = element("span", "row-elapsed", minutes ? `${minutes}m ${seconds % 60}s` : `${seconds}s`);
+    elapsed.title = "Elapsed time from queue to completion";
+    result.append(elapsed);
+  }
   const arrow = element("span", "chevron");
   arrow.setAttribute("aria-hidden", "true");
   summary.append(
-    release, element("code", "row-id", deployment.id),
-    checkedAt, element("span", "row-result " + tone, label), arrow,
+    release, source, element("span", "row-environment", "Preview"), checkedAt, result, arrow,
   );
   const detail = element("div", "row-detail");
-  detail.append(buildRunLink(deployment.run) || element("p", "", "No source build is linked to this deployment."));
+  if (deployment.source?.title) detail.append(element("p", "row-subject", deployment.source.title));
+  const fields = element("dl", "row-fields");
+  for (const [name, value, mono] of [
+    ["GitHub author", deployment.source?.author],
+    ["Frontend commit", deployment.frontendCommit, true],
+    ["Cloud commit", deployment.cloudCommit, true],
+    ["Image digest", deployment.imageDigest, true],
+    ["Deployment ID", deployment.id, true],
+  ]) {
+    if (!value) continue;
+    const pair = element("div");
+    const entry = element("dd");
+    entry.append(mono ? element("code", "", value) : document.createTextNode(value));
+    pair.append(element("dt", "", name), entry);
+    fields.append(pair);
+  }
+  detail.append(fields, buildRunLink(deployment.run) || element("p", "muted", "No source build is linked to this deployment."));
   row.append(summary, detail);
   return row;
 }
@@ -120,22 +149,32 @@ function setHistory(deployments, stale, loading) {
   const rows = get("deployment-rows");
   const empty = get("empty");
   const available = Array.isArray(deployments);
-  const hasEntries = available && deployments.length > 0;
+  const query = deploymentSearch.value.trim().toLowerCase();
+  const statusFilter = deploymentStatus.value;
+  const matches = available ? deployments.filter((row) => {
+    const status = row.status === "cancelled-by-user" ? "cancelled" : row.status;
+    if (statusFilter && status !== statusFilter) return false;
+    return !query || [row.id, row.release, row.event, row.frontendCommit, row.cloudCommit, row.source?.title,
+      row.source?.author, "preview"].some((value) => value?.toLowerCase().includes(query));
+  }) : [];
+  const hasEntries = matches.length > 0;
+  get("history-filters").hidden = !available || deployments.length === 0;
   get("history-source").textContent = stale ? "Last recorded Coolify history" : "Coolify · newest first";
   get("history-table").hidden = !hasEntries;
   empty.hidden = hasEntries;
   empty.textContent = loading ? "Waiting for Coolify deployment history." :
-    available ? "Coolify reported no deployments for this preview." : "Coolify deployment history is unavailable.";
-  const historyKey = JSON.stringify(deployments);
+    deployments?.length ? "No deployments match these filters." :
+      available ? "Coolify reported no deployments for this preview." : "Coolify deployment history is unavailable.";
+  const historyKey = JSON.stringify(matches);
   if (historyKey === renderedHistory) return;
   const openIds = new Set([...rows.children].filter((row) => row.open).map((row) => row.dataset.deploymentId));
   const active = document.activeElement;
   const activeId = rows.contains(active) ? active.closest("details")?.dataset.deploymentId : null;
-  const updated = hasEntries ? deployments.map((deployment) => {
+  const updated = matches.map((deployment) => {
     const row = deploymentRow(deployment);
     row.open = openIds.has(deployment.id);
     return row;
-  }) : [];
+  });
   rows.replaceChildren(...updated);
   if (activeId) {
     const row = updated.find((item) => item.dataset.deploymentId === activeId);
@@ -145,6 +184,9 @@ function setHistory(deployments, stale, loading) {
   }
   renderedHistory = historyKey;
 }
+
+deploymentSearch.addEventListener("input", () => render());
+deploymentStatus.addEventListener("change", () => render());
 
 function render({ loading = false, checked = false } = {}) {
   const checkedAt = date(snapshot?.checkedAt);

@@ -68,9 +68,13 @@
     </div>
     <section class="history" id="deployments-panel" aria-labelledby="history-title" hidden>
       <div class="history-head"><h2 id="history-title">Deployment history</h2><p class="small muted" id="history-source">Coolify · newest first</p></div>
-      <p class="notice" id="empty" hidden></p>
+      <div class="history-filters" id="history-filters" hidden>
+        <label><span class="sr">Search deployments</span><input id="deployment-search" type="search" placeholder="Search deployments" autocomplete="off"></label>
+        <label><span class="sr">Deployment status</span><select id="deployment-status"><option value="">All statuses</option><option value="finished">Finished</option><option value="failed">Failed</option><option value="in_progress">In progress</option><option value="queued">Queued</option><option value="cancelled">Cancelled</option></select></label>
+      </div>
+      <p class="notice" id="empty" role="status" hidden></p>
       <div class="history-list" id="history-table" hidden>
-        <div class="history-columns" aria-hidden="true"><span>Release</span><span>Deployment ID</span><span>Time</span><span>Result</span></div>
+        <div class="history-columns" aria-hidden="true"><span>Release</span><span>Source</span><span>Environment</span><span>Time</span><span>Result</span></div>
         <div id="deployment-rows"></div>
       </div>
     </section>
