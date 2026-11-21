@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Overview · PAIGE Cloud</title>
+<link rel="stylesheet" href="/assets/owner.css">
+<script src="/assets/owner.js" defer></script>
+</head>
+<body class="workspace">
+<a class="skip-link" href="#main">Skip to main content</a>
+<header><div class="topbar">
+  <a class="brand" href="#overview" aria-label="PAIGE Cloud overview"><svg viewBox="0 0 48 48" aria-hidden="true"><polygon points="21,13.6 30.5,13.6 21,34.4 11.5,34.4"/><circle cx="34.5" cy="30.5" r="5.5"/></svg><span>PAIGE <span class="brand-cloud">Cloud</span></span></a>
+  <form action="/sign-out" method="post" class="sign-out-form"><button class="sign-out" type="submit">Sign out</button></form>
+</div></header>
+<div class="workspace-layout">
+<nav class="workspace-menu" aria-label="Workspace">
+  <a href="#overview" data-section="overview" aria-current="page">Overview</a>
+  <a href="#deployments" data-section="deployments">Deployments</a>
+</nav>
+<main id="main" tabindex="-1">
+  <div class="page-head">
+    <div><h1 id="page-title" tabindex="-1">Overview</h1><p class="muted">PAIGE Cloud Preview <span aria-hidden="true"> / </span> <code>f2-preview</code></p></div>
+    <div class="page-actions">
+      <button id="refresh" type="button">Refresh status</button>
+      <a class="primary" href="https://paige-ant178-auth.179.66.154.248.sslip.io/" target="_blank" rel="noreferrer">Open app preview<span class="sr"> (PAIGE sign-in pilot, new tab)</span></a>
+    </div>
+  </div>
+  <div id="announcement" class="sr" role="status" aria-live="polite" aria-atomic="true"></div>
+  <noscript><p class="notice warn">Enable JavaScript to view deployment status.</p></noscript>
+  <div id="deployment-view" hidden>
+    <div class="notice-list" id="notices" hidden></div>
+    <div class="releases" id="overview-panel">
+      <table class="release-table" aria-label="Preview releases" role="table">
+        <colgroup><col><col><col><col></colgroup>
+        <thead role="rowgroup"><tr role="row"><th scope="col" role="columnheader">Release</th><th scope="col" role="columnheader">Status</th><th scope="col" role="columnheader">Source</th><th scope="col" role="columnheader">Image digest</th></tr></thead>
+        <tbody role="rowgroup">
+          <tr role="row">
+            <th scope="row" role="rowheader">
+              <span class="release-name" id="release-name">Checking</span>
+              <span class="release-role" id="current-title">Current release</span>
+              <a class="release-source" href="https://izwrky18u9ixdhstnulxpjs5.179.66.154.248.sslip.io/" target="_blank" rel="noreferrer">Public preview<span class="sr"> (new tab)</span></a>
+            </th>
+            <td role="cell"><span class="status" id="health">Checking</span><p class="release-context muted" id="readback"></p></td>
+            <td role="cell" class="release-source-cell">
+              <dl id="current-identifiers" hidden><div><dt>Cloud commit</dt><dd><code id="commit-current"></code></dd></div><div><dt>Frontend commit</dt><dd><code id="frontend-current"></code></dd></div></dl>
+            </td>
+            <td role="cell" class="release-image-cell">
+              <div id="current-image" hidden><span class="mobile-column-label" aria-hidden="true">Image digest</span><code id="digest-current"></code><button class="copy" type="button" data-copy="digest-current" aria-label="Copy current release image digest">Copy</button></div>
+            </td>
+          </tr>
+          <tr role="row">
+            <th scope="row" role="rowheader">
+              <span class="release-name" id="rollback-name">Checking</span>
+              <span class="release-role" id="rollback-title">Rollback target</span>
+              <a class="release-source" id="evidence" target="_blank" rel="noreferrer" href="https://linear.app/paigeagentai/issue/ANT-176/paige-cloud-f2-codex-successor-immutable-releases-cicd-and-real#comment-dbea82cc-9b5b-45da-81e2-1bbc3476555a" hidden>Rollback evidence<span class="sr"> (new tab)</span></a>
+            </th>
+            <td role="cell"><span class="status" id="rollback-state">Checking</span><p class="release-context muted" id="rollback-context"></p></td>
+            <td role="cell" class="release-source-cell">
+              <dl id="rollback-identifiers" hidden><div><dt>Cloud commit</dt><dd><code id="commit-rollback"></code></dd></div><div><dt>Frontend commit</dt><dd><code id="frontend-rollback"></code></dd></div></dl>
+            </td>
+            <td role="cell" class="release-image-cell">
+              <div id="rollback-image" hidden><span class="mobile-column-label" aria-hidden="true">Image digest</span><code id="digest-rollback"></code><button class="copy" type="button" data-copy="digest-rollback" aria-label="Copy rollback target image digest">Copy</button></div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <section class="history" id="deployments-panel" aria-labelledby="history-title" hidden>
+      <div class="history-head"><h2 id="history-title">Deployment history</h2><p class="small muted" id="history-source">Coolify · newest first</p></div>
+      <div class="history-filters" id="history-filters" hidden>
+        <label><span class="sr">Search deployments</span><input id="deployment-search" type="search" placeholder="Search deployments" autocomplete="off"></label>
+        <label><span class="sr">Deployment status</span><select id="deployment-status"><option value="">All statuses</option><option value="finished">Finished</option><option value="failed">Failed</option><option value="in_progress">In progress</option><option value="queued">Queued</option><option value="cancelled">Cancelled</option></select></label>
+      </div>
+      <p class="notice" id="empty" role="status" hidden></p>
+      <div class="history-list" id="history-table" hidden>
+        <div class="history-columns" aria-hidden="true"><span>Release</span><span>Source</span><span>Environment</span><span>Time</span><span>Result</span></div>
+        <div id="deployment-rows"></div>
+      </div>
+    </section>
+  </div>
+</main>
+</div>
+</body>
+</html>

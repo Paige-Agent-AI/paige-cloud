@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Owner sign-in · PAIGE Cloud</title>
+<link rel="stylesheet" href="/assets/owner.css">
+</head>
+<body class="sign-in-page">
+<header><div class="topbar">
+  <span class="brand"><svg viewBox="0 0 48 48" aria-hidden="true"><polygon points="21,13.6 30.5,13.6 21,34.4 11.5,34.4"/><circle cx="34.5" cy="30.5" r="5.5"/></svg><span>PAIGE <span class="brand-cloud">Cloud</span></span></span>
+</div></header>
+<main id="main">
+  <section class="sign-in-panel" aria-labelledby="sign-in-title">
+    <h1 id="sign-in-title">Sign in to PAIGE Cloud</h1>
+    <p class="muted">Use your owner key to access deployments and preview health.</p>
+    <!-- LOGIN_ERROR -->
+    <form action="/session" method="post" class="sign-in-form">
+      <label for="password">Owner key</label>
+      <input type="password" id="password" name="password" required autocomplete="current-password" maxlength="43" spellcheck="false">
+      <button class="primary" type="submit">Continue as owner</button>
+    </form>
+  </section>
+</main>
+</body>
+</html>

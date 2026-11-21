@@ -1,0 +1,98 @@
+name: Publish PAIGE app for Coolify
+
+on:
+  push:
+    tags: [cloud-app-host-*]
+  repository_dispatch:
+    types: [paige-frontend-main]
+  workflow_dispatch:
+    inputs:
+      frontend_commit:
+        description: Full approved PAIGE frontend main commit SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: cloud-app-host-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: >-
+      github.repository == 'Paige-Agent-AI/paige-cloud-preview' &&
+      (startsWith(github.ref, 'refs/tags/cloud-app-host-') || github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      IMAGE_REPO: ghcr.io/paige-agent-ai/paige-cloud-preview
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Build the full frontend and verify routes
+        env:
+          REQUESTED_COMMIT: ${{ inputs.frontend_commit || github.event.client_payload.commit }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          if [[ "$GITHUB_REF" == refs/tags/cloud-app-host-* ]]; then
+            frontend="$(cat app-host/frontend.commit)"
+          else
+            frontend="$(git ls-remote --exit-code https://github.com/Paige-Agent-AI/Paige-Agent-AI.git refs/heads/main | cut -f1)"
+            if [[ ! "$REQUESTED_COMMIT" =~ ^[a-f0-9]{40}$ || "$REQUESTED_COMMIT" != "$frontend" ]]; then
+              echo 'The requested commit must equal the current PAIGE frontend main commit.' >&2
+              exit 1
+            fi
+          fi
+          [[ "$frontend" =~ ^[a-f0-9]{40}$ ]]
+          image="$IMAGE_REPO:app-$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          docker build --platform linux/amd64 -f app-host/Dockerfile \
+            --build-arg "FRONTEND_COMMIT=$frontend" --build-arg "CLOUD_COMMIT=$GITHUB_SHA" --tag "$image" .
+          container=$(docker run -d -p 127.0.0.1::8080 "$image")
+          trap 'docker logs "$container"; docker rm -f "$container"' EXIT
+          base="http://$(docker port "$container" 8080/tcp)"
+          curl -fsS --max-time 3 --retry 10 --retry-delay 1 --retry-all-errors "$base/healthz"
+          curl -fsS "$base/release.json" | jq -e --arg cloud "$GITHUB_SHA" --arg frontend "$frontend" \
+            '.cloudCommit == $cloud and .frontendCommit == $frontend'
+          for pair in ':index.html' 'auth?mode=login:auth.html' 'auth?mode=signup:auth.html' 'signup:index.html' \
+                       'privacy:privacy.html' 'sms-terms:sms-terms.html' 'operator/workspaces:index.html'; do
+            curl -fsS "$base/${pair%:*}" -o "$RUNNER_TEMP/paige-route.html"
+            curl -fsS "$base/${pair#*:}" -o "$RUNNER_TEMP/paige-entry.html"
+            test -s "$RUNNER_TEMP/paige-entry.html"
+            cmp "$RUNNER_TEMP/paige-route.html" "$RUNNER_TEMP/paige-entry.html"
+          done
+          curl -fsSI "$base/sw.js" | grep -qi '^Cache-Control: no-cache, no-store'
+          curl -fsSI "$base/embed.js" | grep -qi '^Cache-Control: public, max-age=300'
+          test "$(curl -s -o /dev/null -w '%{http_code}' "$base/assets/missing.js")" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/auth")" = 405
+          printf 'CANDIDATE=%s\nFRONTEND_COMMIT=%s\n' "$image" "$frontend" >> "$GITHUB_ENV"
+      - name: Publish the verified image
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          trap 'docker logout ghcr.io >/dev/null' EXIT
+          docker push "$CANDIDATE"
+          digest=$(docker buildx imagetools inspect --format '{{json .Manifest.Digest}}' "$CANDIDATE" | tr -d '"')
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          docker pull "$IMAGE_REPO@$digest"
+          test "$(docker image inspect --format '{{.Id}}' "$CANDIDATE")" = "$(docker image inspect --format '{{.Id}}' "$IMAGE_REPO@$digest")"
+          tag="${digest/:/-}"
+          docker tag "$CANDIDATE" "$IMAGE_REPO:$tag"
+          docker push "$IMAGE_REPO:$tag"
+          test "$(docker buildx imagetools inspect --format '{{json .Manifest.Digest}}' "$IMAGE_REPO:$tag" | tr -d '"')" = "$digest"
+          jq -n --arg cloud "$GITHUB_SHA" --arg frontend "$FRONTEND_COMMIT" \
+            --arg image "$IMAGE_REPO@$digest" --arg tag "$tag" \
+            --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            '{cloudCommit:$cloud,frontendCommit:$frontend,image:$image,coolifyTag:$tag,run:$run}' \
+            | tee "$RUNNER_TEMP/paige-app-release.json" "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: paige-app-release-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/paige-app-release.json
+          if-no-files-found: error
