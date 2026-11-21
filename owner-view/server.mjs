@@ -49,9 +49,13 @@ async function readPassword(request) {
   return /^[A-Za-z0-9_-]{43}$/.test(password ?? "") ? password : null;
 }
 
-export function createOwnerServer({ origin, passwordHash, token, statusReader = readPreviewStatus }) {
-  const url = new URL(origin);
-  if (url.protocol !== "https:" || url.origin !== origin) throw new Error("OWNER_VIEW_ORIGIN must be an HTTPS origin.");
+export function createOwnerServer({ origin, aliasOrigin, passwordHash, token, statusReader = readPreviewStatus }) {
+  const allowedOrigins = new Map();
+  for (const value of aliasOrigin ? [origin, aliasOrigin] : [origin]) {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.origin !== value) throw new Error("Owner dashboard origins must be exact HTTPS origins.");
+    allowedOrigins.set(url.host, url.origin);
+  }
   if (!/^[a-f0-9]{64}$/.test(passwordHash ?? "")) throw new Error("A 32-byte owner password hash is required.");
   if (!/^[\x21-\x7e]{16,512}$/.test(token ?? "")) throw new Error("A scoped Coolify read token is required.");
 
@@ -83,12 +87,13 @@ export function createOwnerServer({ origin, passwordHash, token, statusReader = 
       send(response, 200, text, "ok");
       return;
     }
-    if (request.headers.host !== url.host) {
+    const requestOrigin = allowedOrigins.get(request.headers.host);
+    if (!requestOrigin) {
       send(response, 421, text, "Unexpected host");
       return;
     }
     if (request.headers["x-forwarded-proto"] !== "https") {
-      send(response, 308, text, "", { Location: origin + "/" });
+      send(response, 308, text, "", { Location: requestOrigin + "/" });
       return;
     }
     if (method !== "GET" && method !== "POST") {
@@ -97,14 +102,15 @@ export function createOwnerServer({ origin, passwordHash, token, statusReader = 
     }
     const id = sessionId(request);
     const now = Date.now();
-    const authorized = id && (sessions.get(id) ?? 0) > now;
-    if (id && !authorized) sessions.delete(id);
+    const session = sessions.get(id);
+    const authorized = session?.origin === requestOrigin && session.expires > now;
+    if (session && session.expires <= now) sessions.delete(id);
     if (method === "POST") {
       if (path !== "/session" && path !== "/sign-out") {
         send(response, 405, text, "Method not allowed", { Allow: "GET" });
         return;
       }
-      if (request.headers.origin !== origin) {
+      if (request.headers.origin !== requestOrigin) {
         send(response, 403, text, "Origin denied");
         return;
       }
@@ -119,11 +125,11 @@ export function createOwnerServer({ origin, passwordHash, token, statusReader = 
         send(response, 401, html, loginError);
         return;
       }
-      if (id) sessions.delete(id);
-      for (const [oldId, expires] of sessions) if (expires <= now) sessions.delete(oldId);
+      if (authorized) sessions.delete(id);
+      for (const [oldId, entry] of sessions) if (entry.expires <= now) sessions.delete(oldId);
       if (sessions.size >= 12) sessions.delete(sessions.keys().next().value);
       const created = randomBytes(32).toString("base64url");
-      sessions.set(created, now + sessionLifetime * 1000);
+      sessions.set(created, { origin: requestOrigin, expires: now + sessionLifetime * 1000 });
       send(response, 303, text, "", { Location: "/", "Set-Cookie": sessionName + "=" + created + cookieFields + sessionLifetime });
       return;
     }
@@ -139,12 +145,12 @@ export function createOwnerServer({ origin, passwordHash, token, statusReader = 
         return;
       }
       const snapshot = await getStatus();
-      if ((sessions.get(id) ?? 0) <= Date.now()) {
+      if (sessions.get(id) !== session || session.expires <= Date.now()) {
         send(response, 401, json, '{"error":"Sign in required"}');
         return;
       }
       send(response, 200, json, JSON.stringify(snapshot), {
-        "X-Owner-Session-Expires-At": new Date(sessions.get(id)).toISOString(),
+        "X-Owner-Session-Expires-At": new Date(session.expires).toISOString(),
       });
     } else if (path === "/assets/owner.js" && authorized) {
       send(response, 200, "text/javascript; charset=utf-8", javascript);
@@ -164,6 +170,7 @@ export function createOwnerServer({ origin, passwordHash, token, statusReader = 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
   createOwnerServer({
     origin: process.env.OWNER_VIEW_ORIGIN,
+    aliasOrigin: process.env.OWNER_VIEW_ALIAS_ORIGIN,
     passwordHash: process.env.OWNER_VIEW_PASSWORD_SHA256,
     token: process.env.OWNER_VIEW_COOLIFY_TOKEN,
   }).listen(8080, "0.0.0.0", () => console.log("PAIGE Cloud owner view is ready"));

@@ -7,12 +7,13 @@ import { createOwnerServer } from "./server.mjs";
 
 test("owner HTTP surface gates assets and data, rejects tampering, and invalidates logout", async (t) => {
   const origin = "https://owner.example.test";
+  const alias = "https://cloud.example.test";
   const password = randomBytes(32).toString("base64url");
   let reads = 0;
   let now = Date.now();
   t.mock.method(Date, "now", () => now);
   const server = createOwnerServer({
-    origin, passwordHash: createHash("sha256").update(password).digest("hex"),
+    origin, aliasOrigin: alias, passwordHash: createHash("sha256").update(password).digest("hex"),
     token: "fake-runtime-read-token", statusReader: async () => { reads++; return { value: "verified-owner-only" }; },
   });
   server.listen(0, "127.0.0.1");
@@ -59,6 +60,19 @@ test("owner HTTP surface gates assets and data, rejects tampering, and invalidat
   assert.equal(signedIn.status, 303);
   assert.match(setCookie, /^__Host-paige_owner=[A-Za-z0-9_-]{43}; Path=\/; Secure; HttpOnly; SameSite=Strict; Max-Age=1800$/);
   const cookie = setCookie.split(";")[0];
+  const aliasHost = new URL(alias).host;
+  const atAlias = { host: aliasHost, cookie };
+  assert.equal((await request("/api/status", { headers: atAlias })).status, 401);
+  assert.equal((await request("/sign-out", { method: "POST", headers: { ...atAlias, origin } })).status, 403);
+  const aliasLogin = await request("/session", {
+    method: "POST",
+    headers: { host: aliasHost, origin: alias, "content-type": "application/x-www-form-urlencoded" },
+    body: "password=" + password,
+  });
+  assert.equal(aliasLogin.status, 303);
+  const aliasCookie = aliasLogin.headers.get("set-cookie").split(";")[0];
+  assert.equal((await request("/api/status", { headers: { cookie: aliasCookie } })).status, 401);
+  assert.equal((await request("/api/status", { headers: { host: aliasHost, cookie: aliasCookie } })).status, 200);
   assert.equal((await request("/api/status", { headers: { cookie: cookie.slice(0, -1) + "?" } })).status, 401);
   const [first, second] = await Promise.all([
     request("/api/status", { headers: { cookie } }), request("/api/status", { headers: { cookie } }),
