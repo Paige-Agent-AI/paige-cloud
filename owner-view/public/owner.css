@@ -334,6 +334,44 @@ details[open] .row-detail { animation: reveal-detail 180ms var(--ease) both; }
 .sign-in-form #password-hint { margin: 0; font-size: .85rem; }
 .auth-links { margin-top: 1rem; color: var(--muted); font-size: .92rem; }
 .account-id { overflow-wrap: anywhere; }
+.project-main { max-width: 78rem; }
+.project-main > p { margin-top: .75rem; }
+.project-panel {
+  display: grid;
+  gap: .9rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: clamp(1rem, 3vw, 1.5rem);
+  margin-top: 1rem;
+  overflow-wrap: anywhere;
+}
+.project-panel h2 { font-size: 1.12rem; }
+.project-panel h3 { font-size: .97rem; }
+.project-panel p { margin: 0; }
+.project-list { list-style: none; padding: 0; margin: 0; }
+.project-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: .65rem;
+  padding-block: .65rem;
+}
+.project-list li + li { border-top: 1px solid var(--line); }
+.project-form { display: grid; gap: .5rem; max-width: 32rem; }
+.project-form label { font-size: .9rem; font-weight: 650; }
+.project-form input:not([type=hidden]) {
+  font: inherit;
+  color: var(--fg);
+  min-height: 44px;
+  min-width: 0;
+  padding: .55rem .7rem;
+  border: 1px solid var(--line-hover);
+  border-radius: 8px;
+  background: var(--inset);
+}
+.project-form button { justify-self: start; margin-top: .25rem; }
 .notice-list { display: grid; gap: .55rem; margin-bottom: 1rem; }
 .notice-list .notice { margin: 0; }
 .row-detail p { font-size: .85rem; color: var(--muted); }
