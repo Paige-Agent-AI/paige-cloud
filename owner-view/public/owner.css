@@ -109,8 +109,6 @@ main { min-width: 0; padding: clamp(1.5rem, 3vw, 2.5rem) clamp(1rem, 4vw, 3.25re
 
 .releases {
   position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow: hidden;
@@ -136,21 +134,35 @@ main { min-width: 0; padding: clamp(1.5rem, 3vw, 2.5rem) clamp(1rem, 4vw, 3.25re
 }
 @keyframes checking { from { transform: scaleX(.06); } to { transform: scaleX(.9); } }
 @keyframes check-complete { from { opacity: 1; transform: scaleX(.9); } 25% { opacity: .9; transform: scaleX(1); } to { opacity: 0; transform: scaleX(1); } }
-.release { min-width: 0; padding: clamp(1.1rem, 3vw, 1.8rem); background: #261b3b; }
-.release + .release { border-inline-start: 1px solid var(--line); background: var(--panel); }
-.release-head { display: flex; align-items: center; justify-content: space-between; gap: .55rem; flex-wrap: wrap; }
-.release-head h2 { font-size: .94rem; letter-spacing: -.015em; color: var(--muted); }
-.release-name { font-size: 2.25rem; line-height: 1.12; letter-spacing: -.035em; font-weight: 660; margin: .46rem 0 .32rem; }
-.release-context { font-size: .84rem; }
-.release dl { display: grid; gap: .55rem; margin-top: 1.1rem; padding: .65rem .85rem; background: var(--inset); border-radius: 9px; }
-.release dl > div + div { padding-top: .38rem; border-top: 1px solid var(--line); }
-.id-value { display: flex; align-items: center; justify-content: space-between; gap: .55rem; }
-.copy { min-height: 44px; padding: .15rem .7rem; font-size: .77rem; color: var(--fg); }
-.release-source { display: inline-flex; min-height: 40px; align-items: center; margin-top: .35rem; font-size: .83rem; color: var(--violet); }
+.release-table { width: 100%; border-collapse: collapse; table-layout: fixed; text-align: left; background: var(--panel); }
+.release-table col:first-child { width: 19%; }
+.release-table col:nth-child(2) { width: 23%; }
+.release-table col:nth-child(3) { width: 28%; }
+.release-table thead { font-size: .8rem; color: var(--muted); background: var(--raised); }
+.release-table th, .release-table td { padding: .85rem 1rem; vertical-align: top; }
+.release-table thead th { padding-block: .65rem; font-weight: 640; }
+.release-table tbody tr { border-top: 1px solid var(--line); }
+.release-table tbody th { text-align: left; }
+.release-name, .release-role { display: block; }
+.release-name { font-size: 1.075rem; font-weight: 700; }
+.release-role { color: var(--muted); font-size: .8rem; font-weight: 500; }
+.release-context { margin-top: .5rem; font-size: .8rem; }
+.release-table dl { display: grid; gap: .4rem; }
+.release-table dt, .release-table code { font-size: .76rem; }
+.release-image-cell code { display: block; }
+.copy { min-height: 44px; margin-top: .35rem; padding: .15rem .7rem; font-size: .77rem; color: var(--fg); }
+.release-source { display: inline-flex; min-height: 44px; align-items: center; font-size: .79rem; font-weight: 500; color: var(--violet); }
+.mobile-column-label { display: none; }
 
 .history { margin-top: .25rem; }
 .history-head { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; margin-bottom: .9rem; flex-wrap: wrap; }
-.history-list { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); --event-indent: 2.55rem; }
+.history-head h2 { font-size: 1.05rem; }
+.history-list {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  --event-indent: 2.55rem;
+  --history-columns: minmax(0, .95fr) minmax(0, 1.25fr) minmax(0, 1fr) 5.5rem 1rem;
+}
+.history-columns { display: grid; grid-template-columns: var(--history-columns); gap: .85rem; padding: .62rem 1.3rem .62rem var(--event-indent); border-bottom: 1px solid var(--line); color: var(--muted); font-size: .79rem; font-weight: 640; }
 .history-list details { position: relative; }
 .history-list details + details { border-top: 1px solid var(--line); }
 .history-list details::before {
@@ -168,23 +180,22 @@ main { min-width: 0; padding: clamp(1.5rem, 3vw, 2.5rem) clamp(1rem, 4vw, 3.25re
   cursor: pointer;
   list-style: none;
   display: grid;
-  grid-template-columns: minmax(0, .95fr) minmax(0, 1.25fr) minmax(0, 1fr) auto 1rem;
+  grid-template-columns: var(--history-columns);
   align-items: center;
   gap: .85rem;
-  min-height: 67px;
+  min-height: 57px;
   padding: .55rem 1.3rem .55rem var(--event-indent);
   transition: background 160ms var(--ease);
 }
 .history-list summary::-webkit-details-marker { display: none; }
 .history-list summary:hover, .history-list details[open] summary { background: var(--raised); }
-.history-list details:first-child summary { border-radius: 15px 15px 0 0; }
 .history-list details:last-child:not([open]) summary { border-radius: 0 0 15px 15px; }
 .history-list summary:focus-visible { outline-offset: -3px; }
 .history-list summary::before {
   content: "";
   position: absolute;
   left: 1.06rem;
-  top: 1.83rem;
+  top: 1.48rem;
   width: .55rem;
   height: .55rem;
   border-radius: 50%;
@@ -196,7 +207,7 @@ main { min-width: 0; padding: clamp(1.5rem, 3vw, 2.5rem) clamp(1rem, 4vw, 3.25re
 .row-event { display: block; margin-top: .12rem; color: var(--muted); font-size: .77rem; font-weight: 470; }
 .row-time, .row-result { font-size: .82rem; }
 .row-id { font-size: .81rem; color: var(--fg); }
-.row-result { padding: .16rem .52rem; border-radius: 999px; background: #253328; }
+.row-result { justify-self: start; padding: .16rem .52rem; border-radius: 999px; background: #253328; }
 .row-result.warn { background: #493b28; }
 .row-result.bad { background: #482e2d; }
 .chevron { width: .49rem; height: .49rem; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(45deg); transition: transform 180ms var(--ease); }
@@ -207,12 +218,10 @@ details[open] .row-detail { animation: reveal-detail 180ms var(--ease) both; }
 @keyframes reveal-detail { from { opacity: .5; clip-path: inset(0 0 35% 0); } to { opacity: 1; clip-path: inset(0); } }
 
 
-@media (min-width: 781px) {
-  .release dl > div:last-child dd { min-height: 2lh; }
-}
 @media (max-width: 1050px) {
   .workspace-layout { grid-template-columns: 10.5rem minmax(0, 1fr); }
   .history-list { --event-indent: 1.8rem; }
+  .history-columns { display: none; }
   .history-list details::before { left: .91rem; }
   .history-list summary::before { left: .65rem; top: 1.34rem; }
   .history-list details:first-child::before { top: 1.5rem; }
@@ -229,6 +238,16 @@ details[open] .row-detail { animation: reveal-detail 180ms var(--ease) both; }
   .row-result { grid-area: result; justify-self: end; font-size: .75rem; }
   .chevron { grid-area: arrow; justify-self: center; }
 }
+@media (max-width: 960px) {
+  .release-table, .release-table tbody { display: block; }
+  .release-table colgroup { display: none; }
+  .release-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .release-table tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .release-table tbody tr:first-child { border-top: 0; }
+  .release-table tbody th, .release-table tbody td { min-width: 0; }
+  .release-source-cell, .release-image-cell { border-top: 1px solid var(--line); }
+  .mobile-column-label { display: block; color: var(--muted); font-size: .76rem; }
+}
 @media (max-width: 800px) {
   .workspace-layout { display: block; }
   .workspace-menu { display: flex; flex-wrap: wrap; gap: .45rem; padding: .55rem clamp(1rem, 4vw, 3.25rem); border-inline-end: 0; border-bottom: 1px solid var(--line); }
@@ -238,13 +257,9 @@ details[open] .row-detail { animation: reveal-detail 180ms var(--ease) both; }
   h1 { font-size: 1.625rem; }
   .page-head { display: block; }
   .page-actions { margin-top: .8rem; }
-  .releases { grid-template-columns: 1fr; }
-  .release + .release { border-inline-start: 0; border-top: 1px solid var(--line); }
-  .release-name { font-size: 1.85rem; }
-  .release dl { padding-inline: .7rem; }
-  .release dl code { font-size: .75rem; }
+  .release-table th, .release-table td { padding: .7rem .8rem; }
+  .release-source-cell, .release-image-cell { grid-column: 1 / -1; }
   .row-id { font-size: .75rem; }
-  .release-source { min-height: 44px; }
 }
 @media (max-width: 520px) {
   .history-list summary { grid-template-areas: "label result arrow" "identifier identifier arrow" "time time arrow"; }

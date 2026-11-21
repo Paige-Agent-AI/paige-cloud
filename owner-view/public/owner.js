@@ -74,6 +74,7 @@ function setIdentity(kind, release, fallback) {
   const name = kind === "current" ? "release-name" : "rollback-name";
   get(name).textContent = release?.name || fallback;
   get(kind + "-identifiers").hidden = !release;
+  get(kind + "-image").hidden = !release;
   get("commit-" + kind).textContent = release?.cloudCommit || "";
   get("frontend-" + kind).textContent = release?.frontendCommit || "";
   get("digest-" + kind).textContent = release?.imageDigest || "";
@@ -121,7 +122,7 @@ function setHistory(deployments, stale, loading) {
   const available = Array.isArray(deployments);
   const hasEntries = available && deployments.length > 0;
   get("history-source").textContent = stale ? "Last recorded Coolify history" : "Coolify · newest first";
-  rows.hidden = !hasEntries;
+  get("history-table").hidden = !hasEntries;
   empty.hidden = hasEntries;
   empty.textContent = loading ? "Waiting for Coolify deployment history." :
     available ? "Coolify reported no deployments for this preview." : "Coolify deployment history is unavailable.";

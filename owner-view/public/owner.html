@@ -31,33 +31,48 @@
   <div id="deployment-view" hidden>
     <div class="notice-list" id="notices" hidden></div>
     <div class="releases" id="overview-panel">
-      <section class="release" aria-labelledby="current-title">
-        <div class="release-head"><h2 id="current-title">Current release</h2><span class="status" id="health">Checking</span></div>
-        <p class="release-name" id="release-name">Checking</p>
-        <p class="release-context muted" id="readback"></p>
-        <dl id="current-identifiers" hidden>
-          <div><dt>Cloud commit</dt><dd><code id="commit-current"></code></dd></div>
-          <div><dt>Frontend commit</dt><dd><code id="frontend-current"></code></dd></div>
-          <div><dt class="id-value">Image digest<button class="copy" type="button" data-copy="digest-current" aria-label="Copy current release image digest">Copy</button></dt><dd><code id="digest-current"></code></dd></div>
-        </dl>
-        <a class="release-source" href="https://izwrky18u9ixdhstnulxpjs5.179.66.154.248.sslip.io/" target="_blank" rel="noreferrer">View public preview<span class="sr"> (new tab)</span></a>
-      </section>
-      <section class="release" aria-labelledby="rollback-title">
-        <div class="release-head"><h2 id="rollback-title">Rollback target</h2><span class="status" id="rollback-state">Checking</span></div>
-        <p class="release-name" id="rollback-name">Checking</p>
-        <p class="release-context muted" id="rollback-context"></p>
-        <dl id="rollback-identifiers" hidden>
-          <div><dt>Cloud commit</dt><dd><code id="commit-rollback"></code></dd></div>
-          <div><dt>Frontend commit</dt><dd><code id="frontend-rollback"></code></dd></div>
-          <div><dt class="id-value">Image digest<button class="copy" type="button" data-copy="digest-rollback" aria-label="Copy rollback target image digest">Copy</button></dt><dd><code id="digest-rollback"></code></dd></div>
-        </dl>
-        <a class="release-source" id="evidence" target="_blank" rel="noreferrer" href="https://linear.app/paigeagentai/issue/ANT-176/paige-cloud-f2-codex-successor-immutable-releases-cicd-and-real#comment-dbea82cc-9b5b-45da-81e2-1bbc3476555a" hidden>F2 rollback evidence<span class="sr"> (new tab)</span></a>
-      </section>
+      <table class="release-table" aria-label="Preview releases" role="table">
+        <colgroup><col><col><col><col></colgroup>
+        <thead role="rowgroup"><tr role="row"><th scope="col" role="columnheader">Release</th><th scope="col" role="columnheader">Status</th><th scope="col" role="columnheader">Source</th><th scope="col" role="columnheader">Image digest</th></tr></thead>
+        <tbody role="rowgroup">
+          <tr role="row">
+            <th scope="row" role="rowheader">
+              <span class="release-name" id="release-name">Checking</span>
+              <span class="release-role" id="current-title">Current release</span>
+              <a class="release-source" href="https://izwrky18u9ixdhstnulxpjs5.179.66.154.248.sslip.io/" target="_blank" rel="noreferrer">Public preview<span class="sr"> (new tab)</span></a>
+            </th>
+            <td role="cell"><span class="status" id="health">Checking</span><p class="release-context muted" id="readback"></p></td>
+            <td role="cell" class="release-source-cell">
+              <dl id="current-identifiers" hidden><div><dt>Cloud commit</dt><dd><code id="commit-current"></code></dd></div><div><dt>Frontend commit</dt><dd><code id="frontend-current"></code></dd></div></dl>
+            </td>
+            <td role="cell" class="release-image-cell">
+              <div id="current-image" hidden><span class="mobile-column-label" aria-hidden="true">Image digest</span><code id="digest-current"></code><button class="copy" type="button" data-copy="digest-current" aria-label="Copy current release image digest">Copy</button></div>
+            </td>
+          </tr>
+          <tr role="row">
+            <th scope="row" role="rowheader">
+              <span class="release-name" id="rollback-name">Checking</span>
+              <span class="release-role" id="rollback-title">Rollback target</span>
+              <a class="release-source" id="evidence" target="_blank" rel="noreferrer" href="https://linear.app/paigeagentai/issue/ANT-176/paige-cloud-f2-codex-successor-immutable-releases-cicd-and-real#comment-dbea82cc-9b5b-45da-81e2-1bbc3476555a" hidden>Rollback evidence<span class="sr"> (new tab)</span></a>
+            </th>
+            <td role="cell"><span class="status" id="rollback-state">Checking</span><p class="release-context muted" id="rollback-context"></p></td>
+            <td role="cell" class="release-source-cell">
+              <dl id="rollback-identifiers" hidden><div><dt>Cloud commit</dt><dd><code id="commit-rollback"></code></dd></div><div><dt>Frontend commit</dt><dd><code id="frontend-rollback"></code></dd></div></dl>
+            </td>
+            <td role="cell" class="release-image-cell">
+              <div id="rollback-image" hidden><span class="mobile-column-label" aria-hidden="true">Image digest</span><code id="digest-rollback"></code><button class="copy" type="button" data-copy="digest-rollback" aria-label="Copy rollback target image digest">Copy</button></div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </div>
     <section class="history" id="deployments-panel" aria-labelledby="history-title" hidden>
       <div class="history-head"><h2 id="history-title">Deployment history</h2><p class="small muted" id="history-source">Coolify · newest first</p></div>
       <p class="notice" id="empty" hidden></p>
-      <div class="history-list" id="deployment-rows" hidden></div>
+      <div class="history-list" id="history-table" hidden>
+        <div class="history-columns" aria-hidden="true"><span>Release</span><span>Deployment ID</span><span>Time</span><span>Result</span></div>
+        <div id="deployment-rows"></div>
+      </div>
     </section>
   </div>
 </main>
