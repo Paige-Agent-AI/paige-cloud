@@ -6,11 +6,18 @@ The owner overview also checks PAIGE Agent AI's three production domains through
 
 ## Project access
 
-The owner key creates a session for the configured Cloud owner. The server grants that identity read access to the `paige` organization's `paige-agent-ai` project. Its registered environments are `production` and `f2-preview`. Each environment inherits the project's read grant and has its own status reader. Production reads public manifests and health endpoints. The F2 reader alone uses the Coolify token.
+The owner key creates a session for the `cloud-owner` identity. The Cloud membership database stores that identity's read grant for the `paige` organization's `paige-agent-ai` project. The project's registered environments are `production` and `f2-preview`. Each environment inherits the project's read grant and has its own status reader. Production reads public manifests and health endpoints. The F2 reader alone uses the Coolify token.
 
 The console uses `GET /api/organizations/paige/projects/paige-agent-ai/status`. Add `/environments/{environmentId}` before `/status` to read a single environment. The legacy `GET /api/status` checks the same project grant. The server checks the session and grant before it consults the cache or calls a reader. Unknown and unauthorized scopes share the same HTTP 404 response.
 
-Project and membership records are defined in source for this increment. The HTTP tests use two synthetic organizations with the same project slug and different sign-in identities. Persistent membership management and independent sign-in for multiple Cloud users are future work.
+Project readers are bound in source. Memberships use the exact principal, organization and project tuple in a private SQLite file. The server rechecks the grant before responding, including after an in-flight read. The console clears displayed data when its next status request returns a project denial. One owner-key identity is supported in the deployed configuration.
+
+### Membership storage and administration
+
+- Mount a private local volume on the owner console, for example at `/var/lib/paige-cloud`. Use a local filesystem that supports SQLite locking and hard links. Give the container's `node` user read access and run the operator commands as an authorized local user with write access. Set `OWNER_VIEW_MEMBERSHIP_DB` to the absolute file path under the mount, for example `/var/lib/paige-cloud/memberships.sqlite`. Verify the mount and its permissions on the host before initialization.
+- Run `node memberships.mjs init` once with the reviewed image and the correct mounted path. It creates the schema and first owner's grant in one transaction in a private staging directory, then publishes the committed file without replacing any existing database. A repeated init checks the existing database and preserves revocations. The console opens the existing database read-only and startup fails if the file or expected schema is missing.
+- Run `node memberships.mjs grant cloud-owner paige paige-agent-ai` or `node memberships.mjs revoke cloud-owner paige paige-agent-ai` on the same mounted file. These are idempotent local operator commands. After changing a grant, verify the signed-in project status route. Supported project readers and the owner identity still come from the application.
+- Use a SQLite-aware backup or stop the writer and console for a consistent offline copy. Reconcile revocations before restarting against a restored copy. Keep the console offline if rolling back to an older image with a hardcoded grant. A database-aware rollback image must support the stored schema and enforce current grants.
 
 ## Publish and host
 
