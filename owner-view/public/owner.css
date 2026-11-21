@@ -307,7 +307,7 @@ details[open] .row-detail { animation: reveal-detail 180ms var(--ease) both; }
 }
 .sign-out-form { margin: 0; }
 .sign-out { font-size: .83rem; color: var(--muted); background: var(--panel); }
-.sign-in-page main { display: grid; justify-items: center; padding-block-start: clamp(3rem, 13vh, 8rem); }
+.sign-in-page main { display: grid; justify-items: center; padding-block: clamp(2rem, 10vh, 6rem); }
 .sign-in-panel {
   width: 100%;
   max-width: 32rem;
@@ -331,6 +331,9 @@ details[open] .row-detail { animation: reveal-detail 180ms var(--ease) both; }
   caret-color: var(--gold);
 }
 .sign-in-form button { justify-self: start; margin-top: .4rem; }
+.sign-in-form #password-hint { margin: 0; font-size: .85rem; }
+.auth-links { margin-top: 1rem; color: var(--muted); font-size: .92rem; }
+.account-id { overflow-wrap: anywhere; }
 .notice-list { display: grid; gap: .55rem; margin-bottom: 1rem; }
 .notice-list .notice { margin: 0; }
 .row-detail p { font-size: .85rem; color: var(--muted); }
