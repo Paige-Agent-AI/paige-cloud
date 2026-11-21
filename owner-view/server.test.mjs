@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { initializeAccounts, openAccounts } from "./accounts.mjs";
-import { initializeMembershipStore, openMembershipStore, updateProjectMembership } from "./memberships.mjs";
+import { initializeMembershipStore, openMembershipStore, openProjectCatalog, updateProjectMembership } from "./memberships.mjs";
 import { createProjectAccess, firstProject, ownerId } from "./projects.mjs";
 import { createOwnerServer } from "./server.mjs";
 
@@ -21,13 +21,14 @@ const readFromGrants = (grants) => (principalId, organizationId, projectId) =>
 
 const ownerEmail = "owner@example.test";
 
-async function startServer(t, projectAccess, principalId = ownerId, realAccounts) {
+async function startServer(t, projectAccess, principalId = ownerId, realAccounts, catalog) {
   const password = randomBytes(32).toString("base64url");
   const key = randomBytes(32).toString("base64url");
   const server = createOwnerServer({
     origin, aliasOrigin: alias, additionalOrigins: [cloudDomain],
     passwordHash: createHash("sha256").update(key).digest("hex"),
     projectAccess,
+    catalog,
     accounts: realAccounts ?? {
       hasOwner: () => true,
       isOwnerEmail: (email) => principalId === ownerId && email === ownerEmail,
@@ -258,6 +259,131 @@ test("ordinary sign-in traffic uses a separate budget from owner sign-in", async
     release.resolve();
     await Promise.all(pending);
   }
+});
+
+test("owner can manage two projects and invitations grant only the selected project", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "paige-project-console-"));
+  const membershipPath = join(dir, "memberships.sqlite");
+  const accountsPath = join(dir, "accounts.sqlite");
+  const stores = [];
+  t.after(() => {
+    for (const store of stores) store.close();
+    unlinkSync(accountsPath);
+    unlinkSync(membershipPath);
+    rmdirSync(dir);
+  });
+  initializeMembershipStore(membershipPath);
+  initializeAccounts(accountsPath);
+  const catalog = openProjectCatalog(membershipPath);
+  const accounts = openAccounts(accountsPath, membershipPath);
+  stores.push(accounts, catalog);
+  const owner = { email: ownerEmail, password: "fixture owner password" };
+  await accounts.create(owner.email, owner.password, { owner: true });
+  const seen = [];
+  const access = createProjectAccess(["amber", "violet"].map((organizationId) => ({
+    organizationId, projectId: "demo",
+    readStatus: async () => { seen.push(organizationId); return { organizationId }; },
+    environments: { preview: async () => ({ organizationId }) },
+  })), catalog.hasProjectRead);
+  const { request } = await startServer(t, access, ownerId, accounts, catalog);
+  const form = (path, fields, cookie, suppliedOrigin = origin) => request(path, {
+    method: "POST", headers: { origin: suppliedOrigin, cookie: cookie ?? "", "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(fields).toString(),
+  });
+  const signIn = async (account) => {
+    const response = await form("/session", account);
+    assert.equal(response.status, 303);
+    return response.headers.get("set-cookie").split(";")[0];
+  };
+  const ownerCookie = await signIn(owner);
+  const at = (path, cookie) => request(path, { headers: { cookie } });
+  const amber = "/projects/amber/demo";
+  const violet = "/projects/violet/demo";
+  const amberApi = "/api/organizations/amber/projects/demo";
+  const violetApi = "/api/organizations/violet/projects/demo";
+  assert.equal((await request("/projects")).status, 303);
+  assert.equal((await form("/projects", { name: "Wrong origin", organization: "other", project: "demo" }, ownerCookie, alias)).status, 403);
+  assert.equal((await form("/projects", { name: "Amber & <workspace>", organization: "amber", project: "demo" }, ownerCookie)).headers.get("location"), amber);
+  assert.equal((await form("/projects", { name: "Violet", organization: "violet", project: "demo" }, ownerCookie)).headers.get("location"), violet);
+  assert.equal((await form("/projects", { name: "Duplicate", organization: "violet", project: "demo" }, ownerCookie)).status, 409);
+  assert.match(await (await at(amber, ownerCookie)).text(), /Amber &amp; &lt;workspace&gt;/);
+  assert.equal((await form(amber, { action: "rename", name: "Amber Studio" }, ownerCookie)).status, 303);
+  assert.equal((await form("/projects/paige/paige-agent-ai", { action: "archive" }, ownerCookie)).status, 400);
+  assert.equal((await form("/projects/paige/paige-agent-ai", { action: "rename", name: "Rename canonical" }, ownerCookie)).status, 400);
+  assert.equal((await form(amber, { action: "invite", email: owner.email }, ownerCookie)).status, 400);
+  const amberUser = { email: "amber@example.test", password: "fixture amber password" };
+  const violetUser = { email: "violet@example.test", password: "fixture violet password" };
+  async function issue(project, email) {
+    const response = await form(project, { action: "invite", email }, ownerCookie);
+    assert.equal(response.status, 200);
+    const page = await response.text();
+    assert.match(page, /Open email draft/);
+    assert.match(page, /mailto:/);
+    assert.match(response.headers.get("cache-control"), /no-store/);
+    const code = page.match(/<code class="account-id">([A-Za-z0-9_-]{43})<\/code>/)?.[1];
+    assert.ok(code);
+    return code;
+  }
+  const amberCode = await issue(amber, amberUser.email);
+  const violetCode = await issue(violet, violetUser.email);
+  const revokedWhileRegistering = "revoked-pending@example.test";
+  const cancelledCode = await issue(amber, revokedWhileRegistering);
+  const pendingRegistration = accounts.create(revokedWhileRegistering, amberUser.password, {
+    code: cancelledCode, allowProjectSignup: true,
+  });
+  catalog.cancelInvite("amber", "demo", revokedWhileRegistering);
+  assert.equal(await pendingRegistration, false);
+  assert.equal(await accounts.verify(revokedWhileRegistering, amberUser.password), undefined);
+  assert.ok(!(await (await at(amber, ownerCookie)).text()).includes(amberCode));
+  assert.equal((await form("/signup", { ...amberUser, invite: violetCode })).status, 400);
+  assert.equal((await form("/signup", { ...amberUser, invite: amberCode })).status, 303);
+  assert.equal((await form("/signup", { ...violetUser, invite: violetCode })).status, 303);
+  const amberCookie = await signIn(amberUser);
+  const violetCookie = await signIn(violetUser);
+  assert.equal((await at(amberApi + "/status", amberCookie)).status, 404);
+  assert.equal((await form("/join", { invite: amberCode }, violetCookie)).status, 400);
+  const joined = await Promise.all([form("/join", { invite: amberCode }, amberCookie), form("/join", { invite: amberCode }, amberCookie)]);
+  assert.deepEqual(joined.map(({ status }) => status).sort(), [303, 400]);
+  assert.equal(joined.find(({ status }) => status === 303).headers.get("location"), amber);
+  assert.equal((await form("/join", { invite: violetCode }, violetCookie)).headers.get("location"), violet);
+  assert.equal((await form("/join", { invite: amberCode }, amberCookie)).status, 400);
+  assert.match(await (await at("/projects", amberCookie)).text(), /Amber Studio/);
+  assert.doesNotMatch(await (await at("/projects", amberCookie)).text(), /Violet/);
+  assert.equal((await at(violet, amberCookie)).status, 404);
+  assert.equal((await at(amber, violetCookie)).status, 404);
+  assert.equal((await form(amber, { action: "invite", email: "uninvited@example.test" }, amberCookie)).status, 404);
+  assert.equal((await at(amberApi + "/status", violetCookie)).status, 404);
+  assert.equal((await at(violetApi + "/environments/preview/status", amberCookie)).status, 404);
+  assert.deepEqual(await (await at(amberApi + "/status", amberCookie)).json(), { organizationId: "amber" });
+  assert.deepEqual(await (await at(violetApi + "/status", violetCookie)).json(), { organizationId: "violet" });
+  assert.deepEqual(seen, ["amber", "violet"]);
+  assert.doesNotMatch(await (await at(amber, amberCookie)).text(), /Invite by email|Revoke access|amber@example.test/);
+  const amberId = await accounts.verify(amberUser.email, amberUser.password);
+  const waiting = await issue(amber, amberUser.email);
+  assert.equal((await form(amber, { action: "revoke", member: amberId }, ownerCookie)).status, 303);
+  assert.equal((await at(amberApi + "/status", amberCookie)).status, 404);
+  assert.equal((await at(amber, amberCookie)).status, 404);
+  assert.equal((await form("/join", { invite: waiting }, amberCookie)).status, 400);
+  assert.equal((await at(violetApi + "/status", violetCookie)).status, 200);
+  const pending = await issue(violet, "cancelled@example.test");
+  assert.equal((await form(violet, { action: "archive" }, ownerCookie)).status, 303);
+  assert.equal((await at(violetApi + "/status", violetCookie)).status, 404);
+  assert.equal((await form(violet, { action: "restore" }, ownerCookie)).status, 303);
+  assert.equal((await at(violetApi + "/status", violetCookie)).status, 200);
+  assert.equal(catalog.hasInvitation("cancelled@example.test", pending), false);
+  const violetId = await accounts.verify(violetUser.email, violetUser.password);
+  const pendingAfterCli = await issue(violet, violetUser.email);
+  assert.equal(updateProjectMembership(membershipPath, "revoke", violetId, "violet", "demo"), true);
+  assert.equal((await form("/join", { invite: pendingAfterCli }, violetCookie)).status, 400);
+  assert.equal((await at(violetApi + "/status", violetCookie)).status, 404);
+  assert.equal((await request("/assets/project-session.js")).status, 404);
+  assert.match(await (await at(amber, ownerCookie)).text(), /project-session\.js/);
+  assert.match(await (await at("/assets/project-session.js", ownerCookie)).text(), /paige-owner-session/);
+  const reopened = openProjectCatalog(membershipPath);
+  stores.push(reopened);
+  assert.equal(reopened.get({ organizationId: "amber", projectId: "demo" }).name, "Amber Studio");
+  assert.equal(reopened.hasProjectRead(amberId, "amber", "demo"), false);
+  assert.equal(reopened.hasProjectRead(ownerId, "paige", "paige-agent-ai"), true);
 });
 
 test("project status checks organization and project grants before reading environment data", async (t) => {

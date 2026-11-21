@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
 import { accountPath, normalizeEmail, openAccounts, validCode, validPassword } from "./accounts.mjs";
-import { openMembershipStore } from "./memberships.mjs";
+import { openProjectCatalog } from "./memberships.mjs";
+import { matchProjectPage, projectPage } from "./project-console.mjs";
 import { createPaigeProjectAccess, firstProject, parseProjectStatusPath } from "./projects.mjs";
 
 const readAsset = (file) => readFileSync(new URL("./public/" + file, import.meta.url));
@@ -67,7 +68,7 @@ function throttle(maxAttempts, maxPerEmail, maxConcurrent) {
 }
 
 export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
-  passwordHash, accounts, projectAccess: resolveRead }) {
+  passwordHash, accounts, catalog, projectAccess: resolveRead }) {
   const allowedOrigins = new Map();
   for (const value of [origin, ...(aliasOrigin ? [aliasOrigin] : []), ...additionalOrigins]) {
     const url = new URL(value);
@@ -84,6 +85,7 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
   const owner = readAsset("owner.html");
   const css = readAsset("owner.css");
   const javascript = readAsset("owner.js");
+  const projectSession = readAsset("project-session.js");
   const sessions = new Map();
   const limitSignIn = throttle(40, 8, 2);
   const limitOwnerSignIn = throttle(8, 8, 1);
@@ -168,6 +170,28 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
     const session = sessions.get(id);
     const authorized = session?.origin === requestOrigin && session.expires > now;
     if (session && session.expires <= now) sessions.delete(id);
+    const projectRoute = catalog && matchProjectPage(path);
+    if (projectRoute) {
+      if (!authorized) {
+        send(response, method === "GET" ? 303 : 401, text, "Sign in required", method === "GET" ? { Location: "/sign-in" } : {});
+        return;
+      }
+      if (method === "POST" && request.headers.origin !== requestOrigin) {
+        send(response, 403, text, "Origin denied");
+        return;
+      }
+      const form = method === "POST" ? await readForm(request) : undefined;
+      if (sessions.get(id) !== session || session.expires <= Date.now()) {
+        send(response, 401, text, "Sign in required");
+        return;
+      }
+      const result = projectPage({ route: projectRoute, form, method, principal: session.principalId,
+        origin, catalog, accounts, showDeployments: !!resolveRead(session.principalId, firstProject),
+        remaining: Math.max(0, session.expires - Date.now()) });
+      send(response, result.status, result.html ? html : text,
+        result.html ?? (result.status === 404 ? "Not found" : ""), result.location ? { Location: result.location } : {});
+      return;
+    }
     if (path === "/setup" && requestOrigin !== origin && method === "GET") {
       send(response, 303, text, "", { Location: origin + "/setup" });
       return;
@@ -211,14 +235,15 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
         send(response, 400, html, authPage(path, 400, "Choose a password that differs from your owner key."));
         return;
       }
-      if (!signIn && !setup && (!validCode(code) || !accounts.hasInvitation(email, code))) {
+      const projectSignup = !signIn && !setup && validCode(code) && catalog?.hasInvitation(email, code);
+      if (!signIn && !setup && (!validCode(code) || (!projectSignup && !accounts.hasInvitation(email, code)))) {
         send(response, 400, html, authPage(path, 400, "Check your invitation code and email address."));
         return;
       }
       const limit = signIn ? (accounts.isOwnerEmail(email) ? limitOwnerSignIn : limitSignIn)
         : setup ? limitSetup : limitSignUp;
       const result = await limit(setup ? "owner" : email, () =>
-        signIn ? accounts.verify(email, password) : accounts.create(email, password, { owner: setup, code }));
+        signIn ? accounts.verify(email, password) : accounts.create(email, password, { owner: setup, code, allowProjectSignup: projectSignup }));
       if (result === null) {
         send(response, 429, html, authPage(path, 429, "Try again in a minute."), { "Retry-After": "60" });
       } else if (signIn && result) {
@@ -236,19 +261,25 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
     }
     const scope = parseProjectStatusPath(path);
     if (path === "/") {
+      if (authorized && catalog && !resolveRead(session.principalId, firstProject)) {
+        send(response, 303, text, "", { Location: "/projects" });
+        return;
+      }
       const page = !authorized ? authPage("/session", 200)
         : resolveRead(session.principalId, firstProject) ? owner
           : noProjects.replace("{{ACCOUNT_ID}}", session.principalId);
       send(response, 200, html, page);
     } else if (path === "/sign-in" || path === "/session" || path === "/sign-in?setup=complete" || path === "/sign-in?signup=complete") {
       const message = path === "/sign-in?setup=complete" ? "Owner setup complete. Sign in with your email and password."
-        : path === "/sign-in?signup=complete" ? "Sign in with the email and password you just set."
+        : path === "/sign-in?signup=complete" ? "Sign in with the email and password you just set. For project invitations, choose Accept an invitation in Projects."
           : "";
       send(response, 200, html, authPage("/session", 200, message));
     } else if (path === "/signup" || path === "/setup") {
       send(response, 200, html, authPage(path, 200));
     } else if (path === "/assets/owner.css") {
       send(response, 200, "text/css; charset=utf-8", css);
+    } else if (path === "/assets/project-session.js" && catalog && authorized) {
+      send(response, 200, "text/javascript; charset=utf-8", projectSession);
     } else if (scope) {
       if (!authorized) {
         send(response, 401, json, '{"error":"Sign in required"}');
@@ -256,7 +287,13 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
       }
       const reader = resolveRead(session.principalId, scope);
       if (!reader) {
-        send(response, 404, json, '{"error":"Not found"}');
+        const project = scope.environmentId === undefined &&
+          catalog?.hasProjectRead(session.principalId, scope.organizationId, scope.projectId) && catalog.get(scope);
+        if (project) {
+          send(response, 200, json, JSON.stringify({ project, deploymentsConnected: false }));
+        } else {
+          send(response, 404, json, '{"error":"Not found"}');
+        }
         return;
       }
       const snapshot = await getStatus(reader);
@@ -287,8 +324,9 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
-  const store = openMembershipStore(process.env.OWNER_VIEW_MEMBERSHIP_DB);
-  const accounts = openAccounts(accountPath(process.env.OWNER_VIEW_MEMBERSHIP_DB));
+  const membershipPath = process.env.OWNER_VIEW_MEMBERSHIP_DB;
+  const store = openProjectCatalog(membershipPath);
+  const accounts = openAccounts(accountPath(membershipPath), membershipPath);
   const server = createOwnerServer({
     origin: process.env.OWNER_VIEW_ORIGIN,
     aliasOrigin: process.env.OWNER_VIEW_ALIAS_ORIGIN,
@@ -296,6 +334,7 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
       .map((value) => value.trim()).filter(Boolean),
     passwordHash: process.env.OWNER_VIEW_PASSWORD_SHA256,
     accounts,
+    catalog: store,
     projectAccess: createPaigeProjectAccess(process.env.OWNER_VIEW_COOLIFY_TOKEN, store.hasProjectRead),
   });
   server.once("close", () => { accounts.close(); store.close(); });

@@ -81,7 +81,7 @@ export function initializeAccounts(path) {
   openAccounts(path).close();
 }
 
-export function openAccounts(path) {
+export function openAccounts(path, membershipPath) {
   checkFile(path);
   const db = new DatabaseSync(path);
   try {
@@ -91,8 +91,20 @@ export function openAccounts(path) {
       throw new Error("Unrecognized Cloud accounts database.");
     }
     const lookup = db.prepare("SELECT principal_id, salt, digest FROM accounts WHERE email = ?");
+    const accountEmail = db.prepare("SELECT email FROM accounts WHERE principal_id = ?");
     const hasOwner = db.prepare("SELECT 1 FROM accounts WHERE principal_id = ?");
     const invitation = db.prepare("SELECT 1 FROM invitations WHERE email = ? AND digest = ? AND expires_at > ?");
+    let projectInvitation;
+    if (membershipPath) {
+      if (accountPath(membershipPath) !== path || membershipPath === path) throw new Error("Invalid Cloud membership path.");
+      db.prepare("ATTACH DATABASE ? AS project_store").run(membershipPath);
+      if (["main", "project_store"].some((schema) => db.prepare(`PRAGMA ${schema}.journal_mode`).get().journal_mode === "wal")) {
+        throw new Error("Project invitations require the rollback journal.");
+      }
+      projectInvitation = db.prepare(`SELECT 1 FROM project_store.project_invitations i
+        LEFT JOIN project_store.project_details d USING (organization_id, project_id)
+        WHERE i.email = ? AND i.digest = ? AND i.expires_at > ? AND COALESCE(d.archived, 0) = 0`);
+    }
     const removeInvitation = db.prepare("DELETE FROM invitations WHERE email = ?");
     const addOwner = db.prepare(`
       INSERT INTO accounts VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING
@@ -106,6 +118,7 @@ export function openAccounts(path) {
     return {
       hasOwner: () => !!hasOwner.get(ownerId),
       isOwnerEmail: (email) => lookup.get(email)?.principal_id === ownerId,
+      emailFor: (principal) => accountEmail.get(principal)?.email,
       issueInvitation(email) {
         if (!hasOwner.get(ownerId)) throw new Error("Complete owner setup before issuing an invitation.");
         if (lookup.get(email)) throw new Error("An account already exists for this email.");
@@ -118,16 +131,20 @@ export function openAccounts(path) {
         return code;
       },
       hasInvitation: (email, code) => !!invitation.get(email, invitationDigest(code), Date.now()),
-      async create(email, password, { owner = false, code } = {}) {
+      async create(email, password, { owner = false, code, allowProjectSignup } = {}) {
         const salt = randomBytes(16);
         const digest = await derive(password, salt, 32, scryptOptions);
         if (owner) return addOwner.run(ownerId, email, salt, digest).changes === 1;
         const id = "member-" + randomBytes(16).toString("hex");
         db.exec("BEGIN IMMEDIATE");
         try {
-          const added = !!invitation.get(email, invitationDigest(code), Date.now()) &&
+          const hashedCode = invitationDigest(code);
+          const now = Date.now();
+          const existing = invitation.get(email, hashedCode, now);
+          const project = allowProjectSignup && projectInvitation?.get(email, hashedCode, now);
+          const added = (!!existing || !!project) &&
             addMember.run(id, email, salt, digest, ownerId).changes === 1;
-          if (added) removeInvitation.run(email);
+          if (added && existing) removeInvitation.run(email);
           db.exec("COMMIT");
           return added;
         } catch (error) {
