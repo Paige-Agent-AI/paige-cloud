@@ -16,7 +16,7 @@ Show production health and source from live domain readback. Keep preview health
 
 ## Capabilities and Constraints
 
-The owner signs in separately. Deployment data is read-only. Show when data is stale, missing, or inconsistent. The production check reads fixed public endpoints. The Coolify credential stays scoped to the governed preview, which serves Release B independently of the owner view.
+PAIGE Cloud has its own email-and-password accounts. New accounts need an explicit project grant before they can see deployments. Deployment data is read-only. Show when data is stale, missing, or inconsistent. The production check reads fixed public endpoints. The Coolify credential stays scoped to the governed preview, which serves Release B independently of the owner view.
 
 ## Evidence on Hand
 

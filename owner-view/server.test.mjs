@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import { once } from "node:events";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
+import { initializeAccounts, openAccounts } from "./accounts.mjs";
 import { initializeMembershipStore, openMembershipStore, updateProjectMembership } from "./memberships.mjs";
 import { createProjectAccess, firstProject, ownerId } from "./projects.mjs";
 import { createOwnerServer } from "./server.mjs";
@@ -18,12 +19,20 @@ const readFromGrants = (grants) => (principalId, organizationId, projectId) =>
   grants.some((grant) => grant.principalId === principalId &&
     grant.organizationId === organizationId && grant.projectId === projectId);
 
-async function startServer(t, projectAccess, principalId = ownerId) {
+const ownerEmail = "owner@example.test";
+
+async function startServer(t, projectAccess, principalId = ownerId, realAccounts) {
   const password = randomBytes(32).toString("base64url");
+  const key = randomBytes(32).toString("base64url");
   const server = createOwnerServer({
     origin, aliasOrigin: alias, additionalOrigins: [cloudDomain],
-    passwordHash: createHash("sha256").update(password).digest("hex"),
-    projectAccess, principalId,
+    passwordHash: createHash("sha256").update(key).digest("hex"),
+    projectAccess,
+    accounts: realAccounts ?? {
+      hasOwner: () => true,
+      isOwnerEmail: (email) => principalId === ownerId && email === ownerEmail,
+      verify: (email, supplied) => email === ownerEmail && supplied === password ? principalId : undefined,
+    },
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -43,9 +52,9 @@ async function startServer(t, projectAccess, principalId = ownerId) {
   });
   const login = (secret = password, suppliedOrigin = origin) => request("/session", {
     method: "POST", headers: { origin: suppliedOrigin, "content-type": "application/x-www-form-urlencoded" },
-    body: "password=" + secret,
+    body: "email=" + ownerEmail + "&password=" + secret,
   });
-  return { request, login, password };
+  return { request, login, password, key };
 }
 
 test("owner HTTP surface gates assets and data, rejects tampering, and invalidates logout", async (t) => {
@@ -90,7 +99,7 @@ test("owner HTTP surface gates assets and data, rejects tampering, and invalidat
   const aliasLogin = await request("/session", {
     method: "POST",
     headers: { host: aliasHost, origin: alias, "content-type": "application/x-www-form-urlencoded" },
-    body: "password=" + password,
+    body: "email=" + ownerEmail + "&password=" + password,
   });
   assert.equal(aliasLogin.status, 303);
   const aliasCookie = aliasLogin.headers.get("set-cookie").split(";")[0];
@@ -101,7 +110,7 @@ test("owner HTTP surface gates assets and data, rejects tampering, and invalidat
   const cloudLogin = await request("/session", {
     method: "POST",
     headers: { host: cloudHost, origin: cloudDomain, "content-type": "application/x-www-form-urlencoded" },
-    body: "password=" + password,
+    body: "email=" + ownerEmail + "&password=" + password,
   });
   assert.equal(cloudLogin.status, 303);
   const cloudCookie = cloudLogin.headers.get("set-cookie").split(";")[0];
@@ -126,6 +135,129 @@ test("owner HTTP surface gates assets and data, rejects tampering, and invalidat
   const nextCookie = signedInAgain.headers.get("set-cookie").split(";")[0];
   now += 1_800_000;
   assert.equal((await request("/api/status", { headers: { cookie: nextCookie } })).status, 401);
+});
+
+test("one-time owner setup and invited signup persist with separate project access", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "paige-cloud-accounts-"));
+  const path = join(directory, "accounts.sqlite");
+  const stores = [];
+  t.after(() => {
+    for (const store of stores) store.close();
+    unlinkSync(path);
+    rmdirSync(directory);
+  });
+  assert.throws(() => openAccounts(path), { code: "ENOENT" });
+  initializeAccounts(path);
+  const accounts = openAccounts(path);
+  stores.push(accounts);
+  let reads = 0;
+  const projectAccess = createProjectAccess([{
+    ...firstProject,
+    readStatus: async () => ({ reads: ++reads }),
+    environments: {},
+  }], (id) => id === ownerId);
+  const { request, login, password, key } = await startServer(t, projectAccess, ownerId, accounts);
+  const submit = (route, fields, source = origin) => request(route, {
+    method: "POST",
+    headers: { origin: source, "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(fields).toString(),
+  });
+  const member = { email: "member@example.test", password: "tulip 朱色 skyline for two" };
+  const setup = { email: ownerEmail.toUpperCase(), password, key };
+  assert.match(await (await request("/")).text(), /autocomplete="current-password"/);
+  assert.equal((await request("/signup")).status, 404);
+  assert.equal((await submit("/signup", member)).status, 404);
+  assert.match(await (await request("/setup")).text(), /Owner key/);
+  assert.equal((await submit("/setup", setup, alias)).status, 403);
+  assert.equal((await submit("/setup", { ...setup, key: randomBytes(32).toString("base64url") })).status, 401);
+  assert.equal((await submit("/setup", { ...setup, password: key })).status, 400);
+  const createdOwner = await submit("/setup", setup);
+  assert.equal(createdOwner.status, 303);
+  assert.equal(createdOwner.headers.get("location"), "/sign-in?setup=complete");
+  assert.equal(createdOwner.headers.get("set-cookie"), null);
+  assert.equal((await request("/setup")).status, 404);
+  assert.equal((await submit("/setup", setup)).status, 404);
+  assert.equal((await submit("/session", { email: ownerEmail, password: key })).status, 401);
+  const ownerCookie = (await login()).headers.get("set-cookie").split(";")[0];
+  assert.equal((await request("/api/status", { headers: { cookie: ownerCookie } })).status, 200);
+
+  const signUpPage = await request("/signup");
+  assert.match(await signUpPage.text(), /autocomplete="new-password"/);
+  assert.equal((await submit("/signup", member)).status, 400);
+  assert.throws(() => accounts.issueInvitation(ownerEmail), /already exists/);
+  const oldInvitation = accounts.issueInvitation(member.email);
+  const invitation = accounts.issueInvitation(member.email);
+  const invited = { ...member, invite: invitation };
+  assert.equal((await submit("/signup", { ...invited, invite: oldInvitation })).status, 400);
+  assert.equal((await submit("/signup", { ...invited, email: ownerEmail })).status, 400);
+  assert.equal((await submit("/signup", invited, alias)).status, 403);
+  assert.equal((await submit("/signup", { ...invited, principal_id: ownerId })).status, 400);
+  assert.equal((await submit("/signup", { ...invited, password: "a".repeat(513) })).status, 400);
+  const created = await submit("/signup", invited);
+  const duplicate = await submit("/signup", invited);
+  assert.equal(created.status, 303);
+  assert.equal(created.headers.get("location"), "/sign-in?signup=complete");
+  assert.equal(duplicate.status, 400);
+  assert.equal((await submit("/session", { email: ownerEmail, password: member.password })).status, 401);
+  const cookie = (await submit("/session", member)).headers.get("set-cookie").split(";")[0];
+  const home = await (await request("/", { headers: { cookie } })).text();
+  assert.match(home, /No projects yet/);
+  const memberId = home.match(/member-[a-f0-9]{32}/)?.[0];
+  assert.ok(memberId);
+  assert.doesNotMatch(home, /Deployment history/);
+  for (const route of ["/api/status", "/api/organizations/paige/projects/paige-agent-ai/status", "/assets/owner.js"]) {
+    assert.equal((await request(route, { headers: { cookie } })).status, 404);
+  }
+  assert.equal(reads, 1);
+  assert.equal((await submit("/session", member)).status, 303);
+  assert.equal((await request("/sign-out", { method: "POST", headers: { origin, cookie } })).status, 303);
+  assert.equal((await request("/api/status", { headers: { cookie } })).status, 401);
+
+  // Running init again and opening a fresh server must preserve both stored accounts.
+  initializeAccounts(path);
+  const reopened = openAccounts(path);
+  stores.push(reopened);
+  assert.equal(await reopened.verify(member.email, member.password), memberId);
+  const restarted = await startServer(t, projectAccess, ownerId, reopened);
+  assert.equal((await restarted.request("/api/status", { headers: { cookie: ownerCookie } })).status, 401);
+  const updatedLogin = await restarted.request("/session", {
+    method: "POST",
+    headers: { origin, "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ email: ownerEmail, password }).toString(),
+  });
+  const newOwnerCookie = updatedLogin.headers.get("set-cookie").split(";")[0];
+  assert.equal((await restarted.request("/api/status", { headers: { cookie: newOwnerCookie } })).status, 200);
+  assert.equal((await restarted.request("/setup")).status, 404);
+});
+
+test("ordinary sign-in traffic uses a separate budget from owner sign-in", async (t) => {
+  const waiting = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  let active = 0;
+  const accounts = {
+    hasOwner: () => true,
+    isOwnerEmail: (email) => email === ownerEmail,
+    async verify(email) {
+      if (email === ownerEmail) return ownerId;
+      if (++active === 2) waiting.resolve();
+      await release.promise;
+    },
+  };
+  const { request, login, password } = await startServer(t, () => undefined, ownerId, accounts);
+  const memberAttempt = () => request("/session", {
+    method: "POST",
+    headers: { origin, "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ email: "member@example.test", password }).toString(),
+  });
+  const pending = [memberAttempt(), memberAttempt()];
+  try {
+    await waiting.promise;
+    assert.equal((await memberAttempt()).status, 429);
+    assert.equal((await login()).status, 303);
+  } finally {
+    release.resolve();
+    await Promise.all(pending);
+  }
 });
 
 test("project status checks organization and project grants before reading environment data", async (t) => {

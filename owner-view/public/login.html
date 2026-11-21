@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Owner sign-in · PAIGE Cloud</title>
+<title>{{TITLE}} · PAIGE Cloud</title>
 <link rel="stylesheet" href="/assets/owner.css">
 </head>
 <body class="sign-in-page">
@@ -12,14 +12,19 @@
 </div></header>
 <main id="main">
   <section class="sign-in-panel" aria-labelledby="sign-in-title">
-    <h1 id="sign-in-title">Sign in to PAIGE Cloud</h1>
-    <p class="muted">Use your owner key to access deployments and preview health.</p>
-    <!-- LOGIN_ERROR -->
-    <form action="/session" method="post" class="sign-in-form">
-      <label for="password">Owner key</label>
-      <input type="password" id="password" name="password" required autocomplete="current-password" maxlength="43" spellcheck="false">
-      <button class="primary" type="submit">Continue as owner</button>
+    <h1 id="sign-in-title">{{TITLE}}</h1>
+    {{DESCRIPTION}}
+    {{MESSAGE}}
+    <form action="{{MODE}}" method="post" class="sign-in-form">
+      {{KEY_FIELD}}
+      <label for="email">Email address</label>
+      <input type="email" id="email" name="email" required autocomplete="username" maxlength="254" autocapitalize="none" spellcheck="false">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" required {{PASSWORD_ATTRIBUTES}} maxlength="512" spellcheck="false">
+      {{PASSWORD_HINT}}
+      <button class="primary" type="submit">{{ACTION}}</button>
     </form>
+    <div class="auth-links">{{LINKS}}</div>
   </section>
 </main>
 </body>

@@ -2,14 +2,15 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
+import { accountPath, normalizeEmail, openAccounts, validCode, validPassword } from "./accounts.mjs";
 import { openMembershipStore } from "./memberships.mjs";
-import { createPaigeProjectAccess, ownerId, parseProjectStatusPath } from "./projects.mjs";
+import { createPaigeProjectAccess, firstProject, parseProjectStatusPath } from "./projects.mjs";
 
 const readAsset = (file) => readFileSync(new URL("./public/" + file, import.meta.url));
 const sessionName = "__Host-paige_owner";
 const sessionLifetime = 30 * 60;
 const cookieFields = "; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=";
-const maxBodyBytes = 256;
+const maxBodyBytes = 4096;
 const headers = {
   "Cache-Control": "no-store, max-age=0",
   "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
@@ -34,7 +35,7 @@ function sessionId(request) {
     .find(([name, value]) => name === sessionName && /^[A-Za-z0-9_-]{43}$/.test(value ?? ""))?.[1];
 }
 
-async function readPassword(request) {
+async function readForm(request) {
   if (request.headers["content-type"]?.split(";")[0] !== "application/x-www-form-urlencoded" ||
       Number(request.headers["content-length"]) > maxBodyBytes) return null;
   const chunks = [];
@@ -44,32 +45,92 @@ async function readPassword(request) {
     if (bytes > maxBodyBytes) return null;
     chunks.push(chunk);
   }
-  const body = new URLSearchParams(Buffer.concat(chunks).toString("utf8"));
-  if (body.size !== 1) return null;
-  const password = body.get("password");
-  return /^[A-Za-z0-9_-]{43}$/.test(password ?? "") ? password : null;
+  return new URLSearchParams(Buffer.concat(chunks).toString("utf8"));
+}
+
+function throttle(maxAttempts, maxPerEmail, maxConcurrent) {
+  const attempts = [];
+  let active = 0;
+  return async (email, run) => {
+    const cutoff = Date.now() - 60_000;
+    while (attempts.length && attempts[0].at <= cutoff) attempts.shift();
+    if (active >= maxConcurrent || attempts.length >= maxAttempts ||
+      attempts.filter((attempt) => attempt.email === email).length >= maxPerEmail) return null;
+    attempts.push({ email, at: Date.now() });
+    active++;
+    try {
+      return await run();
+    } finally {
+      active--;
+    }
+  };
 }
 
 export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
-  passwordHash, projectAccess: resolveRead, principalId = ownerId }) {
+  passwordHash, accounts, projectAccess: resolveRead }) {
   const allowedOrigins = new Map();
   for (const value of [origin, ...(aliasOrigin ? [aliasOrigin] : []), ...additionalOrigins]) {
     const url = new URL(value);
     if (url.protocol !== "https:" || url.origin !== value) throw new Error("Owner dashboard origins must be exact HTTPS origins.");
     allowedOrigins.set(url.host, url.origin);
   }
-  if (!/^[a-f0-9]{64}$/.test(passwordHash ?? "")) throw new Error("A 32-byte owner password hash is required.");
+  if (passwordHash && !/^[a-f0-9]{64}$/.test(passwordHash)) throw new Error("Invalid owner setup key hash.");
+  if (!passwordHash && !accounts.hasOwner()) throw new Error("Owner setup requires the existing owner key hash.");
   if (typeof resolveRead !== "function") throw new Error("A Cloud project access provider is required.");
 
-  const expectedHash = Buffer.from(passwordHash, "hex");
-  const login = readAsset("login.html").toString("utf8");
-  const loginError = login.replace("<!-- LOGIN_ERROR -->",
-    '<p class="notice bad" role="alert">That key did not match. Check it and try again.</p>');
+  const expectedHash = passwordHash ? Buffer.from(passwordHash, "hex") : null;
+  const signInPage = readAsset("login.html").toString("utf8");
+  const noProjects = readAsset("no-projects.html").toString("utf8");
   const owner = readAsset("owner.html");
   const css = readAsset("owner.css");
   const javascript = readAsset("owner.js");
   const sessions = new Map();
+  const limitSignIn = throttle(40, 8, 2);
+  const limitOwnerSignIn = throttle(8, 8, 1);
+  const limitSignUp = throttle(10, 4, 1);
+  const limitSetup = throttle(5, 5, 1);
   const statusCache = new WeakMap();
+
+  function authPage(mode, status, message = "") {
+    const signIn = mode === "/session";
+    const setup = mode === "/setup";
+    const enrolled = accounts.hasOwner();
+    const title = signIn ? "Sign in to PAIGE Cloud" : setup ? "Set up owner sign-in" : "Create your PAIGE Cloud account";
+    const action = signIn ? "Sign in" : setup ? "Set up account" : "Create account";
+    const description = setup ? "Use your existing owner key once to set up your email and password."
+      : signIn ? "" : "Use the email address and code from your invitation.";
+    const links = signIn
+      ? enrolled ? '<p>New to PAIGE Cloud? <a href="/signup">Create an account</a></p>'
+        : '<p><a href="/setup">Set up your owner account</a></p>'
+      : '<p><a href="/sign-in">Back to sign-in</a></p>';
+    return signInPage.replaceAll("{{TITLE}}", title)
+      .replace("{{ACTION}}", action)
+      .replace("{{MODE}}", mode)
+      .replace("{{DESCRIPTION}}", description ? `<p class="muted">${description}</p>` : "")
+      .replace("{{MESSAGE}}", message ? `<p class="notice ${status >= 400 ? "bad" : ""}" role="${status >= 400 ? "alert" : "status"}">${message}</p>` : "")
+      .replace("{{KEY_FIELD}}", setup
+        ? '<label for="owner-key">Owner key</label><input type="password" id="owner-key" name="key" required autocomplete="off" maxlength="43" spellcheck="false">'
+        : signIn ? ""
+          : '<label for="invitation">Invitation code</label><input type="text" id="invitation" name="invite" required autocomplete="off" autocapitalize="none" maxlength="43" spellcheck="false">')
+      .replace("{{PASSWORD_HINT}}", signIn ? "" : '<p id="password-hint" class="muted">Use at least 15 characters.</p>')
+      .replace("{{PASSWORD_ATTRIBUTES}}", signIn ? 'autocomplete="current-password"'
+        : 'autocomplete="new-password" minlength="15" aria-describedby="password-hint"')
+      .replace("{{LINKS}}", links);
+  }
+
+  function startSession(response, principalId, requestOrigin, previousId) {
+    const now = Date.now();
+    if (previousId) sessions.delete(previousId);
+    const samePrincipal = [];
+    for (const [id, session] of sessions) {
+      if (session.expires <= now) sessions.delete(id);
+      else if (session.principalId === principalId) samePrincipal.push(id);
+    }
+    if (samePrincipal.length >= 6) sessions.delete(samePrincipal[0]);
+    const id = randomBytes(32).toString("base64url");
+    sessions.set(id, { principalId, origin: requestOrigin, expires: now + sessionLifetime * 1000 });
+    send(response, 303, text, "", { Location: "/", "Set-Cookie": sessionName + "=" + id + cookieFields + sessionLifetime });
+  }
 
   function getStatus(reader) {
     const entry = statusCache.get(reader) ?? { cachedAt: -Infinity };
@@ -107,8 +168,17 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
     const session = sessions.get(id);
     const authorized = session?.origin === requestOrigin && session.expires > now;
     if (session && session.expires <= now) sessions.delete(id);
+    if (path === "/setup" && requestOrigin !== origin && method === "GET") {
+      send(response, 303, text, "", { Location: origin + "/setup" });
+      return;
+    }
+    if ((path === "/setup" && (requestOrigin !== origin || accounts.hasOwner() || !expectedHash)) ||
+        (path === "/signup" && !accounts.hasOwner())) {
+      send(response, 404, text, "Not found");
+      return;
+    }
     if (method === "POST") {
-      if (path !== "/session" && path !== "/sign-out") {
+      if (!["/session", "/sign-out", "/signup", "/setup"].includes(path)) {
         send(response, 405, text, "Method not allowed", { Allow: "GET" });
         return;
       }
@@ -121,25 +191,62 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
         send(response, 303, text, "", { Location: "/", "Set-Cookie": sessionName + "=" + cookieFields + "0" });
         return;
       }
-      const password = await readPassword(request);
-      const hash = createHash("sha256").update(password ?? "").digest();
-      if (!timingSafeEqual(expectedHash, hash) || !password) {
-        send(response, 401, html, loginError);
+      const signIn = path === "/session";
+      const setup = path === "/setup";
+      const form = await readForm(request);
+      const email = normalizeEmail(form?.get("email"));
+      const password = form?.get("password");
+      const code = form?.get(setup ? "key" : "invite");
+      if (!email || !validPassword(password) || form?.size !== (signIn ? 2 : 3)) {
+        const status = signIn ? 401 : 400;
+        const message = signIn ? "Email or password is incorrect." : "Check the email and use a password of at least 15 characters.";
+        send(response, status, html, authPage(path, status, message));
         return;
       }
-      if (authorized) sessions.delete(id);
-      for (const [oldId, entry] of sessions) if (entry.expires <= now) sessions.delete(oldId);
-      if (sessions.size >= 12) sessions.delete(sessions.keys().next().value);
-      const created = randomBytes(32).toString("base64url");
-      sessions.set(created, { principalId, origin: requestOrigin, expires: now + sessionLifetime * 1000 });
-      send(response, 303, text, "", { Location: "/", "Set-Cookie": sessionName + "=" + created + cookieFields + sessionLifetime });
+      if (setup && (!validCode(code) || !timingSafeEqual(expectedHash, createHash("sha256").update(code).digest()))) {
+        send(response, 401, html, authPage(path, 401, "Check your owner key and try again."));
+        return;
+      }
+      if (setup && password === code) {
+        send(response, 400, html, authPage(path, 400, "Choose a password that differs from your owner key."));
+        return;
+      }
+      if (!signIn && !setup && (!validCode(code) || !accounts.hasInvitation(email, code))) {
+        send(response, 400, html, authPage(path, 400, "Check your invitation code and email address."));
+        return;
+      }
+      const limit = signIn ? (accounts.isOwnerEmail(email) ? limitOwnerSignIn : limitSignIn)
+        : setup ? limitSetup : limitSignUp;
+      const result = await limit(setup ? "owner" : email, () =>
+        signIn ? accounts.verify(email, password) : accounts.create(email, password, { owner: setup, code }));
+      if (result === null) {
+        send(response, 429, html, authPage(path, 429, "Try again in a minute."), { "Retry-After": "60" });
+      } else if (signIn && result) {
+        startSession(response, result, requestOrigin, authorized ? id : undefined);
+      } else if (signIn) {
+        send(response, 401, html, authPage(path, 401, "Email or password is incorrect."));
+      } else if (setup && !result) {
+        send(response, 409, html, authPage("/session", 409, "Owner setup is already complete. Sign in with your email and password."));
+      } else if (!result) {
+        send(response, 409, html, authPage(path, 409, "This invitation could not be used. Ask your project owner for help."));
+      } else {
+        send(response, 303, text, "", { Location: setup ? "/sign-in?setup=complete" : "/sign-in?signup=complete" });
+      }
       return;
     }
     const scope = parseProjectStatusPath(path);
     if (path === "/") {
-      send(response, 200, html, authorized ? owner : login);
-    } else if (path === "/sign-in") {
-      send(response, 200, html, login);
+      const page = !authorized ? authPage("/session", 200)
+        : resolveRead(session.principalId, firstProject) ? owner
+          : noProjects.replace("{{ACCOUNT_ID}}", session.principalId);
+      send(response, 200, html, page);
+    } else if (path === "/sign-in" || path === "/session" || path === "/sign-in?setup=complete" || path === "/sign-in?signup=complete") {
+      const message = path === "/sign-in?setup=complete" ? "Owner setup complete. Sign in with your email and password."
+        : path === "/sign-in?signup=complete" ? "Sign in with the email and password you just set."
+          : "";
+      send(response, 200, html, authPage("/session", 200, message));
+    } else if (path === "/signup" || path === "/setup") {
+      send(response, 200, html, authPage(path, 200));
     } else if (path === "/assets/owner.css") {
       send(response, 200, "text/css; charset=utf-8", css);
     } else if (scope) {
@@ -164,7 +271,7 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
       send(response, 200, json, JSON.stringify(snapshot), {
         "X-Owner-Session-Expires-At": new Date(session.expires).toISOString(),
       });
-    } else if (path === "/assets/owner.js" && authorized) {
+    } else if (path === "/assets/owner.js" && authorized && resolveRead(session.principalId, firstProject)) {
       send(response, 200, "text/javascript; charset=utf-8", javascript);
     } else {
       send(response, 404, text, "Not found");
@@ -181,14 +288,16 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
   const store = openMembershipStore(process.env.OWNER_VIEW_MEMBERSHIP_DB);
+  const accounts = openAccounts(accountPath(process.env.OWNER_VIEW_MEMBERSHIP_DB));
   const server = createOwnerServer({
     origin: process.env.OWNER_VIEW_ORIGIN,
     aliasOrigin: process.env.OWNER_VIEW_ALIAS_ORIGIN,
     additionalOrigins: (process.env.OWNER_VIEW_ADDITIONAL_ORIGINS ?? "").split(",")
       .map((value) => value.trim()).filter(Boolean),
     passwordHash: process.env.OWNER_VIEW_PASSWORD_SHA256,
+    accounts,
     projectAccess: createPaigeProjectAccess(process.env.OWNER_VIEW_COOLIFY_TOKEN, store.hasProjectRead),
   });
-  server.once("close", store.close);
+  server.once("close", () => { accounts.close(); store.close(); });
   server.listen(8080, "0.0.0.0", () => console.log("PAIGE Cloud owner view is ready"));
 }
