@@ -33,7 +33,12 @@ for _ in {1..20}; do
   fi
   sleep 2
 done
-grep -q '^#EXTM3U' "$tmp/index"
+if ! grep -qs '^#EXTM3U' "$tmp/index"; then
+  echo "The live playlist never became ready."
+  curl -sS -H "$auth" "$origin/state" || true
+  curl -sS -H "$auth" -o /dev/null -w ' HLS status %{http_code}\n' "$origin/hls/index.m3u8" || true
+  exit 1
+fi
 playlist="$(awk '/^[a-zA-Z0-9_-]+\.m3u8\r?$/ {sub(/\r$/, ""); print; exit}' "$tmp/index")"
 [[ -n "$playlist" ]]
 curl -fsS --max-time 8 -H "$auth" "$origin/hls/$playlist" > "$tmp/playlist"
