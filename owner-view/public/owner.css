@@ -81,6 +81,8 @@ main { min-width: 0; padding: clamp(1.5rem, 3vw, 2.5rem) clamp(1rem, 4vw, 3.25re
 .page-head p code { display: inline-block; padding: .06rem .36rem; font-size: .77rem; background: var(--raised); border-radius: 4px; }
 .page-actions { display: flex; align-items: center; gap: .65rem; flex-wrap: wrap; }
 .page-actions a { display: inline-flex; align-items: center; padding: .5rem .85rem; min-height: 44px; font-size: .88rem; text-decoration: none; }
+.time-zone-control { display: inline-flex; align-items: center; flex-wrap: wrap; gap: .35rem .55rem; max-width: 100%; color: var(--muted); font-size: .84rem; }
+.time-zone-control select { min-width: 0; max-width: min(14rem, 100%); padding: .5rem; border: 1px solid var(--line); border-radius: 9px; background: var(--shell); color: var(--fg); }
 #refresh { min-width: 9rem; font-size: .88rem; }
 
 .status {

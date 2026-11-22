@@ -26,6 +26,14 @@
   <div class="page-head">
     <div><h1 id="page-title" tabindex="-1">Overview</h1><p class="muted" id="page-scope">PAIGE Agent AI</p></div>
     <div class="page-actions">
+      <label class="time-zone-control" id="time-zone-control" hidden>
+        <span>Time zone</span>
+        <select id="time-zone">
+          <option value="">Browser time</option>
+          <option value="America/New_York">Eastern Time</option>
+          <option value="UTC">UTC</option>
+        </select>
+      </label>
       <button id="refresh" type="button">Refresh status</button>
       <a class="primary" id="pilot-link" href="https://paige-ant178-auth.179.66.154.248.sslip.io/" target="_blank" rel="noreferrer">Open app preview<span class="sr"> (PAIGE sign-in pilot, new tab)</span></a>
     </div>
