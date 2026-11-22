@@ -33,7 +33,7 @@ async function replaySource() {
   const rows = await r.json();
   if (!Array.isArray(rows)) return undefined;
   const row = rows.find((item) => typeof item.start === "string" && Number.isFinite(Date.parse(item.start)) &&
-    Number.isFinite(item.duration) && item.duration > 0 && item.duration <= 110);
+    Number.isFinite(item.duration) && item.duration >= 73 && item.duration <= 80);
   if (!row) return undefined;
   const query = new URLSearchParams({ path: "pilot", start: row.start, duration: String(row.duration), format: "mp4" });
   return "http://127.0.0.1:9996/get?" + query;

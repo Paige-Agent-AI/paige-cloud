@@ -54,5 +54,5 @@ done
 grep -aq ftyp "$tmp/replay-header"
 curl -fsS -H "$auth" "$origin/replay.mp4" > "$tmp/replay"
 docker cp "$tmp/replay" "$container:/tmp/check.mp4"
-docker exec "$container" ffprobe -v error -show_entries format=duration -of csv=p=0 /tmp/check.mp4 | awk '$1 >= 65 && $1 <= 80 {good=1} END {exit !good}'
+docker exec "$container" ffprobe -v error -show_entries format=duration -of csv=p=0 /tmp/check.mp4 | awk '$1 >= 73 && $1 <= 80 {good=1} END {exit !good}'
 echo "Verified recorded replay duration and MP4 byte-range support"
