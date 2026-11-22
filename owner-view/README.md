@@ -20,6 +20,14 @@ Project readers are bound in source. Memberships use the exact principal, organi
 
 After owner setup, approved evaluators can create an account at `/signup`. The operator-only command `node accounts.mjs invite <email>` still creates a 48-hour account invitation without a project grant. Deliver these codes privately. Treat the accounts database as credential material. Only salted password hashes are stored.
 
+## Domains, activity, and media
+
+Domains displays the latest HTTPS probe and reported frontend commit for each PAIGE production host. Activity links recorded releases and preview build events to their account-scoped deployment detail URLs. A preview detail URL is bound to its PR head and becomes unavailable if that head leaves the current preview inventory. Evidence links open the recorded GitHub run or release receipt.
+
+For private broadcasts, configure `OWNER_VIEW_STREAM_ACCOUNT_ID`, `OWNER_VIEW_STREAM_TOKEN` (Cloudflare Stream access including token signing), and `OWNER_VIEW_STREAM_PLAYBACK_HOST` (the exact `customer-….cloudflarestream.com` hostname) as console runtime settings. The feature uses the existing project and membership database. Rollback images leave its additive stream records intact.
+
+Create a fresh live input in the connected Cloudflare account with automatic recording and signed playback enabled. Register its input ID and an event title in the project’s Media page. Copy the Member watch link from that page and broadcast through OBS using credentials from Cloudflare. The same watch link serves the live video and its replay. It resolves to each signed-in project member’s account route. PAIGE Cloud never reads ingest keys into the browser. Playback tokens expire at the end of the current console session. Use a new input for each event.
+
 ## Projects and members
 
 For a new customer, open **Projects → Invite a customer**, enter their email and first project name, and send the prepared email draft. The customer signs up with the email and the single-use, 48-hour invitation code. Signup creates their account, account number, organization, first project, and project grant in one transaction. When they sign in, they land on their new project. The owner can reissue or cancel a pending invitation in Projects. Use the project's **Members** page to invite a teammate to an existing project. When both invitation types are pending for a new email, use the customer invitation for signup and accept the teammate invitation after signing in.

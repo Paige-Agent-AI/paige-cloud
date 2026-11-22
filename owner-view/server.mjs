@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { accountPath, normalizeEmail, openAccounts, validCode, validPassword } from "./accounts.mjs";
 import { openProjectCatalog } from "./memberships.mjs";
 import { matchProjectPage, projectPage } from "./project-console.mjs";
+import { createStreamProvider, mediaPage } from "./media.mjs";
 import { createPaigeProjectAccess, firstProject, parseProjectStatusPath } from "./projects.mjs";
 
 const readAsset = (file) => readFileSync(new URL("./public/" + file, import.meta.url));
@@ -14,7 +15,9 @@ const cookieFields = "; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=";
 const maxBodyBytes = 4096;
 const accountNumberPattern = /^[1-9][0-9]{11}$/;
 const accountRoutePattern = /^\/accounts\/([1-9][0-9]{11})(\/[^\r\n]*)?$/;
-const dashboardPages = new Set(["/", "/overview", "/deployments"]);
+const dashboardPages = new Set(["/", "/overview", "/deployments", "/domains", "/activity"]);
+const deploymentPage = /^\/deployments\/(?:release-[1-9]\d{0,19}-[1-9]\d{0,19}|history-[a-z0-9]{1,64}|pr-[1-9]\d{0,9}-[a-f0-9]{40})$/;
+const isDashboardPage = (path) => dashboardPages.has(path) || deploymentPage.test(path);
 const headers = {
   "Cache-Control": "no-store, max-age=0",
   "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
@@ -71,7 +74,7 @@ function throttle(maxAttempts, maxPerEmail, maxConcurrent) {
 }
 
 export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
-  passwordHash, accounts, catalog, projectAccess: resolveRead }) {
+  passwordHash, accounts, catalog, stream, projectAccess: resolveRead }) {
   const allowedOrigins = new Map();
   for (const value of [origin, ...(aliasOrigin ? [aliasOrigin] : []), ...additionalOrigins]) {
     const url = new URL(value);
@@ -190,7 +193,7 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
         return;
       }
       path = match[2] ?? "/";
-      if (!(dashboardPages.has(path) || matchProjectPage(path) || parseProjectStatusPath(path))) {
+      if (!(isDashboardPage(path) || matchProjectPage(path) || parseProjectStatusPath(path))) {
         send(response, 404, text, "Not found");
         return;
       }
@@ -201,7 +204,7 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
       }
     }
     const projectRoute = catalog && matchProjectPage(path);
-    if (accountPath && !numbered && (dashboardPages.has(path) || projectRoute)) {
+    if (accountPath && !numbered && (isDashboardPage(path) || projectRoute)) {
       if (method !== "GET") {
         send(response, 404, text, "Not found");
         return;
@@ -224,11 +227,19 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
         send(response, 401, text, "Sign in required");
         return;
       }
-      const result = projectPage({ route: projectRoute, form, method, principal: session.principalId,
+      const params = { route: projectRoute, form, method, principal: session.principalId,
         origin, catalog, accounts, showDeployments: !!resolveRead(session.principalId, firstProject),
-        remaining: Math.max(0, session.expires - Date.now()), accountPath });
+        remaining: Math.max(0, session.expires - Date.now()), accountPath };
+      const sessionCurrent = () => sessions.get(id) === session && session.expires > Date.now();
+      const result = projectRoute.media ? await mediaPage({ ...params, stream, sessionCurrent, sessionExpiresAt: session.expires }) : projectPage(params);
+      if (projectRoute.media && !sessionCurrent()) {
+        send(response, 401, text, "Sign in required");
+        return;
+      }
+      const extra = result.location ? { Location: result.location } : {};
+      if (result.playerOrigin) extra["Content-Security-Policy"] = headers["Content-Security-Policy"] + "; frame-src " + result.playerOrigin;
       send(response, result.status, result.html ? html : text,
-        result.html ?? (result.status === 404 ? "Not found" : ""), result.location ? { Location: result.location } : {});
+        result.html ?? (result.status === 404 ? "Not found" : ""), extra);
       return;
     }
     if (path === "/setup" && requestOrigin !== origin && method === "GET") {
@@ -304,7 +315,7 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
       return;
     }
     const scope = parseProjectStatusPath(path);
-    if (dashboardPages.has(path)) {
+    if (isDashboardPage(path)) {
       if (authorized && catalog && !resolveRead(session.principalId, firstProject)) {
         send(response, 303, text, "", { Location: accountPath + "/projects" });
         return;
@@ -381,6 +392,11 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
     passwordHash: process.env.OWNER_VIEW_PASSWORD_SHA256,
     accounts,
     catalog: store,
+    stream: createStreamProvider({
+      account: process.env.OWNER_VIEW_STREAM_ACCOUNT_ID,
+      token: process.env.OWNER_VIEW_STREAM_TOKEN,
+      host: process.env.OWNER_VIEW_STREAM_PLAYBACK_HOST,
+    }),
     projectAccess: createPaigeProjectAccess(process.env.OWNER_VIEW_COOLIFY_TOKEN, store.hasProjectRead,
       process.env.OWNER_VIEW_PREVIEW_ACTIONS_TOKEN),
   });

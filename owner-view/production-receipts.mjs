@@ -39,6 +39,7 @@ export function verifiedProductionReceipts(evidence) {
       commit: row.candidate.commit,
       image: row.candidate.image,
       deployment: row.deployment,
+      artifactId: row.artifactId,
       runId: row.workflow.runId,
       attempt: row.workflow.attempt,
       pullRequest: row.approval.pullRequest,

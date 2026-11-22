@@ -1,7 +1,7 @@
 import { normalizeEmail, validCode } from "./accounts.mjs";
 import { firstProject, isProjectSlug, ownerId } from "./projects.mjs";
 
-const escape = (value) => String(value).replace(/[&<>"']/g, (char) =>
+export const escape = (value) => String(value).replace(/[&<>"']/g, (char) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 const url = (project) => `/projects/${project.organizationId}/${project.projectId}`;
 const canonical = (project) => project.organizationId === firstProject.organizationId && project.projectId === firstProject.projectId;
@@ -13,12 +13,13 @@ export function matchProjectPage(path) {
   if (path === "/projects" || path === "/join") return { path };
   const parts = path?.split("/") ?? [];
   const members = parts.length === 5 && parts[4] === "members";
-  if ((parts.length !== 4 && !members) || parts[0] || parts[1] !== "projects" ||
+  const media = parts[4] === "media" && (parts.length === 5 || (parts.length === 6 && /^[a-f0-9]{20}$/.test(parts[5])));
+  if ((parts.length !== 4 && !members && !media) || parts[0] || parts[1] !== "projects" ||
       !parts.slice(2, 4).every(isProjectSlug)) return undefined;
-  return { path, organizationId: parts[2], projectId: parts[3], members };
+  return { path, organizationId: parts[2], projectId: parts[3], members, media, streamId: media ? parts[5] : undefined };
 }
 
-function shell(title, body, showDeployments, remaining, accountPath) {
+export function shell(title, body, showDeployments, remaining, accountPath, active = "projects") {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escape(title)} · PAIGE Cloud</title><link rel="stylesheet" href="/assets/owner.css">
@@ -30,7 +31,9 @@ function shell(title, body, showDeployments, remaining, accountPath) {
 <form action="/sign-out" method="post" class="sign-out-form">${button("Sign out")}</form></div></header>
 <div class="workspace-layout"><nav class="workspace-menu" aria-label="Workspace">
 ${showDeployments ? `<a href="${accountPath}/overview">Overview</a><a href="${accountPath}/deployments">Deployments</a>` : ""}
-<a href="${accountPath}/projects" aria-current="page">Projects</a></nav>
+<a href="${accountPath}/projects"${active === "projects" ? ' aria-current="page"' : ""}>Projects</a>
+${showDeployments ? `<a href="${accountPath}/domains">Domains</a><a href="${accountPath}/activity">Activity</a>
+<a href="${accountPath}/projects/paige/paige-agent-ai/media"${active === "media" ? ' aria-current="page"' : ""}>Media</a>` : ""}</nav>
 <main id="main" class="project-main" tabindex="-1" data-session-remaining="${remaining}" data-project-home="${accountPath}/projects" hidden><h1>${escape(title)}</h1>${body}</main>
 <noscript><p>Enable JavaScript to open your projects.</p></noscript></div></body></html>`;
 }
@@ -153,6 +156,7 @@ export function projectPage({ route, form, method, principal, origin, catalog, a
     <a href="${accountPath + url(project)}">${escape(project.name)}</a> / Members</p>` + membersPanel(project, catalog, accounts, accountPath));
   const detail = `<p class="muted"><a href="${accountPath}/projects">All projects</a> / ${escape(organizationId)}/${escape(projectId)}${project.archived ? ' · Archived' : ''}</p>
     ${canonical(project) && catalog.hasProjectRead(principal, organizationId, projectId) ? `<p><a href="${accountPath}/deployments">View deployments</a></p>` : !project.archived ? '<p class="muted">No deployment source is connected.</p>' : ""}
+    ${!project.archived && catalog.hasProjectRead(principal, organizationId, projectId) ? `<p><a href="${accountPath + url(project)}/media">Project media</a></p>` : ""}
     ${manage ? `<p><a href="${accountPath + url(project)}/members">Manage members</a></p>` : ""}`;
   if (!post) return page(project.name, detail + (manage ? settingsPanel(project, accountPath) : ""));
 

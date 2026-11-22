@@ -198,7 +198,9 @@ function productionEntry(receipt, production, stale) {
       ["Rollback deployment", element("code", "", receipt.rollback.deployment)],
     ],
     links: [receiptLink("/pull/" + receipt.pullRequest, "View PR #" + receipt.pullRequest),
-      receiptLink("/actions/runs/" + receipt.runId, "View GitHub workflow run")],
+      receiptLink("/actions/runs/" + receipt.runId, "View GitHub workflow run"),
+      receiptLink("/actions/runs/" + receipt.runId + "/artifacts/" + receipt.artifactId, "Download release receipt")],
+    domains: current ? production.domains : [],
     search: "PR #" + receipt.pullRequest + " " + receipt.deployment,
   };
 }
@@ -237,7 +239,7 @@ function pullEntry(row, stale) {
     : knownUrl && stale ? "Verification expired. Refresh to check the preview again."
       : row.build === "built" ? "No verified preview URL for this build." : "";
   return {
-    id: "pr-" + row.number, title: "#" + row.number + " " + row.title, environment: "Preview",
+    id: "pr-" + row.number + "-" + row.commit, title: "#" + row.number + " " + row.title, environment: "Preview",
     branch: row.branch, commit: row.commit, at: row.buildCreatedAt, updatedAt: row.updatedAt, timeLabel: "Build created",
     status: state, label, tone, previewUrl, hasBuild: Boolean(row.run),
     refreshPreview: knownUrl && stale,
@@ -262,16 +264,12 @@ function appendFields(container, entries) {
   container.append(fields);
 }
 
-function deploymentEntry(row, expanded, prView) {
+function deploymentEntry(row, prView) {
   const item = element("li", "deployment-entry");
   item.dataset.entry = row.id;
   const cells = element("div", "deployment-row");
-  const expand = element("button", "deployment-title");
-  expand.type = "button";
-  expand.title = row.title;
-  expand.append(element("span", "chevron"), element("span", "deployment-truncate", row.title));
-  expand.firstChild.setAttribute("aria-hidden", "true");
-  expand.setAttribute("aria-expanded", String(expanded));
+  const title = workspaceLink(deploymentPath(row), row.title, "deployment-title deployment-truncate");
+  title.title = row.title;
 
   const result = element("span", "deployment-outcome");
   result.append(element("span", "deployment-state " + row.tone, row.label));
@@ -315,41 +313,29 @@ function deploymentEntry(row, expanded, prView) {
     action.append(button);
   }
 
-  const detail = element("div", "deployment-detail");
-  detail.id = "deployment-detail-" + row.id;
-  detail.hidden = !expanded;
-  expand.setAttribute("aria-controls", detail.id);
-  expand.addEventListener("click", () => {
-    detail.hidden = !detail.hidden;
-    expand.setAttribute("aria-expanded", String(!detail.hidden));
-  });
-  appendFields(detail, row.fields);
-  const links = row.links.filter(Boolean);
-  if (links.length) {
-    const actions = element("div", "deployment-detail-links");
-    actions.append(...links);
-    detail.append(actions);
-  }
-  cells.append(expand, result, environment, source, branch, when, action);
-  item.append(cells, detail);
+  cells.append(title, result, environment, source, branch, when, action);
+  item.append(cells);
   return item;
 }
 
-function renderDeployments(loading = false, stale = false) {
-  if (get("deployments-panel").hidden) return;
-  const output = get("deployment-rows");
-  const list = get("deployment-summary");
-  const empty = get("empty");
+function deploymentIndex(stale) {
   const previewAt = date(previewRunData?.checkedAt);
   const previewStale = previewFetchFailed || !previewAt || Date.now() - previewAt.getTime() >= staleAfterMs;
   const production = snapshot?.production;
   const productionAt = date(production?.checkedAt);
   const productionStale = stale || !productionAt || Date.now() - productionAt.getTime() >= staleAfterMs;
-  const prView = deploymentView === "pull-requests";
   const pullRows = (previewRunData?.rows ?? []).map((row) => pullEntry(row, previewStale));
   const receipts = (production?.receipts ?? []).map((receipt) => productionEntry(receipt, production, productionStale));
   const history = (snapshot?.history ?? []).map(historyEntry);
-  const previewRows = [...pullRows.filter((row) => row.hasBuild), ...history];
+  return { previewStale, productionStale, pullRows, receipts, history, previewRows: [...pullRows.filter((row) => row.hasBuild), ...history] };
+}
+
+function renderDeployments(loading, index) {
+  const output = get("deployment-rows");
+  const list = get("deployment-summary");
+  const empty = get("empty");
+  const { previewStale, productionStale, pullRows, receipts, previewRows } = index;
+  const prView = deploymentView === "pull-requests";
   const entries = prView ? pullRows : deploymentView === "production" ? receipts :
     deploymentView === "preview" ? previewRows : [...receipts, ...previewRows];
   const query = deploymentSearch.value.trim().toLowerCase();
@@ -381,13 +367,11 @@ function renderDeployments(loading = false, stale = false) {
   const key = JSON.stringify([rows, prView, productionStale, previewStale, previewRunData?.checkedAt, snapshot?.checkedAt]);
   if (key === lastDeploymentKey) return;
   lastDeploymentKey = key;
-  const open = new Set([...output.children].filter((item) =>
-    item.querySelector('.deployment-title[aria-expanded="true"]')).map((item) => item.dataset.entry));
   const active = document.activeElement;
   const activeRow = output.contains(active) ? active.closest(".deployment-entry") : null;
   const activeControls = activeRow && [...activeRow.querySelectorAll("button, a")];
   const activeIndex = activeControls ? activeControls.indexOf(active) : -1;
-  const items = rows.map((row) => deploymentEntry(row, open.has(row.id), prView));
+  const items = rows.map((row) => deploymentEntry(row, prView));
   output.replaceChildren(...items);
   if (activeRow) {
     const item = items.find((entry) => entry.dataset.entry === activeRow.dataset.entry);
@@ -396,6 +380,124 @@ function renderDeployments(loading = false, stale = false) {
       : item?.querySelector(".deployment-title") ?? deploymentSearch;
     replacement.focus({ preventScroll: true });
   }
+}
+
+
+function workspaceLink(path, label, className = "") {
+  const link = element("a", className, label);
+  link.href = accountPath + path;
+  return link;
+}
+
+function deploymentPath(row) {
+  return "/deployments/" + row.id;
+}
+
+function card(title) {
+  const panel = element("section", "workspace-card");
+  panel.append(element("h2", "", title));
+  return panel;
+}
+
+function renderDetail(loading, { receipts, history, pullRows }) {
+  const panel = get("detail-panel");
+  const row = [...receipts, ...history, ...pullRows].find((item) => item.id === detailId);
+  const key = JSON.stringify([row, snapshot?.checkedAt, previewRunData?.checkedAt, loading, !!previewRequest]);
+  if (panel.dataset.renderKey === key) return;
+  panel.dataset.renderKey = key;
+  const back = workspaceLink("/deployments", "← Deployments", "detail-back");
+  panel.replaceChildren(back);
+  pageTitle.textContent = row?.title ?? "Deployment";
+  document.title = pageTitle.textContent + " · PAIGE Cloud";
+  if (!row) {
+    panel.append(element("p", "notice", loading || previewRequest || (detailId.startsWith("pr-") && !previewRunData && !previewFetchFailed && snapshot)
+      ? "Loading deployment evidence…" : "This deployment record is unavailable. Open Deployments for current records."));
+    return;
+  }
+  const summary = card("Deployment details");
+  const badges = element("div", "detail-badges");
+  badges.append(element("span", "deployment-environment " + row.environment.toLowerCase(), row.environment),
+    element("span", "status " + row.tone, row.label));
+  summary.append(badges);
+  appendFields(summary, [
+    ["Branch", row.branch], ["Commit", row.commit && element("code", "", row.commit)],
+    [row.timeLabel ?? "Recorded", row.at && time(row.at)],
+    ["Duration", Number.isSafeInteger(row.elapsed) ? row.elapsed + " seconds" : null],
+  ]);
+  if (row.previewUrl) {
+    const visit = element("a", "preview-action", "Open preview");
+    visit.href = row.previewUrl;
+    visit.target = "_blank";
+    visit.rel = "noreferrer";
+    summary.append(visit);
+  } else if (row.refreshPreview) {
+    const recheck = element("button", "preview-action", "Recheck preview link");
+    recheck.addEventListener("click", refreshStatus);
+    summary.append(recheck);
+  }
+  const evidence = card("Source and evidence");
+  appendFields(evidence, row.fields);
+  const links = row.links.filter(Boolean);
+  if (links.length) {
+    const actions = element("div", "deployment-detail-links");
+    actions.append(...links);
+    evidence.append(actions);
+  }
+  panel.append(summary, evidence);
+  if (row.domains?.length) {
+    const checks = card("Live domain checks");
+    const list = element("ul", "production-domains");
+    list.append(...productionDomainRows({ domains: row.domains }));
+    checks.append(list);
+    panel.append(checks);
+  }
+}
+
+function renderDomains(loading, stale) {
+  const panel = get("domains-panel");
+  const production = snapshot?.production;
+  const group = card("Production domains");
+  const check = date(production?.checkedAt);
+  const old = stale || (check && Date.now() - check.getTime() >= staleAfterMs);
+  if (check) {
+    const stamp = element("p", "muted small");
+    stamp.append(old ? "Last checked " : "Checked ", time(production.checkedAt));
+    group.append(stamp);
+  }
+  const domains = production?.domains ?? [];
+  if (!domains.length) group.append(element("p", "muted", loading ? "Checking domain health…" : "Domain checks are unavailable."));
+  const list = element("ul", "workspace-feed");
+  for (const domain of domains) {
+    const item = element("li");
+    const host = element("a", "", domain.hostname);
+    host.href = "https://" + domain.hostname;
+    host.target = "_blank";
+    host.rel = "noreferrer";
+    const [label, tone] = healthLabels[domain.state] ?? healthLabels.unavailable;
+    item.append(host, element("span", "status " + (old ? "warn" : tone), old ? "Last observed: " + label : label));
+    if (Number.isInteger(domain.httpStatus)) item.append(element("span", "muted small", "HTTP " + domain.httpStatus));
+    if (domain.frontendCommit) item.append(element("code", "", domain.frontendCommit.slice(0, 8)));
+    list.append(item);
+  }
+  group.append(list);
+  panel.replaceChildren(group);
+}
+
+function renderActivity(loading, stale, { receipts, previewRows }) {
+  const panel = get("activity-panel");
+  const group = card("Release and build events");
+  const events = [...receipts, ...previewRows].sort((a, b) => (date(b.at)?.getTime() ?? 0) - (date(a.at)?.getTime() ?? 0));
+  if (stale || previewFetchFailed) group.append(element("p", "muted small", "Showing available recorded activity."));
+  if (!events.length) group.append(element("p", "muted", loading ? "Loading release activity…" : "No recorded release activity."));
+  const list = element("ol", "workspace-feed");
+  for (const row of events) {
+    const item = element("li");
+    item.append(workspaceLink(deploymentPath(row), row.title), element("span", "status " + row.tone, row.label));
+    if (row.at) item.append(time(row.at, activityDateFormat));
+    list.append(item);
+  }
+  group.append(list);
+  panel.replaceChildren(group);
 }
 
 function render({ loading = false, checked = false } = {}) {
@@ -455,7 +557,10 @@ function render({ loading = false, checked = false } = {}) {
       "A verified rollback target is unavailable.";
   }
   get("evidence").hidden = !rollback;
-  renderDeployments(loading, stale);
+  if (section === "deployments") renderDeployments(loading, deploymentIndex(stale));
+  if (section === "detail") renderDetail(loading, deploymentIndex(stale));
+  if (section === "activity") renderActivity(loading, stale, deploymentIndex(stale));
+  if (section === "domains") renderDomains(loading, stale);
 
   refresh.setAttribute("aria-disabled", String(loading));
   refresh.textContent = loading ? "Checking status…" : "Refresh status";
@@ -502,7 +607,7 @@ function clearPrPreviews() {
 }
 
 async function refreshPrPreviews() {
-  if (location.pathname !== accountPath + "/deployments" || previewRequest) return;
+  if (!["deployments", "detail", "activity"].includes(section) || previewRequest) return;
   const request = new AbortController();
   previewRequest = request;
   let received = false;
@@ -601,9 +706,8 @@ async function refreshStatus() {
 const accountPath = location.pathname.match(/^\/accounts\/[1-9][0-9]{11}(?=\/|$)/)?.[0] ?? "";
 
 function showSection() {
-  const deployments = location.pathname === accountPath + "/deployments";
-  const section = deployments ? "deployments" : "overview";
-  const title = deployments ? "Deployments" : "Overview";
+  const deployments = section === "deployments" || section === "detail";
+  const title = { deployments: "Deployments", detail: "Deployment", domains: "Domains", activity: "Activity" }[section] ?? "Overview";
   pageTitle.textContent = title;
   document.title = title + " · PAIGE Cloud";
   document.body.classList.toggle("workspace-deployments", deployments);
@@ -613,10 +717,11 @@ function showSection() {
     pilotLabel.classList.remove("primary");
     pilotLabel.append(element("span", "sr", " (new tab)"));
   }
-  get("overview-panel").hidden = deployments;
-  get("deployments-panel").hidden = !deployments;
+  for (const name of ["overview", "deployments", "detail", "domains", "activity"]) {
+    get(name + "-panel").hidden = section !== name;
+  }
   for (const link of navigation) {
-    if (link.dataset.section === section) link.setAttribute("aria-current", "page");
+    if (link.dataset.section === (section === "detail" ? "deployments" : section)) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   }
 }
@@ -629,6 +734,10 @@ document.querySelector(".skip-link").addEventListener("click", (event) => {
   event.preventDefault();
   get("main").focus();
 });
+const route = location.pathname.slice(accountPath.length);
+const detailId = route.startsWith("/deployments/") ? route.split("/").at(-1) : "";
+const section = detailId ? "detail" : ["/deployments", "/domains", "/activity"].includes(route) ? route.slice(1) : "overview";
+
 showSection();
 for (const button of deploymentViews) {
   button.addEventListener("click", () => {

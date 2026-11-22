@@ -11,6 +11,7 @@ import { initializeAccounts, openAccounts } from "./accounts.mjs";
 import { initializeMembershipStore, openMembershipStore, openProjectCatalog, updateProjectMembership } from "./memberships.mjs";
 import { createProjectAccess, firstProject, ownerId } from "./projects.mjs";
 import { createOwnerServer } from "./server.mjs";
+import { createStreamProvider } from "./media.mjs";
 
 const origin = "https://owner.example.test";
 const alias = "https://cloud.example.test";
@@ -167,7 +168,7 @@ test("backfills account numbers for existing credential records and preserves th
   }
 });
 
-async function startServer(t, projectAccess, principalId = ownerId, realAccounts, catalog) {
+async function startServer(t, projectAccess, principalId = ownerId, realAccounts, catalog, stream) {
   const password = randomBytes(32).toString("base64url");
   const key = randomBytes(32).toString("base64url");
   const server = createOwnerServer({
@@ -175,6 +176,7 @@ async function startServer(t, projectAccess, principalId = ownerId, realAccounts
     passwordHash: createHash("sha256").update(key).digest("hex"),
     projectAccess,
     catalog,
+    stream,
     accounts: realAccounts ?? {
       hasOwner: () => true,
       isOwnerEmail: (email) => principalId === ownerId && email === ownerEmail,
@@ -263,7 +265,7 @@ test("owner HTTP surface gates assets and data, rejects tampering, and invalidat
   const cloudCookie = cloudLogin.headers.get("set-cookie").split(";")[0];
   assert.equal((await request("/api/status", { headers: { host: cloudHost, cookie: cloudCookie } })).status, 200);
   assert.equal((await request("/api/status", { headers: { host: aliasHost, cookie: cloudCookie } })).status, 401);
-  for (const page of ["/overview", "/deployments"]) {
+  for (const page of ["/overview", "/deployments", "/domains", "/activity", "/deployments/release-123-1"]) {
     assert.match(await (await request(page, { headers: { cookie } })).text(), /href="\/deployments"/);
     assert.doesNotMatch(await (await request(page)).text(), /Deployment history/);
   }
@@ -721,4 +723,130 @@ test("persistent revocation denies warm and pending reads and survives initializ
   assert.equal((await restartedServer.request(projectPath + "/status", restartedOptions)).status, 404);
   assert.equal(change("grant"), true);
   assert.equal((await restartedServer.request(projectPath + "/status", restartedOptions)).status, 200);
+});
+
+test("project Media keeps one signed live video and replay in its account", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "paige-media-"));
+  const membership = join(dir, "memberships.sqlite");
+  const account = join(dir, "accounts.sqlite");
+  initializeMembershipStore(membership);
+  initializeAccounts(account);
+  const catalog = openProjectCatalog(membership);
+  const accounts = openAccounts(account, membership);
+  t.after(() => {
+    accounts.close();
+    catalog.close();
+    unlinkSync(account);
+    unlinkSync(membership);
+    rmdirSync(dir);
+  });
+
+  const input = "1".repeat(32);
+  const providerAccount = "2".repeat(32);
+  const videoId = "3".repeat(32);
+  const secondVideo = "4".repeat(32);
+  const playbackHost = "customer-fixture.cloudflarestream.com";
+  const signed = "test.token.signature";
+  let privacy = false;
+  let videoState = "waiting";
+  const reads = [];
+  const media = createStreamProvider({ account: providerAccount, token: "fixture-stream-secret", host: playbackHost }, async (url, options) => {
+    const path = new URL(url).pathname.split("/stream").at(-1);
+    assert.equal(options.headers.Authorization, "Bearer fixture-stream-secret");
+    assert.equal(options.redirect, "error");
+    reads.push(path);
+    const result = path === "/live_inputs/" + input ? {
+      uid: input, recording: { requireSignedURLs: privacy, mode: "automatic" }, rtmps: { streamKey: "private-ingest-key" },
+    } : path === "/live_inputs/" + input + "/videos" ? videoState === "waiting" ? [] : [
+      { uid: secondVideo, created: new Date(Date.now() + 1000).toISOString() },
+      { uid: videoId, created: new Date().toISOString() },
+    ] : path === "/" + videoId ? {
+      uid: videoId, requireSignedURLs: privacy, readyToStream: videoState === "ready", status: { state: videoState },
+    } : path === "/" + videoId + "/token" ? { token: signed } : undefined;
+    assert.notEqual(result, undefined, path);
+    if (path.endsWith("/token")) {
+      assert.equal(options.method, "POST");
+      assert.ok(JSON.parse(options.body).exp <= Math.floor(Date.now() / 1000) + 1801);
+    }
+    return Response.json({ success: true, result });
+  });
+
+  const password = "fixture Media project password";
+  await accounts.create(ownerEmail, password, { owner: true });
+  const access = createProjectAccess([{ ...firstProject, readStatus: async () => ({}), environments: {} }], catalog.hasProjectRead);
+  const { request, login } = await startServer(t, access, ownerId, accounts, catalog, media);
+  const owner = await login(password);
+  assert.equal(owner.status, 303);
+  const cookie = owner.headers.get("set-cookie").split(";")[0];
+  const accountPath = owner.headers.get("location").replace(/\/overview$/, "");
+  const root = accountPath + "/projects/paige/paige-agent-ai/media";
+  const get = (path) => request(path, { headers: { cookie } });
+  const post = (path, target = origin) => request(path, {
+    method: "POST", headers: { cookie, origin: target, "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ title: "Private <event>", input }).toString(),
+  });
+  assert.equal((await request(root)).status, 303);
+  assert.equal((await post(root, "https://unrelated.example")).status, 403);
+  assert.equal((await post(root)).status, 400);
+  privacy = true;
+  assert.equal((await request(root, { headers: { cookie: "" } })).status, 303);
+  const registered = await post(root);
+  assert.equal(registered.status, 303);
+  const path = registered.headers.get("location");
+  assert.ok(path.startsWith(root + "/"));
+  assert.equal((await post(root)).status, 409);
+  const waiting = await get(path);
+  assert.match(await waiting.text(), /Waiting for broadcast/);
+  assert.ok(!waiting.headers.get("content-security-policy").includes("frame-src"));
+  assert.equal((await get(path.replace(accountPath, "/accounts/123456789012"))).status, 404);
+
+  videoState = "live-inprogress";
+  const live = await get(path);
+  const livePage = await live.text();
+  assert.match(livePage, /<h2>Live<\/h2>/);
+  assert.match(livePage, /Private &lt;event&gt;/);
+  assert.ok(livePage.includes("https://" + playbackHost + "/" + signed + "/iframe"));
+  assert.ok(!livePage.includes("private-ingest-key"));
+  assert.ok(live.headers.get("content-security-policy").includes("frame-src https://" + playbackHost));
+
+  videoState = "ready";
+  const resumedCatalog = openProjectCatalog(membership);
+  try {
+    assert.equal(resumedCatalog.stream(firstProject, path.split("/").at(-1)).videoId, videoId);
+  } finally { resumedCatalog.close(); }
+  assert.match(await (await get(path)).text(), /<h2>Replay<\/h2>/);
+  privacy = false;
+  const unavailable = await get(path);
+  assert.match(await unavailable.text(), /Playback unavailable/);
+  assert.ok(!unavailable.headers.get("content-security-policy").includes("frame-src"));
+  privacy = true;
+  const email = "media-member@example.test";
+  const invite = catalog.issue(firstProject.organizationId, firstProject.projectId, email);
+  assert.ok(await accounts.create(email, password, { code: invite, allowProjectSignup: true }));
+  const memberId = await accounts.verify(email, password);
+  assert.ok(catalog.accept(memberId, email, invite));
+  const signedIn = await request("/session", {
+    method: "POST", headers: { origin, "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ email, password }).toString(),
+  });
+  const memberPath = signedIn.headers.get("location").replace(/\/overview$/, "");
+  const memberCookie = signedIn.headers.get("set-cookie").split(";")[0];
+  const memberEvent = path.replace(accountPath, memberPath);
+  const memberGet = (url) => request(url, { headers: { cookie: memberCookie } });
+  assert.match(await (await memberGet(memberEvent)).text(), /<h2>Replay<\/h2>/);
+  const share = path.slice(accountPath.length);
+  const shared = await memberGet(share);
+  assert.equal(shared.status, 303);
+  assert.equal(shared.headers.get("location"), memberEvent);
+  assert.ok(livePage.includes('href="' + share + '">Member watch link'));
+  assert.equal((await request(root.replace(accountPath, memberPath), {
+    method: "POST", headers: { cookie: memberCookie, origin, "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ title: "Member mutation", input }).toString(),
+  })).status, 404);
+  const before = reads.length;
+  assert.equal((await memberGet(path)).status, 404);
+  assert.equal((await get(path.replace("/paige/paige-agent-ai/", "/other/project/"))).status, 404);
+  catalog.revoke(firstProject.organizationId, firstProject.projectId, memberId, email);
+  assert.equal((await memberGet(memberEvent)).status, 404);
+  assert.equal(reads.length, before);
 });
