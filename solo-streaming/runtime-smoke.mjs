@@ -68,9 +68,10 @@ async function prepare(workspace) {
 
 function encode(owner, targetId, duration, color) {
   const path = owner.encoder.streamKey.replace(owner.id, targetId);
-  const child = spawn("docker", ["exec", container, "ffmpeg",
-    "-hide_banner", "-loglevel", "error", "-nostdin", "-re", "-f", "lavfi", "-i",
-    "color=" + color + ":s=320x180:r=15", "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+  const child = spawn("docker", ["run", "--rm", "--network", "host", "--cpus", "0.75", "--memory", "384m",
+    "--entrypoint", "ffmpeg", "paige-solo-streaming",
+    "-hide_banner", "-loglevel", "error", "-nostdin", "-filter_threads", "1", "-re", "-f", "lavfi", "-i",
+    "color=" + color + ":s=320x180:r=15", "-re", "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
     "-t", String(duration), "-c:v", "libx264", "-threads", "1", "-preset", "ultrafast",
     "-pix_fmt", "yuv420p", "-g", "30", "-c:a", "aac", "-f", "flv", owner.encoder.server + "/" + path,
   ], quiet);
