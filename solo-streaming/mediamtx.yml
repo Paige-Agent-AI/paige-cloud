@@ -1,0 +1,34 @@
+logLevel: warn
+api: true
+apiAddress: 127.0.0.1:9997
+playback: true
+playbackAddress: 127.0.0.1:9996
+rtsp: false
+rtmp: true
+rtmpEncryption: strict
+rtmpsAddress: :1936
+rtmpServerKey: /tls/tls.key
+rtmpServerCert: /tls/tls.crt
+hls: true
+hlsAddress: 127.0.0.1:8888
+hlsVariant: fmp4
+hlsSegmentDuration: 2s
+hlsSegmentCount: 5
+webrtc: false
+srt: false
+moq: false
+authMethod: http
+authHTTPAddress: http://127.0.0.1:9001/authorize
+authHTTPExclude:
+  - action: api
+  - action: playback
+paths:
+  "~^[a-f0-9]{32}$":
+    source: publisher
+    overridePublisher: false
+    record: true
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S-%f_%z
+    recordFormat: fmp4
+    recordPartDuration: 1s
+    recordSegmentDuration: 1h
+    recordDeleteAfter: 7d
