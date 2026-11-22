@@ -15,7 +15,7 @@ export function httpsUrl(value) {
   return url;
 }
 
-export function createStreamAuthorization({ issuer, resource, jwksUrl, clientId, resolveKey }) {
+export function createStreamAuthorization({ issuer, resource, jwksUrl, clientId, requiredGrant, resolveKey }) {
   httpsUrl(issuer);
   httpsUrl(resource);
   if (!clientId) throw new Error("A registered PAIGE API client is required");
@@ -35,13 +35,31 @@ export function createStreamAuthorization({ issuer, resource, jwksUrl, clientId,
           requiredClaims: ["sub", "client_id", "iat", "exp", "jti", "scope", "paige_workspace_id"],
           maxTokenAge: 300,
         });
-        if (payload.aud !== resource || payload.client_id !== clientId || !payload.sub || !payload.jti ||
+        if (payload.aud !== resource || payload.client_id !== clientId ||
+            (requiredGrant && payload.paige_grant_type !== requiredGrant) ||
+            typeof payload.sub !== "string" || !payload.sub || typeof payload.jti !== "string" || !payload.jti ||
             payload.exp <= payload.iat || payload.exp - payload.iat > 300 || payload.exp <= now() ||
             !isWorkspace(payload.paige_workspace_id) || typeof payload.scope !== "string") return null;
-        return { workspace: payload.paige_workspace_id, scopes: new Set(payload.scope.split(" ")) };
+        return { workspace: payload.paige_workspace_id, scopes: new Set(payload.scope.split(" ")),
+          clientId: payload.client_id, expiresAt: payload.exp };
       } catch {
         return null;
       }
     },
+  };
+}
+
+export function protectedResource(auth, scopes) {
+  const url = new URL(auth.resource);
+  const path = "/.well-known/oauth-protected-resource" + (url.pathname === "/" ? "" : url.pathname);
+  const realm = 'Bearer resource_metadata="' + url.origin + path + '"';
+  return {
+    path,
+    metadata: {
+      resource: auth.resource, authorization_servers: [auth.issuer], scopes_supported: scopes,
+      bearer_methods_supported: ["header"],
+    },
+    challenge: (scope, error) => realm + (error ? ', error="' + error + '"' : "") +
+      (scope ? ', scope="' + scope + '"' : ""),
   };
 }

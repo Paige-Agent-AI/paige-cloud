@@ -1,9 +1,10 @@
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { readScope, hostScope } from "./auth.mjs";
+import { readScope, hostScope, protectedResource } from "./auth.mjs";
 import { eventId } from "./events.mjs";
 import { assetName } from "./media.mjs";
+import { createStreamingMcp } from "./mcp.mjs";
 
 const base = "/v1/stream-events";
 const idempotencyKey = /^[a-zA-Z0-9_-]{16,96}$/;
@@ -43,6 +44,13 @@ function summary(event) {
   return { id: event.id, title: event.title, createdAt: new Date(event.created_at).toISOString(), ended: !!event.closed_at };
 }
 
+async function describe(event, media, online) {
+  const recorded = !online && event.closed_at && await media.recording(event.id);
+  const state = online ? "live" : recorded ? "replay_ready" : event.closed_at ? "ended" :
+    event.publisher ? "awaiting_finish" : "ready";
+  return { ...summary(event), state, ...(recorded ? { duration: recorded.duration } : {}) };
+}
+
 function route(url) {
   if (url === base) return { action: "collection" };
   if (!url.startsWith(base + "/")) return null;
@@ -79,28 +87,30 @@ async function mediaResponse(res, upstream, type) {
   await pipeline(Readable.fromWeb(upstream.body), res);
 }
 
-export function createStreamingApi({ auth, events, media, encoderOrigin, allowWorkspaces }) {
-  const resource = new URL(auth.resource);
-  const resourceMetadataPath = "/.well-known/oauth-protected-resource" + (resource.pathname === "/" ? "" : resource.pathname);
-  const realm = 'Bearer resource_metadata="' + resource.origin + resourceMetadataPath + '"';
+export function createStreamingApi({ auth, events, media, encoderOrigin, allowWorkspaces, mcpAuth }) {
+  const resource = protectedResource(auth, scopes);
+  const mcp = mcpAuth && createStreamingMcp({ auth: mcpAuth, allowWorkspaces, streams: {
+    list: (workspace) => events.list(workspace).map(summary),
+    async get(workspace, id) {
+      const row = events.get(workspace, id);
+      if (!row) return null;
+      return describe(row, media, !!row.publisher && await media.online(id));
+    },
+  } });
 
   return http(async (req, res) => {
     if (req.method === "GET" && req.url === "/healthz") {
       return send(res, (await media.healthy()) ? 200 : 503, { service: "paige-solo-streaming" });
     }
-    if (req.method === "GET" && req.url === resourceMetadataPath) {
-      return send(res, 200, {
-        resource: auth.resource, authorization_servers: [auth.issuer], scopes_supported: scopes,
-        bearer_methods_supported: ["header"],
-      });
-    }
+    if (req.method === "GET" && req.url === resource.path) return send(res, 200, resource.metadata);
+    if (mcp && await mcp(req, res, { send, body })) return;
     const path = route(req.url);
     if (!path || !method(path.action, req.method)) return send(res, 404, { error: "not_found" });
     const principal = await auth.verify(req.headers.authorization);
-    if (!principal) return send(res, 401, { error: "invalid_token" }, { "WWW-Authenticate": realm });
+    if (!principal) return send(res, 401, { error: "invalid_token" }, { "WWW-Authenticate": resource.challenge() });
     const scope = req.method === "POST" ? hostScope : readScope;
     if (!allowWorkspaces.has(principal.workspace) || !principal.scopes.has(scope)) {
-      return send(res, 403, { error: "insufficient_scope" }, { "WWW-Authenticate": realm + ', error="insufficient_scope", scope="' + scope + '"' });
+      return send(res, 403, { error: "insufficient_scope" }, { "WWW-Authenticate": resource.challenge(scope, "insufficient_scope") });
     }
     const workspace = principal.workspace;
     if (path.action === "collection") {
@@ -154,12 +164,11 @@ export function createStreamingApi({ auth, events, media, encoderOrigin, allowWo
       return mediaResponse(res, await media.replay(path.id, req.headers.range), "video/mp4");
     }
     const streamPath = base + "/" + path.id;
-    const recorded = !online && row.closed_at && await media.recording(path.id);
-    const state = online ? "live" : recorded ? "replay_ready" : row.closed_at ? "ended" : row.publisher ? "awaiting_finish" : "ready";
+    const detail = await describe(row, media, online);
     return send(res, 200, {
-      ...summary(row), state,
+      ...detail,
       ...(online ? { live: streamPath + "/hls/index.m3u8" } : {}),
-      ...(recorded ? { replay: streamPath + "/replay.mp4", duration: recorded.duration } : {}),
+      ...(detail.state === "replay_ready" ? { replay: streamPath + "/replay.mp4" } : {}),
     });
   });
 }
