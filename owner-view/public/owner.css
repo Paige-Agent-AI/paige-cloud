@@ -183,7 +183,7 @@ main { min-width: 0; padding: clamp(1.5rem, 3vw, 2.5rem) clamp(1rem, 4vw, 3.25re
   border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted);
   transform: rotate(-45deg); transition: transform 160ms var(--ease);
 }
-details[open] > summary .chevron, [aria-expanded="true"] > .chevron { transform: rotate(45deg); }
+details[open] > summary .chevron { transform: rotate(45deg); }
 
 .workspace-deployments .topbar { min-height: 58px; max-width: none; padding-inline: 1.35rem; }
 .workspace-deployments .workspace-layout { max-width: none; min-height: calc(100vh - 59px); grid-template-columns: 11rem minmax(0, 1fr); }
@@ -256,11 +256,11 @@ details[open] > summary .chevron, [aria-expanded="true"] > .chevron { transform:
 .deployment-row:hover, .deployment-entry:focus-within .deployment-row { background: var(--raised); }
 .deployment-entry:last-child .deployment-row { border-radius: 0 0 11px 11px; }
 .deployment-title {
-  display: flex; align-items: center; gap: .5rem; min-width: 0; min-height: 44px;
-  padding: .25rem .2rem; border: 0; border-radius: 5px; color: var(--fg); background: none;
-  font-size: .84rem; font-weight: 630; text-align: left;
+  display: block; align-content: center; min-width: 0; min-height: 44px;
+  padding: .25rem .2rem; border-radius: 5px; color: var(--fg);
+  font-size: .84rem; font-weight: 630; text-decoration: none;
 }
-.deployment-title:hover, .deployment-title[aria-expanded="true"] { color: var(--gold); background: none; }
+.deployment-title:hover { color: var(--gold); text-decoration: underline; }
 .deployment-truncate { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .deployment-outcome { display: flex; align-items: center; flex-wrap: wrap; gap: .04rem .4rem; }
 .deployment-state { display: inline-flex; align-items: center; gap: .37rem; font-weight: 620; line-height: 1.35; }
@@ -280,8 +280,6 @@ details[open] > summary .chevron, [aria-expanded="true"] > .chevron { transform:
   font-size: .73rem; text-decoration: none; white-space: nowrap;
 }
 .preview-action:hover { border-color: var(--line-hover); background: var(--raised); }
-.deployment-detail { padding: .85rem 1rem 1rem 1.8rem; border-top: 1px solid var(--line); background: var(--inset); }
-.deployment-entry:last-child .deployment-detail { border-radius: 0 0 11px 11px; }
 .deployment-detail-links { display: flex; flex-wrap: wrap; gap: .2rem 1rem; margin-top: .45rem; }
 .deployment-detail-links a { display: inline-flex; align-items: center; min-height: 44px; color: var(--gold); font-size: .82rem; }
 .deployment-empty { padding: 1.35rem 1rem; font-size: .85rem; }
@@ -306,7 +304,6 @@ details[open] > summary .chevron, [aria-expanded="true"] > .chevron { transform:
   .deployment-time { grid-area: time; justify-self: end; }
   .deployment-commit { grid-area: commit; justify-self: end; }
   .deployment-branch { grid-area: branch; padding-left: .1rem; }
-  .deployment-detail { padding-inline: .8rem; }
 }
 
 @media (max-width: 960px) {
@@ -421,3 +418,19 @@ details[open] > summary .chevron, [aria-expanded="true"] > .chevron { transform:
 .project-form button { justify-self: start; margin-top: .25rem; }
 .notice-list { display: grid; gap: .55rem; margin-bottom: 1rem; }
 .notice-list .notice { margin: 0; }
+
+.workspace-page { display: grid; gap: 1rem; }
+.workspace-card {
+  display: grid; gap: .85rem; padding: clamp(.9rem, 2vw, 1.35rem);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+}
+.workspace-card h2 { font-size: 1.06rem; }
+.workspace-card .preview-action { justify-self: start; min-height: 44px; }
+.workspace-feed { display: grid; list-style: none; padding: 0; margin: 0; }
+.workspace-feed li { display: flex; align-items: center; flex-wrap: wrap; gap: .45rem .8rem; padding: .65rem 0; font-size: .86rem; overflow-wrap: anywhere; }
+.workspace-feed li + li { border-top: 1px solid var(--line); }
+.workspace-feed li > a { flex: 1 1 16rem; font-weight: 630; min-width: 0; }
+.workspace-feed time { font-size: .78rem; color: var(--muted); }
+.detail-badges { display: flex; gap: .45rem; align-items: center; }
+.detail-back { justify-self: start; color: var(--gold); font-size: .86rem; }
+.media-player { aspect-ratio: 16 / 9; width: 100%; background: var(--inset); border: 0; border-radius: 9px; }

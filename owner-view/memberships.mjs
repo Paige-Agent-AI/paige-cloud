@@ -197,6 +197,18 @@ export function openProjectCatalog(path) {
         digest BLOB NOT NULL UNIQUE CHECK (length(digest) = 32),
         expires_at INTEGER NOT NULL
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS project_streams (
+        id TEXT PRIMARY KEY NOT NULL,
+        organization_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        live_input TEXT NOT NULL UNIQUE,
+        video_id TEXT,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (organization_id, project_id) REFERENCES projects (organization_id, project_id)
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS project_streams_by_project
+        ON project_streams (organization_id, project_id, created_at DESC);
       CREATE TABLE IF NOT EXISTS customer_organizations (
         organization_id TEXT PRIMARY KEY NOT NULL,
         customer_id TEXT UNIQUE NOT NULL,
@@ -242,9 +254,26 @@ export function openProjectCatalog(path) {
     const removeCustomerInvite = db.prepare("DELETE FROM customer_invitations WHERE email = ?");
     const invitesForProject = db.prepare("DELETE FROM project_invitations WHERE organization_id = ? AND project_id = ?");
     const removeInvite = db.prepare(removeInvitationSql);
+    const projectStreams = db.prepare(`SELECT id, title, created_at AS createdAt FROM project_streams
+      WHERE organization_id = ? AND project_id = ? ORDER BY created_at DESC, id LIMIT 100`);
+    const projectStream = db.prepare(`SELECT id, title, live_input AS liveInput, video_id AS videoId, created_at AS createdAt FROM project_streams
+      WHERE organization_id = ? AND project_id = ? AND id = ?`);
+    const registerStream = db.prepare(`INSERT INTO project_streams (id, organization_id, project_id, title, live_input, created_at)
+      VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (live_input) DO NOTHING`);
     const find = (email, code) => invite.get(email, hashCode(code), Date.now());
     return {
       get: (scope) => byProject.get(scope.organizationId, scope.projectId),
+      streams: (scope) => projectStreams.all(scope.organizationId, scope.projectId),
+      stream: (scope, id) => projectStream.get(scope.organizationId, scope.projectId, id),
+      pinStreamVideo(scope, id, video) {
+        db.prepare(`UPDATE project_streams SET video_id = ? WHERE organization_id = ? AND project_id = ?
+          AND id = ? AND video_id IS NULL`).run(video, scope.organizationId, scope.projectId, id);
+        return projectStream.get(scope.organizationId, scope.projectId, id)?.videoId;
+      },
+      registerStream(scope, title, input) {
+        const id = randomBytes(10).toString("hex");
+        return registerStream.run(id, scope.organizationId, scope.projectId, title, input, Date.now()).changes ? id : undefined;
+      },
       list: (principal) => principal === ownerId ? allProjects.all() : memberProjects.all(principal),
       hasProjectRead: (...keys) => !!access.get(...keys),
       members: (scope) => members.all(scope.organizationId, scope.projectId),
