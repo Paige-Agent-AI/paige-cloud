@@ -834,6 +834,11 @@ test("project Media keeps one signed live video and replay in its account", asyn
   const memberEvent = path.replace(accountPath, memberPath);
   const memberGet = (url) => request(url, { headers: { cookie: memberCookie } });
   assert.match(await (await memberGet(memberEvent)).text(), /<h2>Replay<\/h2>/);
+  const share = path.slice(accountPath.length);
+  const shared = await memberGet(share);
+  assert.equal(shared.status, 303);
+  assert.equal(shared.headers.get("location"), memberEvent);
+  assert.ok(livePage.includes('href="' + share + '">Member watch link'));
   assert.equal((await request(root.replace(accountPath, memberPath), {
     method: "POST", headers: { cookie: memberCookie, origin, "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ title: "Member mutation", input }).toString(),

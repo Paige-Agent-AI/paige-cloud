@@ -79,7 +79,8 @@ export async function mediaPage({ route, form, method, principal, catalog, strea
   const denied = { status: 404 };
   if (!project || project.archived || !allowed()) return denied;
 
-  const path = accountPath + "/projects/" + scope.organizationId + "/" + scope.projectId;
+  const projectPath = "/projects/" + scope.organizationId + "/" + scope.projectId;
+  const path = accountPath + projectPath;
   const home = path + "/media";
   const breadcrumb = '<p class="muted"><a href="' + path + '">' + escape(project.name) + '</a> / <a href="' + home + '">Media</a></p>';
   const page = (title, body, status = 200, playerOrigin) => ({
@@ -149,8 +150,9 @@ export async function mediaPage({ route, form, method, principal, catalog, strea
   const [title, hint] = labels[playback.state] ?? labels.unavailable;
   const frame = playback.url ? '<iframe class="media-player" title="' + escape(event.title) + '" src="' + escape(playback.url) +
     '" referrerpolicy="no-referrer" allow="encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>' : "";
+  const share = '<p><a href="' + projectPath + "/media/" + event.id + '">Member watch link</a> <span class="muted small">Share with signed-in project members.</span></p>';
   return page(event.title, '<section class="project-panel"><h2>' + title + '</h2>' +
     (hint ? '<p class="muted">' + hint + '</p>' : "") + frame +
-    '<p><a href="' + home + "/" + event.id + '">Refresh stream</a></p></section>', 200,
+    '<p><a href="' + home + "/" + event.id + '">Refresh stream</a></p>' + share + '</section>', 200,
     frame ? stream.playerOrigin : undefined);
 }

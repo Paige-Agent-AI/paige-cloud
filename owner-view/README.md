@@ -26,7 +26,7 @@ Domains displays the latest HTTPS probe and reported frontend commit for each PA
 
 For private broadcasts, configure `OWNER_VIEW_STREAM_ACCOUNT_ID`, `OWNER_VIEW_STREAM_TOKEN` (Cloudflare Stream access including token signing), and `OWNER_VIEW_STREAM_PLAYBACK_HOST` (the exact `customer-….cloudflarestream.com` hostname) as console runtime settings. The feature uses the existing project and membership database. Rollback images leave its additive stream records intact.
 
-Create a fresh live input in the connected Cloudflare account with automatic recording and signed playback enabled. Register its input ID and an event title in the project’s Media page. Copy the login-protected PAIGE Cloud event URL from that page and broadcast through OBS using credentials from Cloudflare. Use that URL for both the live video and its replay. Members in a different PAIGE Cloud account open the event through their own Projects → Project media route. PAIGE Cloud never reads ingest keys into the browser. Playback tokens expire at the end of the current console session. Use a new input for each event.
+Create a fresh live input in the connected Cloudflare account with automatic recording and signed playback enabled. Register its input ID and an event title in the project’s Media page. Copy the Member watch link from that page and broadcast through OBS using credentials from Cloudflare. The same watch link serves the live video and its replay. It resolves to each signed-in project member’s account route. PAIGE Cloud never reads ingest keys into the browser. Playback tokens expire at the end of the current console session. Use a new input for each event.
 
 ## Projects and members
 
