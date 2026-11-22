@@ -68,7 +68,7 @@ async function prepare(workspace) {
 
 function encode(owner, targetId, duration, color) {
   const path = owner.encoder.streamKey.replace(owner.id, targetId);
-  const child = spawn("ffmpeg", [
+  const child = spawn("docker", ["exec", container, "ffmpeg",
     "-hide_banner", "-loglevel", "error", "-nostdin", "-re", "-f", "lavfi", "-i",
     "color=" + color + ":s=320x180:r=15", "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
     "-t", String(duration), "-c:v", "libx264", "-threads", "1", "-preset", "ultrafast",
@@ -144,7 +144,7 @@ try {
     await expect(api(detail.replay, other.token), 404, "cross-workspace replay");
     await expect(api(detail.replay), 401, "anonymous replay");
   }
-  console.log("Both recordings became seekable private replays; crossed credentials and media reads were denied.");
+  console.log("Both private replays supported byte ranges; crossed credentials and media reads were denied.");
 } finally {
   for (const child of publisherProcesses) child.kill();
   if (container) execFileSync("docker", ["rm", "-f", "-v", container], quiet);

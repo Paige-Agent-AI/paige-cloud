@@ -29,6 +29,5 @@ jobs:
           node --test solo-streaming/server.test.mjs
       - name: Exercise real RTMPS, HLS and replay with two workspaces
         run: |
-          docker build -t paige-solo-streaming ./solo-streaming
-          ffmpeg -version | head -n 1
+          docker build --target verify -t paige-solo-streaming ./solo-streaming
           node solo-streaming/runtime-smoke.mjs
