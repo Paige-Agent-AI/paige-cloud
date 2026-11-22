@@ -1,0 +1,40 @@
+logLevel: warn
+api: true
+apiAddress: 127.0.0.1:9997
+playback: true
+playbackAddress: 127.0.0.1:9996
+rtsp: true
+rtspAddress: 127.0.0.1:8554
+rtspTransports: [tcp]
+rtmp: false
+hls: true
+hlsAddress: 127.0.0.1:8888
+hlsVariant: fmp4
+hlsAlwaysRemux: true
+hlsSegmentDuration: 2s
+hlsSegmentCount: 5
+webrtc: false
+srt: false
+moq: false
+authMethod: internal
+authInternalUsers:
+- user: any
+  ips: ["127.0.0.1"]
+  permissions:
+  - action: publish
+    path: pilot
+  - action: read
+    path: pilot
+  - action: playback
+    path: pilot
+  - action: api
+paths:
+  pilot:
+    source: publisher
+    overridePublisher: false
+    record: true
+    recordPath: /recordings/pilot/%Y-%m-%d_%H-%M-%S-%f_%z
+    recordFormat: fmp4
+    recordPartDuration: 1s
+    recordSegmentDuration: 2m
+    recordDeleteAfter: 7d

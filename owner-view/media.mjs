@@ -71,7 +71,7 @@ const labels = {
   replay: ["Replay", ""],
 };
 
-export async function mediaPage({ route, form, method, principal, catalog, stream, showDeployments,
+export async function mediaPage({ route, form, method, principal, catalog, stream, mediaPilot, showDeployments,
   sessionExpiresAt, accountPath, sessionCurrent }) {
   const scope = { organizationId: route.organizationId, projectId: route.projectId };
   const project = catalog.get(scope);
@@ -118,14 +118,18 @@ export async function mediaPage({ route, form, method, principal, catalog, strea
       new Date(event.createdAt).toISOString().slice(0, 10) + '</time></li>').join("");
     const list = '<section class="project-panel"><h2>Livestreams and replays</h2>' +
       (rows ? '<ul class="project-list">' + rows + '</ul>' : '<p class="muted">No broadcasts are registered for this project.</p>') + '</section>';
+    const pilot = mediaPilot && scope.organizationId === "paige" && scope.projectId === "paige-agent-ai"
+      ? '<section class="project-panel"><h2>Private streaming pilot</h2><p><a href="' + home +
+        '/pilot">Open pilot watch page</a></p></section>' : "";
     const setup = principal === ownerId && stream ? '<section class="project-panel"><h2>Add a livestream</h2>' +
       '<p class="muted">Create a fresh Cloudflare Stream live input for this event. Enable automatic recording and signed playback, then paste its input ID.</p>' +
       '<form method="post" action="' + home + '" class="project-form"><label for="stream-title">Event title</label>' +
       '<input id="stream-title" name="title" maxlength="80" required><label for="stream-input">Live input ID</label>' +
       '<input id="stream-input" name="input" maxlength="32" autocomplete="off" spellcheck="false" required>' +
       '<button class="primary" type="submit">Register livestream</button></form></section>'
-      : principal === ownerId ? '<p class="notice">Connect a Cloudflare Stream account to register a livestream.</p>' : "";
-    return page("Media", list + setup);
+      : principal === ownerId && !pilot ? '<p class="notice">Connect a Cloudflare Stream account to register a livestream.</p>' : "";
+    return page("Media", pilot + (events.length || !pilot ? list : "") + setup);
+
   }
 
   const event = catalog.stream(scope, route.streamId);
