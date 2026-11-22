@@ -8,6 +8,13 @@ const recordingName = /^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}-[0
 const api = "http://127.0.0.1:9997";
 const playback = "http://127.0.0.1:9996";
 
+export function encoderOrigin(value) {
+  const url = new URL(value);
+  if (url.protocol !== "rtmps:" || !url.hostname || url.username || url.password ||
+      !["", "/"].includes(url.pathname) || url.search || url.hash) throw new Error("A secure RTMPS origin is required");
+  return "rtmps://" + url.host;
+}
+
 export async function streamRecording(path, range) {
   const { size } = await stat(path);
   if (!size) return null;

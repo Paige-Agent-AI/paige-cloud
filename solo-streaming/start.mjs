@@ -2,12 +2,10 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { isWorkspace, createStreamAuthorization } from "./auth.mjs";
 import { openStreamEvents } from "./events.mjs";
-import { createMediaReader } from "./media.mjs";
+import { createMediaReader, encoderOrigin } from "./media.mjs";
 import { createEncoderAuth, createStreamingApi } from "./server.mjs";
 
-const encoder = new URL(process.env.PAIGE_SOLO_ENCODER_ORIGIN);
-if (encoder.protocol !== "rtmps:" || encoder.username || encoder.password || encoder.pathname !== "/" ||
-    encoder.search || encoder.hash) throw new Error("A secure RTMPS origin is required");
+const encoder = encoderOrigin(process.env.PAIGE_SOLO_ENCODER_ORIGIN);
 const allowWorkspaces = new Set((process.env.PAIGE_SOLO_WORKSPACES ?? "").split(","));
 if (allowWorkspaces.size > 2 || ![...allowWorkspaces].every(isWorkspace)) throw new Error("Configure up to two pilot workspaces");
 const auth = createStreamAuthorization({
@@ -24,8 +22,7 @@ const mtx = spawn("mediamtx", ["mediamtx.yml"], {
   stdio: ["ignore", "inherit", "inherit"],
 });
 const media = createMediaReader(hlsKey);
-const api = createStreamingApi({ auth, events, media, encoderOrigin:
-  "rtmps://" + encoder.host, allowWorkspaces }).listen(8080, "0.0.0.0");
+const api = createStreamingApi({ auth, events, media, encoderOrigin: encoder, allowWorkspaces }).listen(8080, "0.0.0.0");
 mtx.once("error", () => process.exit(1));
 mtx.once("exit", () => process.exit(1));
 process.on("SIGTERM", () => {

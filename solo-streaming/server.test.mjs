@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { generateKeyPair, SignJWT } from "jose";
 import { createStreamAuthorization } from "./auth.mjs";
 import { openStreamEvents } from "./events.mjs";
-import { streamRecording } from "./media.mjs";
+import { encoderOrigin, streamRecording } from "./media.mjs";
 import { createStreamingApi, createEncoderAuth } from "./server.mjs";
 
 async function listen(t, server) {
@@ -153,4 +153,11 @@ test("two authorized Solo contexts cannot cross APIs, ingest, live media or repl
     assert.equal(restarted.get("solo-B", A.id), undefined);
     assert.equal(restarted.admit(A.id, conn1, new URLSearchParams(encoderA.streamKey.split("?")[1]).get("pass")), undefined);
   } finally { restarted.dispose(); }
+});
+test("the encoder must use a dedicated secure origin", () => {
+  assert.equal(encoderOrigin("rtmps://127.0.0.1:1936"), "rtmps://127.0.0.1:1936");
+  assert.equal(encoderOrigin("rtmps://encoder.example.test/"), "rtmps://encoder.example.test");
+  for (const value of ["rtmp://encoder.example.test", "rtmps:opaque", "rtmps://host/some-path", "rtmps://host?secret"]) {
+    assert.throws(() => encoderOrigin(value));
+  }
 });
