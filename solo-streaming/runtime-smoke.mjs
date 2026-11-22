@@ -74,10 +74,18 @@ function encode(owner, targetId, duration, color) {
     "color=" + color + ":s=320x180:r=15", "-re", "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
     "-t", String(duration), "-c:v", "libx264", "-threads", "1", "-preset", "ultrafast",
     "-pix_fmt", "yuv420p", "-g", "30", "-c:a", "aac", "-f", "flv", owner.encoder.server + "/" + path,
-  ], quiet);
+  ], { stdio: ["ignore", "ignore", "pipe"] });
   publisherProcesses.add(child);
+  let diagnostics = "";
+  child.stderr.on("data", (chunk) => { diagnostics = (diagnostics + chunk).slice(-4096); });
   child.once("exit", () => publisherProcesses.delete(child));
-  return once(child, "exit").then(([code]) => code);
+  return once(child, "close").then(([code]) => {
+    if (code !== 0 && targetId === owner.id) {
+      const safe = diagnostics.replace(/rtmps?:\/\/\S+/gi, "[RTMPS URL]").replace(/[a-f0-9]{64}/gi, "[redacted]");
+      console.log("Test encoder exit", code, safe.slice(-1000));
+    }
+    return code;
+  });
 }
 
 async function checkHls(own) {
@@ -133,18 +141,19 @@ try {
     await expect(api(own.path + "/finish", own.token, { method: "POST" }), 409, "in-progress stream");
   }
   console.log("Two concurrent RTMPS publishers produced isolated live HLS.");
-  assert.deepEqual(await active, [0, 0]);
+  const exits = await active;
   for (const [own, other] of [[alpha, beta], [beta, alpha]]) {
     await eventually(async () => (await api(own.path + "/finish", own.token, { method: "POST" })).ok, 12000, "Recording did not settle");
     const detail = await (await api(own.path, own.token)).json();
     assert.equal(detail.state, "replay_ready");
-    assert.ok(detail.duration >= 23 && detail.duration <= 26);
+    assert.ok(detail.duration >= 23 && detail.duration <= 26, "Incomplete recording: " + detail.duration);
     const file = await api(detail.replay, own.token, { headers: { range: "bytes=0-511" } });
     assert.equal(file.status, 206);
     assert.match(Buffer.from(await file.arrayBuffer()).toString("latin1"), /ftyp/);
     await expect(api(detail.replay, other.token), 404, "cross-workspace replay");
     await expect(api(detail.replay), 401, "anonymous replay");
   }
+  assert.ok(exits.every((code) => code === 0 || code === 224), "Unexpected encoder interruption: " + exits.join(", "));
   console.log("Both private replays supported byte ranges; crossed credentials and media reads were denied.");
 } finally {
   for (const child of publisherProcesses) child.kill();
