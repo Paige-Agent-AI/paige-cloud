@@ -44,7 +44,7 @@ export function createStreamProvider({ account, token, host }, request = fetch) 
       return (await videos(input)).filter((video) => uid.test(video?.uid ?? "") && Date.parse(video.created) >= registeredAt - 1000)
         .sort((a, b) => Date.parse(a.created) - Date.parse(b.created) || a.uid.localeCompare(b.uid))[0]?.uid;
     },
-    async watch(id, remaining) {
+    async watch(id, sessionExpiresAt) {
       if (!uid.test(id)) throw new Error("Invalid Stream video ID.");
       const video = await read("/" + id);
       if (video?.uid !== id || video.requireSignedURLs !== true) return { state: "unavailable" };
@@ -52,7 +52,8 @@ export function createStreamProvider({ account, token, host }, request = fetch) 
         : video.status?.state === "ready" && video.readyToStream === true ? "replay"
           : video.status?.state === "error" ? "unavailable" : "processing";
       if (state !== "live" && state !== "replay") return { state };
-      const exp = Math.floor((Date.now() + remaining) / 1000);
+      const exp = Math.floor(sessionExpiresAt / 1000);
+      if (!Number.isSafeInteger(exp) || exp <= Math.floor(Date.now() / 1000)) return { state: "unavailable" };
       const signed = (await read("/" + id + "/token", { exp }))?.token;
       if (typeof signed !== "string" || signed.length > 4096 || !signedToken.test(signed)) {
         throw new Error("Stream playback token could not be verified.");
@@ -71,7 +72,7 @@ const labels = {
 };
 
 export async function mediaPage({ route, form, method, principal, catalog, stream, showDeployments,
-  remaining, accountPath, sessionCurrent }) {
+  sessionExpiresAt, accountPath, sessionCurrent }) {
   const scope = { organizationId: route.organizationId, projectId: route.projectId };
   const project = catalog.get(scope);
   const allowed = () => sessionCurrent() && catalog.hasProjectRead(principal, scope.organizationId, scope.projectId);
@@ -82,7 +83,8 @@ export async function mediaPage({ route, form, method, principal, catalog, strea
   const home = path + "/media";
   const breadcrumb = '<p class="muted"><a href="' + path + '">' + escape(project.name) + '</a> / <a href="' + home + '">Media</a></p>';
   const page = (title, body, status = 200, playerOrigin) => ({
-    status, playerOrigin, html: shell(title, breadcrumb + body, showDeployments, remaining, accountPath, "media"),
+    status, playerOrigin, html: shell(title, breadcrumb + body, showDeployments,
+      Math.max(0, sessionExpiresAt - Date.now()), accountPath, "media"),
   });
   const error = (message, status = 400) => page("Media", '<p class="notice bad" role="alert">' + message +
     '</p><p><a href="' + home + '">Back to Media</a></p>', status);
@@ -137,7 +139,7 @@ export async function mediaPage({ route, form, method, principal, catalog, strea
         if (observed) id = catalog.pinStreamVideo(scope, event.id, observed);
       }
       if (!allowed()) return denied;
-      playback = id ? await stream.watch(id, remaining) : { state: "waiting" };
+      playback = id ? await stream.watch(id, sessionExpiresAt) : { state: "waiting" };
     } catch {
       playback = { state: "unavailable" };
     }

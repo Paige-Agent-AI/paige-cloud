@@ -231,7 +231,7 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
         origin, catalog, accounts, showDeployments: !!resolveRead(session.principalId, firstProject),
         remaining: Math.max(0, session.expires - Date.now()), accountPath };
       const sessionCurrent = () => sessions.get(id) === session && session.expires > Date.now();
-      const result = projectRoute.media ? await mediaPage({ ...params, stream, sessionCurrent }) : projectPage(params);
+      const result = projectRoute.media ? await mediaPage({ ...params, stream, sessionCurrent, sessionExpiresAt: session.expires }) : projectPage(params);
       if (projectRoute.media && !sessionCurrent()) {
         send(response, 401, text, "Sign in required");
         return;
