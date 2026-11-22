@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 
 export const assetName = /^[a-zA-Z0-9_-]{1,120}\.(?:m3u8|mp4|ts)$/;
-const recordingName = /^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{6}_[+-][0-9]{4}\.mp4$/;
+const recordingName = /^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{6}_(?:Z|[+-][0-9]{4})\.mp4$/;
 const api = "http://127.0.0.1:9997";
 const playback = "http://127.0.0.1:9996";
 
