@@ -33,7 +33,7 @@ paths:
     source: publisher
     overridePublisher: false
     record: true
-    recordPath: /recordings/pilot/%Y-%m-%d_%H-%M-%S-%f_%z
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S-%f_%z
     recordFormat: fmp4
     recordPartDuration: 1s
     recordSegmentDuration: 2m
