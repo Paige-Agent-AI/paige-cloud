@@ -12,6 +12,7 @@ import { initializeMembershipStore, openMembershipStore, openProjectCatalog, upd
 import { createProjectAccess, firstProject, ownerId } from "./projects.mjs";
 import { createOwnerServer } from "./server.mjs";
 import { createStreamProvider } from "./media.mjs";
+import { createMediaPilot, pilotPath } from "./media-pilot.mjs";
 
 const origin = "https://owner.example.test";
 const alias = "https://cloud.example.test";
@@ -168,7 +169,7 @@ test("backfills account numbers for existing credential records and preserves th
   }
 });
 
-async function startServer(t, projectAccess, principalId = ownerId, realAccounts, catalog, stream) {
+async function startServer(t, projectAccess, principalId = ownerId, realAccounts, catalog, stream, mediaPilot) {
   const password = randomBytes(32).toString("base64url");
   const key = randomBytes(32).toString("base64url");
   const server = createOwnerServer({
@@ -177,6 +178,7 @@ async function startServer(t, projectAccess, principalId = ownerId, realAccounts
     projectAccess,
     catalog,
     stream,
+    mediaPilot,
     accounts: realAccounts ?? {
       hasOwner: () => true,
       isOwnerEmail: (email) => principalId === ownerId && email === ownerEmail,
@@ -849,4 +851,93 @@ test("project Media keeps one signed live video and replay in its account", asyn
   catalog.revoke(firstProject.organizationId, firstProject.projectId, memberId, email);
   assert.equal((await memberGet(memberEvent)).status, 404);
   assert.equal(reads.length, before);
+});
+
+test("self-hosted pilot authorizes every request against the current project grant", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "paige-pilot-"));
+  const membership = join(dir, "memberships.sqlite");
+  const account = join(dir, "accounts.sqlite");
+  initializeMembershipStore(membership);
+  initializeAccounts(account);
+  const catalog = openProjectCatalog(membership);
+  const accounts = openAccounts(account, membership);
+  t.after(() => { accounts.close(); catalog.close(); rmSync(dir, { recursive: true }); });
+
+  const calls = [];
+  const key = "a".repeat(64);
+  const pilot = createMediaPilot({ origin: "https://media.example.test", key }, async (url, options) => {
+    assert.equal(new URL(url).origin, "https://media.example.test");
+    assert.equal(options.headers.Authorization, "Bearer " + key);
+    assert.equal(options.redirect, "error");
+    const path = new URL(url).pathname;
+    calls.push(path);
+    if (path === "/state") return Response.json({ state: "live", private: key });
+    if (path === "/start") {
+      assert.equal(options.method, "POST");
+      return new Response("", { status: 202 });
+    }
+    if (path === "/hls/index.m3u8") return new Response("#EXTM3U\ninit.mp4", {
+      headers: { "content-type": "application/vnd.apple.mpegurl" },
+    });
+    assert.equal(path, "/replay.mp4");
+    assert.equal(options.headers.Range, "bytes=0-3");
+    return new Response("ftyp", {
+      status: 206, headers: { "content-type": "video/mp4", "content-range": "bytes 0-3/50", "content-length": "4" },
+    });
+  });
+  const password = "fixture pilot secure password";
+  await accounts.create(ownerEmail, password, { owner: true });
+  const access = createProjectAccess([{ ...firstProject, readStatus: async () => ({}), environments: {} }], catalog.hasProjectRead);
+  const { request, login } = await startServer(t, access, ownerId, accounts, catalog, undefined, pilot);
+  const signedIn = await login(password);
+  const ownerRoot = signedIn.headers.get("location").replace(/\/overview$/, "");
+  const ownerCookie = signedIn.headers.get("set-cookie").split(";")[0];
+  const get = (path, cookie, range) => request(path, { headers: { cookie, ...(range ? { range } : {}) } });
+  const post = (path, cookie, target = origin) => request(path, { method: "POST", headers: { cookie, origin: target } });
+  const ownerWatch = ownerRoot + pilotPath;
+  assert.equal((await request(ownerWatch + "/hls/index.m3u8")).status, 401);
+  assert.equal((await request(ownerWatch + "/replay.mp4")).status, 401);
+  assert.equal((await request(ownerWatch)).headers.get("location"), "/sign-in");
+  assert.equal((await post(ownerWatch + "/start", ownerCookie, "https://other.example")).status, 403);
+  assert.deepEqual(calls, []);
+
+  assert.match(await (await get(ownerWatch.slice(0, -6), ownerCookie)).text(), /Open pilot watch page/);
+  const watch = await get(ownerWatch, ownerCookie);
+  const page = await watch.text();
+  assert.match(page, /Start 75-second test broadcast/);
+  assert.ok(!page.includes(key));
+  assert.match(watch.headers.get("content-security-policy"), /media-src 'self' blob:/);
+  assert.equal((await post(ownerWatch + "/start", ownerCookie)).status, 303);
+  assert.deepEqual(await (await get(ownerWatch + "/state", ownerCookie)).json(), { state: "live" });
+  assert.equal((await get(ownerWatch + "/hls/index.m3u8", ownerCookie)).status, 200);
+  const partial = await get(ownerWatch + "/replay.mp4", ownerCookie, "bytes=0-3");
+  assert.equal(partial.status, 206);
+  assert.equal(partial.headers.get("content-range"), "bytes 0-3/50");
+  assert.match(partial.headers.get("cache-control"), /no-store/);
+  assert.equal(await partial.text(), "ftyp");
+
+  const email = "pilot-member@example.test";
+  const { organizationId, projectId } = firstProject;
+  const invite = catalog.issue(organizationId, projectId, email);
+  assert.ok(await accounts.create(email, password, { code: invite, allowProjectSignup: true }));
+  const memberId = await accounts.verify(email, password);
+  assert.ok(catalog.accept(memberId, email, invite));
+  const member = await request("/session", {
+    method: "POST", headers: { origin, "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ email, password }).toString(),
+  });
+  assert.equal(member.status, 303);
+  const memberWatch = member.headers.get("location").replace(/\/overview$/, "") + pilotPath;
+  const memberCookie = member.headers.get("set-cookie").split(";")[0];
+  assert.equal((await get(pilotPath, memberCookie)).headers.get("location"), memberWatch);
+  assert.doesNotMatch(await (await get(memberWatch, memberCookie)).text(), /Start 75-second test broadcast/);
+  assert.equal((await get(memberWatch + "/state", memberCookie)).status, 200);
+  const before = calls.length;
+  assert.equal((await post(memberWatch + "/start", memberCookie)).status, 404);
+  assert.equal((await get(ownerWatch + "/state", memberCookie)).status, 404);
+  assert.equal((await get(memberWatch + "/hls/%252e%252e/state", memberCookie)).status, 404);
+  catalog.revoke(organizationId, projectId, memberId, email);
+  assert.equal((await get(memberWatch + "/hls/index.m3u8", memberCookie)).status, 404);
+  assert.equal((await get(memberWatch + "/replay.mp4", memberCookie)).status, 404);
+  assert.equal(calls.length, before);
 });

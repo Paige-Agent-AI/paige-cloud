@@ -6,6 +6,7 @@ import { accountPath, normalizeEmail, openAccounts, validCode, validPassword } f
 import { openProjectCatalog } from "./memberships.mjs";
 import { matchProjectPage, projectPage } from "./project-console.mjs";
 import { createStreamProvider, mediaPage } from "./media.mjs";
+import { createMediaPilot, handleMediaPilot, matchPilotPage } from "./media-pilot.mjs";
 import { createPaigeProjectAccess, firstProject, parseProjectStatusPath } from "./projects.mjs";
 
 const readAsset = (file) => readFileSync(new URL("./public/" + file, import.meta.url));
@@ -74,7 +75,7 @@ function throttle(maxAttempts, maxPerEmail, maxConcurrent) {
 }
 
 export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
-  passwordHash, accounts, catalog, stream, projectAccess: resolveRead }) {
+  passwordHash, accounts, catalog, stream, mediaPilot, hlsPlayer, projectAccess: resolveRead }) {
   const allowedOrigins = new Map();
   for (const value of [origin, ...(aliasOrigin ? [aliasOrigin] : []), ...additionalOrigins]) {
     const url = new URL(value);
@@ -91,6 +92,7 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
   const owner = readAsset("owner.html").toString("utf8");
   const css = readAsset("owner.css");
   const javascript = readAsset("owner.js");
+  const pilotScript = readAsset("pilot-player.js");
   const projectSession = readAsset("project-session.js");
   const sessions = new Map();
   const limitSignIn = throttle(40, 8, 2);
@@ -193,24 +195,36 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
         return;
       }
       path = match[2] ?? "/";
-      if (!(isDashboardPage(path) || matchProjectPage(path) || parseProjectStatusPath(path))) {
+      if (!(isDashboardPage(path) || matchProjectPage(path) || matchPilotPage(path) || parseProjectStatusPath(path))) {
         send(response, 404, text, "Not found");
         return;
       }
       if (!authorized) {
-        const signIn = method === "GET" && !parseProjectStatusPath(path);
+        const signIn = method === "GET" && !parseProjectStatusPath(path) && (matchPilotPage(path)?.suffix ?? "") === "";
         send(response, signIn ? 303 : 401, text, "Sign in required", signIn ? { Location: "/sign-in" } : {});
         return;
       }
     }
     const projectRoute = catalog && matchProjectPage(path);
-    if (accountPath && !numbered && (isDashboardPage(path) || projectRoute)) {
+    const pilotRoute = catalog && matchPilotPage(path);
+    if (accountPath && !numbered && (isDashboardPage(path) || projectRoute || pilotRoute)) {
       if (method !== "GET") {
         send(response, 404, text, "Not found");
         return;
       }
       const target = path === "/" ? (resolveRead(session.principalId, firstProject) ? "/overview" : "/projects") : path;
       send(response, 303, text, "", { Location: accountPath + target });
+      return;
+    }
+    if (pilotRoute) {
+      if (!authorized) {
+        const signIn = method === "GET" && pilotRoute.suffix === "";
+        send(response, signIn ? 303 : 401, text, "Sign in required", signIn ? { Location: "/sign-in" } : {});
+        return;
+      }
+      const sessionCurrent = () => sessions.get(id) === session && session.expires > Date.now();
+      await handleMediaPilot({ pilot: mediaPilot, route: pilotRoute, request, response, send, accountPath, requestOrigin,
+        principal: session.principalId, catalog, sessionCurrent, sessionExpiresAt: session.expires, headers });
       return;
     }
     if (projectRoute) {
@@ -231,7 +245,7 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
         origin, catalog, accounts, showDeployments: !!resolveRead(session.principalId, firstProject),
         remaining: Math.max(0, session.expires - Date.now()), accountPath };
       const sessionCurrent = () => sessions.get(id) === session && session.expires > Date.now();
-      const result = projectRoute.media ? await mediaPage({ ...params, stream, sessionCurrent, sessionExpiresAt: session.expires }) : projectPage(params);
+      const result = projectRoute.media ? await mediaPage({ ...params, stream, mediaPilot: !!mediaPilot, sessionCurrent, sessionExpiresAt: session.expires }) : projectPage(params);
       if (projectRoute.media && !sessionCurrent()) {
         send(response, 401, text, "Sign in required");
         return;
@@ -335,6 +349,8 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
       send(response, 200, html, authPage(path, 200));
     } else if (path === "/assets/owner.css") {
       send(response, 200, "text/css; charset=utf-8", css);
+    } else if (authorized && mediaPilot && (path === "/assets/pilot-player.js" || path === "/assets/hls.min.js")) {
+      send(response, 200, "text/javascript; charset=utf-8", path === "/assets/pilot-player.js" ? pilotScript : hlsPlayer);
     } else if (path === "/assets/project-session.js" && catalog && authorized) {
       send(response, 200, "text/javascript; charset=utf-8", projectSession);
     } else if (scope) {
@@ -392,6 +408,9 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
     passwordHash: process.env.OWNER_VIEW_PASSWORD_SHA256,
     accounts,
     catalog: store,
+    mediaPilot: createMediaPilot({ origin: process.env.OWNER_VIEW_MEDIA_PILOT_ORIGIN, key: process.env.OWNER_VIEW_MEDIA_PILOT_KEY }),
+    hlsPlayer: process.env.OWNER_VIEW_MEDIA_PILOT_ORIGIN &&
+      readFileSync(new URL("./node_modules/hls.js/dist/hls.min.js", import.meta.url)),
     stream: createStreamProvider({
       account: process.env.OWNER_VIEW_STREAM_ACCOUNT_ID,
       token: process.env.OWNER_VIEW_STREAM_TOKEN,
