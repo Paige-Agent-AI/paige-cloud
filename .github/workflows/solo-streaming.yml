@@ -26,7 +26,7 @@ jobs:
         run: |
           node --version
           npm --prefix solo-streaming ci --ignore-scripts --no-audit --no-fund
-          node --test solo-streaming/server.test.mjs
+          node --test 'solo-streaming/*.test.mjs'
       - name: Exercise real RTMPS, HLS and replay with two workspaces
         run: |
           docker build --target verify -t paige-solo-streaming ./solo-streaming

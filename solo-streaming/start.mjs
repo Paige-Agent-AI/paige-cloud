@@ -14,6 +14,18 @@ const auth = createStreamAuthorization({
   jwksUrl: process.env.PAIGE_SOLO_OAUTH_JWKS_URL,
   clientId: process.env.PAIGE_SOLO_OAUTH_CLIENT_ID,
 });
+const mcpResource = process.env.PAIGE_SOLO_MCP_RESOURCE;
+const mcpClient = process.env.PAIGE_SOLO_MCP_CLIENT_ID;
+if (!!mcpResource !== !!mcpClient || (mcpResource && (mcpResource === auth.resource || mcpClient === process.env.PAIGE_SOLO_OAUTH_CLIENT_ID))) {
+  throw new Error("Configure a separate OAuth resource and client for MCP");
+}
+const mcpAuth = mcpResource && createStreamAuthorization({
+  issuer: process.env.PAIGE_SOLO_OAUTH_ISSUER,
+  jwksUrl: process.env.PAIGE_SOLO_OAUTH_JWKS_URL,
+  resource: mcpResource,
+  clientId: mcpClient,
+  requiredGrant: "authorization_code",
+});
 const events = openStreamEvents("/recordings/solo-events.sqlite");
 const local = createEncoderAuth({ events }).listen(9001, "127.0.0.1");
 const hlsKey = randomBytes(32).toString("hex");
@@ -22,7 +34,7 @@ const mtx = spawn("mediamtx", ["mediamtx.yml"], {
   stdio: ["ignore", "inherit", "inherit"],
 });
 const media = createMediaReader(hlsKey);
-const api = createStreamingApi({ auth, events, media, encoderOrigin: encoder, allowWorkspaces }).listen(8080, "0.0.0.0");
+const api = createStreamingApi({ auth, events, media, encoderOrigin: encoder, allowWorkspaces, mcpAuth }).listen(8080, "0.0.0.0");
 mtx.once("error", () => process.exit(1));
 mtx.once("exit", () => process.exit(1));
 process.on("SIGTERM", () => {

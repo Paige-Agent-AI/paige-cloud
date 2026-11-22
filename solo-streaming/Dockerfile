@@ -5,7 +5,7 @@ RUN apk add --no-cache curl tini && mkdir /recordings && chown node:node /record
 COPY --from=mediamtx /mediamtx /usr/local/bin/mediamtx
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
-COPY auth.mjs events.mjs media.mjs server.mjs start.mjs mediamtx.yml ./
+COPY auth.mjs events.mjs media.mjs mcp.mjs server.mjs start.mjs mediamtx.yml ./
 USER node
 EXPOSE 8080 1936
 ENTRYPOINT ["/sbin/tini", "-g", "--"]
