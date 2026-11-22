@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { timingSafeEqual } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { constants, createReadStream, createWriteStream } from "node:fs";
 import { access, open, rename, stat, unlink } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -14,11 +14,21 @@ const auth = Buffer.from("Bearer " + sharedKey);
 const replayFile = "/recordings/replay.mp4";
 const attemptFile = "/recordings/publish.started";
 const hlsPath = /^\/hls\/([A-Za-z0-9_-]{1,120}\.(?:m3u8|mp4|m4s|ts))$/;
-const media = spawn("mediamtx", ["mediamtx.yml"], { stdio: ["ignore", "inherit", "inherit"] });
+const hlsKey = randomBytes(32).toString("hex");
+const media = spawn("mediamtx", ["mediamtx.yml"], {
+  env: { ...process.env, MTX_HLSCDNSECRET: hlsKey },
+  stdio: ["ignore", "inherit", "inherit"],
+});
 let publisher;
 let finalizing = false;
 let failed = false;
 const request = (url, timeout = 3500) => fetch(url, { redirect: "error", signal: AbortSignal.timeout(timeout) });
+// MediaMTX's private gateway mode keeps its session cookies and redirects out of PAIGE Cloud.
+const readHls = (file) => fetch("http://127.0.0.1:8888/pilot/" + file, {
+  headers: { Authorization: "Bearer " + hlsKey },
+  redirect: "error",
+  signal: AbortSignal.timeout(6500),
+});
 
 const has = async (path) => stat(path).then((entry) => entry.isFile() && entry.size > 0, () => false);
 
@@ -66,12 +76,9 @@ async function state() {
   if (await has(replayFile)) return "replay";
   if (publisher) {
     try {
-      const r = await request("http://127.0.0.1:9997/v3/paths/get/pilot");
-      if (r.ok && (await r.json()).ready === true) {
-        const manifest = await request("http://127.0.0.1:8888/pilot/index.m3u8");
-        await manifest.body?.cancel();
-        if (manifest.ok) return "live";
-      }
+      const manifest = await readHls("index.m3u8");
+      await manifest.body?.cancel();
+      if (manifest.ok) return "live";
     } catch {
       return "starting";
     }
@@ -148,7 +155,7 @@ async function handle(incoming, response) {
   if (incoming.url === "/replay.mp4") { await replay(incoming, response); return; }
   const hls = hlsPath.exec(incoming.url);
   if (!hls) { send(response, 404); return; }
-  const r = await request("http://127.0.0.1:8888/pilot/" + hls[1], 6500);
+  const r = await readHls(hls[1]);
   if (!r.ok || !r.body) { send(response, r.ok ? 503 : r.status); return; }
   response.writeHead(200, {
     "Content-Type": hls[1].endsWith(".m3u8") ? "application/vnd.apple.mpegurl"
