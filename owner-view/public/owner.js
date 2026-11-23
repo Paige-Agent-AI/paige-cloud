@@ -54,25 +54,18 @@ function date(value) {
   return Number.isFinite(milliseconds) ? new Date(milliseconds) : null;
 }
 
-function formatTime(node, timestamp) {
-  const compact = node.dataset.timeFormat === "compact";
-  node.textContent = (compact ? activityDateFormat : dateFormat).format(timestamp);
-  if (compact) {
-    const timestampText = dateFormat.format(timestamp);
-    const label = node.dataset.timeLabel;
-    node.title = label ? label + " " + timestampText : timestampText;
-    if (label) node.setAttribute("aria-label", node.title);
-  }
-}
-
 function time(value, format = "full", label) {
   const timestamp = date(value);
   if (!timestamp) return document.createTextNode("Time unavailable");
   const node = document.createElement("time");
   node.dateTime = timestamp.toISOString();
-  node.dataset.timeFormat = format;
-  if (label) node.dataset.timeLabel = label;
-  formatTime(node, timestamp);
+  const compact = format === "compact";
+  node.textContent = (compact ? activityDateFormat : dateFormat).format(timestamp);
+  if (compact) {
+    const timestampText = dateFormat.format(timestamp);
+    node.title = label ? label + " " + timestampText : timestampText;
+    if (label) node.setAttribute("aria-label", node.title);
+  }
   return node;
 }
 
@@ -85,9 +78,6 @@ function applyTimeZone() {
   dateFormat = new Intl.DateTimeFormat(undefined, {
     ...fields, year: "numeric", second: "2-digit", timeZoneName: "short",
   });
-  for (const node of document.querySelectorAll("time[data-time-format]")) {
-    formatTime(node, new Date(node.dateTime));
-  }
 }
 
 function initTimeZone() {
@@ -121,14 +111,14 @@ function initTimeZone() {
   if (timeZoneSelect.selectedIndex === -1) timeZoneSelect.value = "";
   applyTimeZone();
   timeZoneSelect.addEventListener("change", () => {
-    applyTimeZone();
+    const hint = get("time-zone-hint");
     try {
       localStorage.setItem(timeZoneKey, timeZoneSelect.value);
+      hint.textContent = "Saved in this browser.";
     } catch {
-      // Keep the active selection when storage is unavailable.
+      hint.textContent = "This browser blocked saving the change.";
     }
   });
-  get("time-zone-control").hidden = false;
 }
 
 function element(tag, className, value) {
@@ -595,7 +585,7 @@ function render({ loading = false, checked = false } = {}) {
     "bad",
   ]);
 
-  setNotices(messageList);
+  setNotices(section === "settings" ? [] : messageList);
   renderProduction(snapshot?.production, stale, loading);
   renderProductionReadback(snapshot?.production, stale, loading);
   status("health", healthLabel, healthTone);
@@ -771,9 +761,11 @@ const accountPath = location.pathname.match(/^\/accounts\/[1-9][0-9]{11}(?=\/|$)
 
 function showSection() {
   const deployments = section === "deployments" || section === "detail";
-  const title = { deployments: "Deployments", detail: "Deployment", domains: "Domains", activity: "Activity" }[section] ?? "Overview";
+  const title = { deployments: "Deployments", detail: "Deployment", domains: "Domains", activity: "Activity", settings: "Settings" }[section] ?? "Overview";
   pageTitle.textContent = title;
   document.title = title + " · PAIGE Cloud";
+  get("page-scope").hidden = section === "settings";
+  get("deployment-actions").hidden = section === "settings";
   document.body.classList.toggle("workspace-deployments", deployments);
   if (deployments) {
     const pilotLabel = get("pilot-link");
@@ -781,7 +773,7 @@ function showSection() {
     pilotLabel.classList.remove("primary");
     pilotLabel.append(element("span", "sr", " (new tab)"));
   }
-  for (const name of ["overview", "deployments", "detail", "domains", "activity"]) {
+  for (const name of ["overview", "deployments", "detail", "domains", "activity", "settings"]) {
     get(name + "-panel").hidden = section !== name;
   }
   for (const link of navigation) {
@@ -800,7 +792,7 @@ document.querySelector(".skip-link").addEventListener("click", (event) => {
 });
 const route = location.pathname.slice(accountPath.length);
 const detailId = route.startsWith("/deployments/") ? route.split("/").at(-1) : "";
-const section = detailId ? "detail" : ["/deployments", "/domains", "/activity"].includes(route) ? route.slice(1) : "overview";
+const section = detailId ? "detail" : ["/deployments", "/domains", "/activity", "/settings"].includes(route) ? route.slice(1) : "overview";
 
 initTimeZone();
 showSection();

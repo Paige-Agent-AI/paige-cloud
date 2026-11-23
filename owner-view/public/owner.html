@@ -21,19 +21,12 @@
   <a href="{{ACCOUNT_PATH}}/domains" data-section="domains">Domains</a>
   <a href="{{ACCOUNT_PATH}}/activity" data-section="activity">Activity</a>
   <a href="{{ACCOUNT_PATH}}/projects/paige/paige-agent-ai/media">Media</a>
+  <a href="{{ACCOUNT_PATH}}/settings" data-section="settings">Settings</a>
 </nav>
 <main id="main" tabindex="-1">
   <div class="page-head">
     <div><h1 id="page-title" tabindex="-1">Overview</h1><p class="muted" id="page-scope">PAIGE Agent AI</p></div>
-    <div class="page-actions">
-      <label class="time-zone-control" id="time-zone-control" hidden>
-        <span>Time zone</span>
-        <select id="time-zone">
-          <option value="">Browser time</option>
-          <option value="America/New_York">Eastern Time</option>
-          <option value="UTC">UTC</option>
-        </select>
-      </label>
+    <div class="page-actions" id="deployment-actions">
       <button id="refresh" type="button">Refresh status</button>
       <a class="primary" id="pilot-link" href="https://paige-ant178-auth.179.66.154.248.sslip.io/" target="_blank" rel="noreferrer">Open app preview<span class="sr"> (PAIGE sign-in pilot, new tab)</span></a>
     </div>
@@ -88,6 +81,16 @@
     </div>
     <section class="workspace-page" id="domains-panel" aria-label="Production domains" hidden></section>
     <section class="workspace-page" id="activity-panel" aria-label="Release and build activity" hidden></section>
+    <section class="workspace-card settings-card" id="settings-panel" aria-labelledby="display-title" hidden>
+      <h2 id="display-title">Display preferences</h2>
+      <label class="time-zone-control" for="time-zone">Time zone</label>
+      <select id="time-zone" aria-describedby="time-zone-hint">
+        <option value="">Browser time</option>
+        <option value="America/New_York">Eastern Time</option>
+        <option value="UTC">UTC</option>
+      </select>
+      <p class="small muted" id="time-zone-hint" role="status">Applies to deployment and activity timestamps in this browser.</p>
+    </section>
     <section class="workspace-page" id="detail-panel" aria-label="Deployment detail" hidden></section>
     <section id="deployments-panel" aria-label="Deployment activity" hidden>
       <details class="production-strip">
