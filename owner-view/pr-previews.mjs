@@ -32,6 +32,14 @@ export function previewUrlFor(number, legacy = false, publicIp = sharedPreviewIp
   return legacy && number === pilot.number ? pilot.url : `https://pr-${number}.preview.${publicIp}.sslip.io`;
 }
 
+export function pagesPreviewUrl(number, project) {
+  if (!Number.isSafeInteger(number) || number < 1 || number > 2147483647 ||
+      typeof project !== "string" || !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(project)) {
+    throw new Error("A PR number and a Cloudflare Pages project slug are required.");
+  }
+  return `https://pr-${number}.${project}.pages.dev`;
+}
+
 function timestamp(value) {
   const milliseconds = typeof value === "string" ? Date.parse(value) : NaN;
   return Number.isFinite(milliseconds) ? new Date(milliseconds).toISOString() : undefined;
@@ -87,11 +95,12 @@ function buildRecords(runs) {
   return newest;
 }
 
-export function createPrPreviewReader(actionsToken, fetchFrom = fetch, clock = Date.now, configuredIp) {
+export function createPrPreviewReader(actionsToken, fetchFrom = fetch, clock = Date.now, { previewIp, pagesProject } = {}) {
   // This credential goes only to the private Cloud repository's Actions endpoint.
   const canReadBuilds = /^[\x21-\x7e]{16,512}$/.test(actionsToken ?? "");
   const accept = { Accept: "application/vnd.github+json", "User-Agent": "PAIGE-Cloud" };
-  const publicIp = configuredIp ? dedicatedPreviewIp(configuredIp) : sharedPreviewIp;
+  const publicIp = previewIp ? dedicatedPreviewIp(previewIp) : sharedPreviewIp;
+  if (pagesProject) pagesPreviewUrl(1, pagesProject);
   let cached;
   let pending;
 
@@ -123,7 +132,7 @@ export function createPrPreviewReader(actionsToken, fetchFrom = fetch, clock = D
         row.buildCreatedAt = latest?.createdAt;
       }
       if (row.build === "built") {
-        const urls = [previewUrlFor(row.number, false, publicIp)];
+        const urls = [pagesProject ? pagesPreviewUrl(row.number, pagesProject) : previewUrlFor(row.number, false, publicIp)];
         if (row.number === pilot.number || row.number === 3398) {
           const previous = previewUrlFor(row.number, true);
           if (previous !== urls[0]) urls.push(previous);
@@ -143,7 +152,7 @@ export function createPrPreviewReader(actionsToken, fetchFrom = fetch, clock = D
         }
       }));
     }
-    return { state: "ready", publicIp, builds: canResolve ? "available" : canReadBuilds ? "unavailable" : "unconfigured",
+    return { state: "ready", publicIp, pagesProject, builds: canResolve ? "available" : canReadBuilds ? "unavailable" : "unconfigured",
       partial: page.length === 100, rows, checkedAt: new Date(clock()).toISOString() };
   }
 

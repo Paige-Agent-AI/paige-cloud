@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createPrPreviewReader, dedicatedPreviewIp, previewUrlFor, sharedPreviewIp } from "./pr-previews.mjs";
+import { createPrPreviewReader, dedicatedPreviewIp, pagesPreviewUrl, previewUrlFor, sharedPreviewIp } from "./pr-previews.mjs";
 
 const repo = "Paige-Agent-AI/Paige-Agent-AI";
 const head = "1".repeat(40);
@@ -97,7 +97,7 @@ test("looks up the configured dedicated host and preserves a verified historical
     if (![current, historical].includes(url.origin)) return new Response(null, { status: 404 });
     if (url.pathname === "/healthz") return new Response("ok");
     return Response.json({ frontendCommit: head, cloudCommit: builder });
-  }, Date.now, dedicatedIp);
+  }, Date.now, { previewIp: dedicatedIp });
   const result = await read();
   assert.equal(result.publicIp, dedicatedIp);
   assert.deepEqual(result.rows.map((row) => row.previewUrl), [current, historical]);
@@ -110,4 +110,26 @@ test("dedicated preview addresses reject the shared machine, private IPs and non
     assert.throws(() => dedicatedPreviewIp(ip), /preview server/);
   }
   assert.equal(dedicatedPreviewIp("93.184.216.34"), "93.184.216.34");
+});
+
+test("checks the Pages preview alias without credentials and requires exact health and source", async () => {
+  const pagesProject = "paige-agent-ai-pr-previews";
+  const live = pagesPreviewUrl(3401, pagesProject);
+  const stale = pagesPreviewUrl(3402, pagesProject);
+  const read = createPrPreviewReader(token, async (value, options) => {
+    if (value.includes("/actions/")) {
+      return Response.json({ workflow_runs: [run(3401, 111, "completed", "success"), run(3402, 112, "completed", "success")] });
+    }
+    assert.equal(options.headers?.Authorization, undefined);
+    const url = new URL(value);
+    if (url.pathname.endsWith("/pulls")) return Response.json([pr(3401), pr(3402)]);
+    if (url.pathname === "/healthz" && url.origin === live) return new Response("ok");
+    if (url.pathname === "/release.json" && [live, stale].includes(url.origin)) {
+      return Response.json({ frontendCommit: head, cloudCommit: url.origin === live ? builder : previous });
+    }
+    throw new Error("Unexpected preview URL");
+  }, Date.now, { pagesProject });
+  const { rows } = await read();
+  assert.deepEqual(rows.map((row) => row.previewUrl), [live, undefined]);
+  assert.throws(() => pagesPreviewUrl(3401, "anything.example/foo"), /project slug/);
 });
