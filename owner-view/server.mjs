@@ -476,7 +476,7 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
       host: process.env.OWNER_VIEW_STREAM_PLAYBACK_HOST,
     }),
     projectAccess: createPaigeProjectAccess(process.env.OWNER_VIEW_COOLIFY_TOKEN, store.hasProjectRead,
-      process.env.OWNER_VIEW_PREVIEW_ACTIONS_TOKEN, githubBuilds?.mainVersion, history.read),
+      process.env.OWNER_VIEW_PREVIEW_ACTIONS_TOKEN, githubBuilds?.mainVersion, history.read, process.env.PAIGE_PREVIEW_PUBLIC_IP),
   });
   server.once("close", () => {
     accounts.close();

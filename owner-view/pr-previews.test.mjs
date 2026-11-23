@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createPrPreviewReader } from "./pr-previews.mjs";
+import { createPrPreviewReader, dedicatedPreviewIp, previewUrlFor, sharedPreviewIp } from "./pr-previews.mjs";
 
 const repo = "Paige-Agent-AI/Paige-Agent-AI";
 const head = "1".repeat(40);
@@ -81,4 +81,33 @@ test("keeps the verified pilot visible if private GitHub build status is unconfi
   assert.equal(result.rows[0].run, "44953319787");
   assert.equal(result.rows[0].previewUrl, "https://pr-3365-56f13b6.179.66.154.248.sslip.io");
   assert.equal(result.rows[1].build, "unknown");
+});
+
+test("looks up the configured dedicated host and preserves a verified historical address", async () => {
+  const dedicatedIp = "93.184.216.34";
+  const current = previewUrlFor(3401, false, dedicatedIp);
+  const historical = previewUrlFor(3398);
+  const read = createPrPreviewReader(token, async (value, options) => {
+    const url = new URL(value);
+    if (url.pathname.includes("/actions/")) {
+      return Response.json({ workflow_runs: [run(3401, 111, "completed", "success"), run(3398, 110, "completed", "success")] });
+    }
+    assert.equal(options.headers?.Authorization, undefined);
+    if (url.pathname.endsWith("/pulls")) return Response.json([pr(3401), pr(3398)]);
+    if (![current, historical].includes(url.origin)) return new Response(null, { status: 404 });
+    if (url.pathname === "/healthz") return new Response("ok");
+    return Response.json({ frontendCommit: head, cloudCommit: builder });
+  }, Date.now, dedicatedIp);
+  const result = await read();
+  assert.equal(result.publicIp, dedicatedIp);
+  assert.deepEqual(result.rows.map((row) => row.previewUrl), [current, historical]);
+});
+
+test("dedicated preview addresses reject the shared machine, private IPs and non-host inputs", () => {
+  for (const ip of [undefined, "", sharedPreviewIp, "127.0.0.1", "10.0.0.1", "172.16.5.1",
+    "192.168.1.8", "169.254.169.254", "100.64.0.1", "224.0.0.1", "203.0.113.5", "192.88.99.2",
+    "https://93.184.216.34", "93.184.216.34:443", "::1"]) {
+    assert.throws(() => dedicatedPreviewIp(ip), /preview server/);
+  }
+  assert.equal(dedicatedPreviewIp("93.184.216.34"), "93.184.216.34");
 });

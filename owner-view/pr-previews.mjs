@@ -1,16 +1,35 @@
+import { isIPv4 } from "node:net";
+
 const github = "https://api.github.com/repos/Paige-Agent-AI/Paige-Agent-AI";
 const builds = "https://api.github.com/repos/Paige-Agent-AI/paige-cloud-preview/actions/workflows/cloud-pr-preview.yml/runs";
 const canonical = "Paige-Agent-AI/Paige-Agent-AI";
 const sha = /^[a-f0-9]{40}$/;
 const statuses = { queued: "queued", requested: "queued", waiting: "queued", pending: "queued", in_progress: "building" };
+export const sharedPreviewIp = "179.66.154.248";
 const pilot = {
   number: 3365, head: "56f13b60265b29323d492d001f0242c302801828",
   cloud: "ce4e81eb2ba29075ad93ca47231324fd0d756ce6", run: "44953319787",
   url: "https://pr-3365-56f13b6.179.66.154.248.sslip.io", state: "built",
 };
 
-export function previewUrlFor(number, legacy = false) {
-  return legacy && number === pilot.number ? pilot.url : `https://pr-${number}.preview.179.66.154.248.sslip.io`;
+export function dedicatedPreviewIp(value) {
+  if (typeof value !== "string" || !isIPv4(value) || value === sharedPreviewIp) {
+    throw new Error("Set a distinct public IPv4 address for the dedicated preview server.");
+  }
+  const [first, second, third] = value.split(".").map(Number);
+  if (first === 0 || first === 10 || first === 127 || first >= 224 ||
+      (first === 100 && second >= 64 && second < 128) ||
+      (first === 169 && second === 254) || (first === 172 && second >= 16 && second < 32) ||
+      (first === 192 && (second === 168 || (second === 0 && [0, 2].includes(third)) || (second === 88 && third === 99))) ||
+      (first === 198 && ([18, 19].includes(second) || (second === 51 && third === 100))) ||
+      (first === 203 && second === 0 && third === 113)) {
+    throw new Error("The dedicated preview server requires a globally routed IPv4 address.");
+  }
+  return value;
+}
+
+export function previewUrlFor(number, legacy = false, publicIp = sharedPreviewIp) {
+  return legacy && number === pilot.number ? pilot.url : `https://pr-${number}.preview.${publicIp}.sslip.io`;
 }
 
 function timestamp(value) {
@@ -68,10 +87,11 @@ function buildRecords(runs) {
   return newest;
 }
 
-export function createPrPreviewReader(actionsToken, fetchFrom = fetch, clock = Date.now) {
+export function createPrPreviewReader(actionsToken, fetchFrom = fetch, clock = Date.now, configuredIp) {
   // This credential goes only to the private Cloud repository's Actions endpoint.
   const canReadBuilds = /^[\x21-\x7e]{16,512}$/.test(actionsToken ?? "");
   const accept = { Accept: "application/vnd.github+json", "User-Agent": "PAIGE-Cloud" };
+  const publicIp = configuredIp ? dedicatedPreviewIp(configuredIp) : sharedPreviewIp;
   let cached;
   let pending;
 
@@ -103,8 +123,11 @@ export function createPrPreviewReader(actionsToken, fetchFrom = fetch, clock = D
         row.buildCreatedAt = latest?.createdAt;
       }
       if (row.build === "built") {
-        const urls = [previewUrlFor(row.number)];
-        if (row.number === pilot.number) urls.push(pilot.url);
+        const urls = [previewUrlFor(row.number, false, publicIp)];
+        if (row.number === pilot.number || row.number === 3398) {
+          const previous = previewUrlFor(row.number, true);
+          if (previous !== urls[0]) urls.push(previous);
+        }
         candidates.push({ row, urls, cloud: latest.cloud });
       }
     }
@@ -120,7 +143,7 @@ export function createPrPreviewReader(actionsToken, fetchFrom = fetch, clock = D
         }
       }));
     }
-    return { state: "ready", builds: canResolve ? "available" : canReadBuilds ? "unavailable" : "unconfigured",
+    return { state: "ready", publicIp, builds: canResolve ? "available" : canReadBuilds ? "unavailable" : "unconfigured",
       partial: page.length === 100, rows, checkedAt: new Date(clock()).toISOString() };
   }
 
