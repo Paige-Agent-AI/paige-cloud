@@ -205,11 +205,12 @@ details[open] > summary .chevron { transform: rotate(45deg); }
   margin-bottom: 1rem; padding: .05rem .85rem;
 }
 .production-strip summary {
-  display: flex; align-items: center; gap: .65rem; min-height: 43px;
+  position: relative; display: flex; align-items: center; flex-wrap: wrap; gap: .35rem .65rem;
+  min-height: 44px; padding-inline-end: 1rem;
   list-style: none; cursor: pointer; font-size: .82rem;
 }
 .production-strip summary::-webkit-details-marker { display: none; }
-.production-strip summary .chevron { margin-inline-start: auto; margin-inline-end: .16rem; }
+.production-strip summary .chevron { position: absolute; inset-inline-end: .16rem; }
 .production-strip-name { font-weight: 670; }
 .production-strip-commit { color: var(--muted); }
 .production-strip-commit code { color: var(--violet); font-size: .78rem; }

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { verifiedProductionReceipts } from "./production-receipts.mjs";
-import { readOwnerStatus, readPreviewStatus, readProductionStatus } from "./status.mjs";
+import { createProductionStatusReader, readOwnerStatus, readPreviewStatus, readProductionStatus } from "./status.mjs";
 
 const ledger = JSON.parse(readFileSync(new URL("./release-ledger.json", import.meta.url)));
 const f2Id = "izwrky18u9ixdhstnulxpjs5";
@@ -174,6 +174,77 @@ test("rejects partial responses and non-string source revisions from production 
   assert.equal(production.identity, "unavailable");
   assert.equal(production.frontendCommit, null);
   assert.deepEqual(production.domains.map(({ frontendCommit }) => frontendCommit), [null, null, sampleManifest.frontendCommit]);
+});
+
+test("observes GitHub main independently from the serving revision without a credential", async () => {
+  let now = 0;
+  let mainReads = 0;
+  let domainReads = 0;
+  let ref = mainRef("b".repeat(40));
+  function mainRef(sha) {
+    return { ref: "refs/heads/main", object: { type: "commit", sha } };
+  }
+  const readProduction = createProductionStatusReader(async (url, options) => {
+    assert.equal(new Headers(options.headers).has("authorization"), false);
+    const { hostname, pathname } = new URL(url);
+    if (hostname === "api.github.com") {
+      assert.equal(pathname, "/repos/Paige-Agent-AI/Paige-Agent-AI/git/ref/heads/main");
+      assert.equal(options.redirect, "error");
+      mainReads++;
+      return Response.json(ref);
+    }
+    domainReads++;
+    return pathname === "/healthz" ? new Response("ok") : Response.json(sampleManifest);
+  }, () => now);
+
+  const [first, concurrent] = await Promise.all([readProduction(), readProduction()]);
+  assert.equal(mainReads, 1);
+  assert.equal(domainReads, 12);
+  assert.equal(first.mainCommit, "b".repeat(40));
+  assert.equal(concurrent.mainCommit, first.mainCommit);
+  assert.equal(first.frontendCommit, sampleManifest.frontendCommit);
+  assert.equal(first.receiptCommit, null);
+
+  now += 45_000;
+  assert.equal((await readProduction()).mainCommit, first.mainCommit);
+  assert.equal(mainReads, 1);
+  ref = { ref: "refs/heads/preview", object: { type: "commit", sha: "c".repeat(40) } };
+  now += 180_000;
+  const unavailable = await readProduction();
+  assert.equal(unavailable.mainCommit, null);
+  assert.equal(unavailable.frontendCommit, sampleManifest.frontendCommit);
+  assert.equal(unavailable.state, "healthy");
+  await readProduction();
+  assert.equal(mainReads, 2);
+
+  ref = mainRef(sampleManifest.frontendCommit);
+  now += 60_000;
+  const matched = await readProduction();
+  assert.equal(matched.mainCommit, matched.frontendCommit);
+  assert.equal(mainReads, 3);
+});
+
+test("rechecks GitHub main if a push arrives during an in-flight lookup", async () => {
+  let generation = 0;
+  let mainReads = 0;
+  let releaseFirst;
+  const firstRead = new Promise((resolve) => { releaseFirst = resolve; });
+  const readProduction = createProductionStatusReader(async (url) => {
+    const { hostname, pathname } = new URL(url);
+    if (hostname !== "api.github.com") {
+      return pathname === "/healthz" ? new Response("ok") : Response.json(sampleManifest);
+    }
+    const sha = generation ? "b".repeat(40) : "a".repeat(40);
+    if (++mainReads === 1) await firstRead;
+    return Response.json({ ref: "refs/heads/main", object: { type: "commit", sha } });
+  }, Date.now, () => generation);
+  const beforePush = readProduction();
+  generation++;
+  const afterPush = readProduction();
+  releaseFirst();
+  assert.equal((await beforePush).mainCommit, "a".repeat(40));
+  assert.equal((await afterPush).mainCommit, "b".repeat(40));
+  assert.equal(mainReads, 2);
 });
 test("shows verified receipt evidence separately from live health and fails closed on invalid evidence", async () => {
   const ledger = JSON.parse(readFileSync(new URL("./production-receipts.json", import.meta.url), "utf8"));

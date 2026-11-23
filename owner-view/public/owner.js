@@ -10,6 +10,7 @@ const deploymentStatus = get("deployment-status");
 const deploymentViews = document.querySelectorAll("[data-deployment-view]");
 const navigation = document.querySelectorAll(".workspace-menu [data-section]");
 const staleAfterMs = 120_000;
+const productionRefreshMs = 45_000;
 const dateFormat = new Intl.DateTimeFormat(undefined, {
   month: "short", day: "numeric", year: "numeric", hour: "numeric",
   minute: "2-digit", second: "2-digit", timeZoneName: "short",
@@ -34,6 +35,11 @@ const deploymentLabels = {
 let snapshot = null;
 let activeRequest = null;
 let staleTimer;
+let productionRefreshTimer;
+let buildSource;
+let buildClock;
+let observedMainVersion;
+let pendingMainRefresh = false;
 let sessionTimer;
 let sessionDeadline;
 const sessionEvents = new BroadcastChannel("paige-owner-session");
@@ -166,8 +172,17 @@ function renderProductionReadback(production, stale, loading) {
   if (/^[a-f0-9]{40}$/.test(liveCommit ?? "")) {
     const commit = element("code", "", liveCommit.slice(0, 8));
     commit.title = liveCommit;
-    current.append(old ? "Last seen on main " : "main ", commit);
+    current.append(old ? "Last seen " : "Serving now ", commit);
   }
+  const main = get("receipt-main");
+  const mainCommit = production?.mainCommit;
+  main.replaceChildren();
+  if (/^[a-f0-9]{40}$/.test(mainCommit ?? "")) {
+    const commit = element("code", "", mainCommit.slice(0, 8));
+    commit.title = mainCommit;
+    main.append(old ? "Last known main " : "GitHub main ", commit);
+    if (!old && liveCommit) main.append(liveCommit === mainCommit ? " · Matches production" : " · Differs from production");
+  } else if (production) main.textContent = "GitHub main unavailable";
   const match = get("receipt-match");
   if (old) {
     match.textContent = production?.receiptCommit ? "The last observed release matched a recorded GitHub commit."
@@ -179,7 +194,22 @@ function renderProductionReadback(production, stale, loading) {
         : loading ? "Checking production domains." : "Live production source is unavailable.";
   }
   if (checkedAt) match.append(" Checked ", time(production.checkedAt), ".");
+  if (section === "deployments") match.append(" Production refreshes every 45 seconds while this tab is visible.");
   get("receipt-domains").replaceChildren(...productionDomainRows(production, old));
+}
+
+function observedProductionEntry(production) {
+  const commit = production?.frontendCommit;
+  if (production?.identity !== "matched" || production.receiptCommit || !/^[a-f0-9]{40}$/.test(commit ?? "")) return null;
+  return {
+    id: "live-" + commit, title: "Live production", environment: "Production", commit,
+    branch: commit === production.mainCommit ? "main" : undefined,
+    status: "receipt-unavailable", label: "Receipt unavailable", tone: "warn",
+    pinned: true, fields: [["Observed", time(production.checkedAt)],
+      ["Release receipt", "Unavailable for this commit"]],
+    links: [receiptLink("/commit/" + commit, "View GitHub commit")],
+    domains: production.domains,
+  };
 }
 
 function productionEntry(receipt, production, stale) {
@@ -326,25 +356,27 @@ function deploymentIndex(stale) {
   const productionStale = stale || !productionAt || Date.now() - productionAt.getTime() >= staleAfterMs;
   const pullRows = (previewRunData?.rows ?? []).map((row) => pullEntry(row, previewStale));
   const receipts = (production?.receipts ?? []).map((receipt) => productionEntry(receipt, production, productionStale));
+  const observed = productionStale ? null : observedProductionEntry(production);
   const history = (snapshot?.history ?? []).map(historyEntry);
-  return { previewStale, productionStale, pullRows, receipts, history, previewRows: [...pullRows.filter((row) => row.hasBuild), ...history] };
+  return { previewStale, productionStale, pullRows, receipts, observed, history, previewRows: [...pullRows.filter((row) => row.hasBuild), ...history] };
 }
 
 function renderDeployments(loading, index) {
   const output = get("deployment-rows");
   const list = get("deployment-summary");
   const empty = get("empty");
-  const { previewStale, productionStale, pullRows, receipts, previewRows } = index;
+  const { previewStale, productionStale, pullRows, receipts, observed, previewRows } = index;
+  const productionRows = observed ? [observed, ...receipts] : receipts;
   const prView = deploymentView === "pull-requests";
-  const entries = prView ? pullRows : deploymentView === "production" ? receipts :
-    deploymentView === "preview" ? previewRows : [...receipts, ...previewRows];
+  const entries = prView ? pullRows : deploymentView === "production" ? productionRows :
+    deploymentView === "preview" ? previewRows : [...productionRows, ...previewRows];
   const query = deploymentSearch.value.trim().toLowerCase();
   const statusFilter = deploymentStatus.value;
   const rows = entries
     .filter((row) => (!statusFilter || row.status === statusFilter) &&
       (!query || [row.title, row.environment, row.branch, row.commit, row.search, row.label]
         .join(" ").toLowerCase().includes(query)))
-    .sort((a, b) => (date(b.at || (prView && b.updatedAt))?.getTime() ?? 0)
+    .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || (date(b.at || (prView && b.updatedAt))?.getTime() ?? 0)
       - (date(a.at || (prView && a.updatedAt))?.getTime() ?? 0));
   const notes = [];
   if (deploymentView !== "production") {
@@ -364,7 +396,7 @@ function renderDeployments(loading, index) {
     : entries.length ? "No results match your filters." : prView && !previewRunData ? "Open pull requests could not be loaded."
       : prView ? "There are no open pull requests." : "No deployment activity is available.";
 
-  const key = JSON.stringify([rows, prView, productionStale, previewStale, previewRunData?.checkedAt, snapshot?.checkedAt]);
+  const key = JSON.stringify([rows, prView, productionStale, previewStale]);
   if (key === lastDeploymentKey) return;
   lastDeploymentKey = key;
   const active = document.activeElement;
@@ -399,9 +431,9 @@ function card(title) {
   return panel;
 }
 
-function renderDetail(loading, { receipts, history, pullRows }) {
+function renderDetail(loading, { receipts, observed, history, pullRows }) {
   const panel = get("detail-panel");
-  const row = [...receipts, ...history, ...pullRows].find((item) => item.id === detailId);
+  const row = observed?.id === detailId ? observed : [...receipts, ...history, ...pullRows].find((item) => item.id === detailId);
   const key = JSON.stringify([row, snapshot?.checkedAt, previewRunData?.checkedAt, loading, !!previewRequest]);
   if (panel.dataset.renderKey === key) return;
   panel.dataset.renderKey = key;
@@ -571,8 +603,11 @@ function render({ loading = false, checked = false } = {}) {
 }
 
 function clearPrivateView() {
+  clearInterval(productionRefreshTimer);
+  stopBuilds();
   activeRequest?.abort();
   activeRequest = null;
+  pendingMainRefresh = false;
   clearTimeout(staleTimer);
   clearTimeout(sessionTimer);
   sessionDeadline = undefined;
@@ -644,13 +679,15 @@ async function refreshPrPreviews() {
   }
 }
 
-async function refreshStatus() {
+async function refreshStatus({ background = false } = {}) {
   if (activeRequest) return;
   const request = new AbortController();
   activeRequest = request;
   const timeout = setTimeout(() => request.abort(), 12_000);
-  render({ loading: true });
-  announcement.textContent = "Checking production and preview health and source.";
+  if (!background) {
+    render({ loading: true });
+    announcement.textContent = "Checking production and preview health and source.";
+  }
   try {
     const response = await fetch(accountPath + "/api/organizations/paige/projects/paige-agent-ai/status",
       { cache: "no-store", redirect: "error", signal: request.signal });
@@ -660,6 +697,9 @@ async function refreshStatus() {
       return;
     }
     if (response.status === 404) {
+      clearInterval(productionRefreshTimer);
+      stopBuilds();
+      pendingMainRefresh = false;
       snapshot = null;
       fetchFailed = false;
       clearTimeout(staleTimer);
@@ -679,7 +719,7 @@ async function refreshStatus() {
     snapshot = data;
     fetchFailed = false;
     render({ checked: true });
-    void refreshPrPreviews();
+    if (!background) void refreshPrPreviews();
     clearTimeout(staleTimer);
     const staleIn = staleAfterMs - (Date.now() - date(data.checkedAt).getTime());
     if (staleIn > 0) {
@@ -689,7 +729,7 @@ async function refreshStatus() {
       }, staleIn);
     }
     const productionHealth = healthLabels[data.production?.state] ?? healthLabels.unavailable;
-    announcement.textContent = "Production " + productionHealth[0].toLowerCase() +
+    if (!background) announcement.textContent = "Production " + productionHealth[0].toLowerCase() +
       ". Preview " + healthLabels[data.health.state][0].toLowerCase() +
       ". Release identity " + data.identity + ".";
   } catch {
@@ -699,8 +739,106 @@ async function refreshStatus() {
     announcement.textContent = snapshot ? "Refresh failed. Showing the last available data." : "Deployment status is unavailable.";
   } finally {
     clearTimeout(timeout);
-    if (activeRequest === request) activeRequest = null;
+    if (activeRequest === request) {
+      activeRequest = null;
+      if (pendingMainRefresh) {
+        pendingMainRefresh = false;
+        void refreshStatus({ background: true });
+      }
+    }
   }
+}
+
+function watchProduction() {
+  clearInterval(productionRefreshTimer);
+  if (section !== "deployments" || document.hidden) return;
+  productionRefreshTimer = setInterval(() => void refreshStatus({ background: true }), productionRefreshMs);
+}
+
+function stopBuilds() {
+  buildSource?.close();
+  buildSource = undefined;
+  clearBuildDisplay();
+}
+
+function clearBuildDisplay() {
+  clearInterval(buildClock);
+  get("github-builds").hidden = true;
+  get("github-build-latest").textContent = "";
+  get("github-build-list").replaceChildren();
+}
+
+function buildDuration(ms) {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(seconds / 60);
+  return minutes ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
+}
+
+function renderGitHubBuilds(rows, offset) {
+  const panel = get("github-builds");
+  const latest = get("github-build-latest");
+  const labels = { pull: "Pull received", "main-checks": "Main CI", "pull-checks": "PR CI", preview: "Preview build", production: "Release workflow" };
+  const phaseNames = { received: "Received", queued: "Queued", running: "Running", completed: "Completed" };
+  const conclusions = { success: "Passed", failure: "Failed", cancelled: "Cancelled", timed_out: "Timed out", skipped: "Skipped" };
+  const dispatchLabels = { pending: "Preview queued", accepted: "Preview requested", rejected: "Preview request rejected",
+    unknown: "Preview request unconfirmed", sending: "Requesting preview" };
+  const recent = rows.slice(0, 10);
+  const clocks = [];
+  const list = recent.map((row) => {
+    const title = (labels[row.kind] ?? "Build") + (row.pull ? " · PR #" + row.pull : "");
+    const repo = row.kind === "preview" ? "paige-cloud-preview" : "Paige-Agent-AI";
+    const link = element("a", "", title);
+    link.href = `https://github.com/Paige-Agent-AI/${repo}/` + (row.run ? "actions/runs/" + row.run : "pull/" + row.pull);
+    const stamp = element("span", "small muted");
+    const phase = (Object.hasOwn(conclusions, row.conclusion) && conclusions[row.conclusion]) ||
+      (Object.hasOwn(dispatchLabels, row.dispatch) && dispatchLabels[row.dispatch]) || phaseNames[row.phase];
+    function update() {
+      const until = row.finishedAt ?? Date.now() + offset;
+      stamp.textContent = row.startedAt ? `${phase} · ${buildDuration(until - row.startedAt)}`
+        : row.phase === "queued" && row.queuedAt ? `Queued · ${buildDuration(until - row.queuedAt)}` : phase;
+    }
+    update();
+    if (row.phase === "running" || row.phase === "queued") clocks.push(update);
+    const item = element("li");
+    item.append(link);
+    if (row.kind !== "production") item.append(element("code", "", row.commit.slice(0, 8)));
+    item.append(stamp);
+    if (row.kind === "pull") item.append(time(new Date(row.receivedAt).toISOString(), activityDateFormat));
+    return { item, title, stamp };
+  });
+  const output = get("github-build-list");
+  const activeHref = output.contains(document.activeElement) ? document.activeElement.href : undefined;
+  output.replaceChildren(...list.map(({ item }) => item));
+  if (activeHref) ([...output.querySelectorAll("a")].find((link) => link.href === activeHref) ?? panel.querySelector("summary")).focus({ preventScroll: true });
+  panel.hidden = false;
+  const selected = list[recent.findIndex((row) => row.phase === "running")] ?? list[0];
+  const updateLabel = () => {
+    for (const update of clocks) update();
+    latest.textContent = selected ? selected.title + " · " + selected.stamp.textContent : "Waiting for events";
+  };
+  clearInterval(buildClock);
+  updateLabel();
+  if (clocks.length) buildClock = setInterval(updateLabel, 1000);
+}
+
+function watchGitHubBuilds() {
+  if (section !== "deployments" || document.hidden || buildSource) return;
+  const source = new EventSource(accountPath + "/api/organizations/paige/projects/paige-agent-ai/deployment-events");
+  buildSource = source;
+  source.addEventListener("builds", (event) => {
+    const updates = JSON.parse(event.data);
+    if (buildSource !== source || !Array.isArray(updates.rows)) return;
+    renderGitHubBuilds(updates.rows, updates.now - Date.now());
+    if (observedMainVersion !== undefined && observedMainVersion !== updates.mainVersion) {
+      if (activeRequest) pendingMainRefresh = true;
+      else void refreshStatus({ background: true });
+    }
+    observedMainVersion = updates.mainVersion;
+  });
+  source.addEventListener("error", () => {
+    if (buildSource !== source) return;
+    clearBuildDisplay();
+  });
 }
 
 const accountPath = location.pathname.match(/^\/accounts\/[1-9][0-9]{11}(?=\/|$)/)?.[0] ?? "";
@@ -771,7 +909,21 @@ sessionEvents.addEventListener("message", (event) => {
 });
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && sessionDeadline && sessionDeadline <= Date.now()) returnToSignIn();
+  watchProduction();
+  if (document.hidden) stopBuilds();
+  else watchGitHubBuilds();
+  if (section === "deployments" && !document.hidden && (!snapshot || Date.now() - Date.parse(snapshot.checkedAt) >= productionRefreshMs)) {
+    void refreshStatus({ background: true });
+  }
 });
 window.addEventListener("pagehide", clearPrivateView);
-window.addEventListener("pageshow", (event) => { if (event.persisted) refreshStatus(); });
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) {
+    watchProduction();
+    watchGitHubBuilds();
+    void refreshStatus();
+  }
+});
+watchProduction();
+watchGitHubBuilds();
 refreshStatus();

@@ -1,4 +1,4 @@
-import { readOwnerStatus, readPreviewStatus, readProductionStatus } from "./status.mjs";
+import { createProductionStatusReader, readOwnerStatus, readPreviewStatus } from "./status.mjs";
 import { createPrPreviewReader } from "./pr-previews.mjs";
 
 export const ownerId = "cloud-owner";
@@ -43,13 +43,14 @@ export function createProjectAccess(projects, hasProjectRead) {
   };
 }
 
-export function createPaigeProjectAccess(token, hasProjectRead, actionsToken) {
+export function createPaigeProjectAccess(token, hasProjectRead, actionsToken, mainVersion) {
   if (!/^[\x21-\x7e]{16,512}$/.test(token ?? "")) throw new Error("A scoped Coolify read token is required.");
+  const readProduction = createProductionStatusReader(fetch, Date.now, mainVersion);
   return createProjectAccess([{
     ...firstProject,
-    readStatus: () => readOwnerStatus(token),
+    readStatus: () => readOwnerStatus(token, fetch, readProduction),
     environments: {
-      production: () => readProductionStatus(),
+      production: readProduction,
       "f2-preview": () => readPreviewStatus(token),
       "pr-previews": createPrPreviewReader(actionsToken),
     },
