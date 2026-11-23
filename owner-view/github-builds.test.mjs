@@ -78,6 +78,27 @@ test("records a pull and exact workflow attempts, preserving timing across retri
   }
 });
 
+test("reports canonical main image packaging separately from production promotion", async () => {
+  const builds = openGitHubBuilds(":memory:", secret);
+  try {
+    const run = { id: 400, run_attempt: 1, head_sha: head, head_branch: "main", head_repository: repo,
+      path: ".github/workflows/paige-coolify.yml", event: "push", created_at: began, run_started_at: began,
+      updated_at: finished, conclusion: "success" };
+    const completed = (workflow_run) => request("workflow_run", { action: "completed", repository: repo, workflow_run });
+    await builds.receive(completed({ ...run, head_branch: "feature" }));
+    await builds.receive(completed({ ...run, head_repository: cloud }));
+    assert.deepEqual(builds.snapshot(), []);
+    await builds.receive(completed(run));
+    await builds.receive(completed({ ...run, id: 401, event: "workflow_run" }));
+    const rows = builds.snapshot();
+    assert.equal(rows.length, 2);
+    const packaging = rows.find((row) => row.kind === "main-image");
+    assert.equal(packaging.commit, head);
+    assert.equal(packaging.finishedAt - packaging.startedAt, 78_000);
+    assert.ok(rows.some((row) => row.kind === "production" && row.run === 401));
+  } finally { builds.close(); }
+});
+
 test("requests one isolated build per eligible PR head and does not blindly resend uncertain requests", async () => {
   const credential = "fixture-scoped-dispatch-token";
   const calls = [];

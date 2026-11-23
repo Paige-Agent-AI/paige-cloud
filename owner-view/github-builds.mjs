@@ -46,9 +46,9 @@ function workflowEvent(payload, receivedAt) {
       const matches = Array.isArray(run.pull_requests) ? run.pull_requests.filter((candidate) =>
         candidate?.head?.sha === commit && candidate.base?.ref === "main" && number(candidate.number)) : [];
       if (matches.length === 1) pull = matches[0].number;
-    } else if (run.path === ".github/workflows/paige-coolify.yml" && run.head_branch === "main" &&
-        ["workflow_run", "workflow_dispatch"].includes(run.event)) {
-      kind = "production";
+    } else if (run.path === ".github/workflows/paige-coolify.yml" && run.head_branch === "main") {
+      if (run.event === "push") kind = "main-image";
+      if (["workflow_run", "workflow_dispatch"].includes(run.event)) kind = "production";
     }
   }
   if (!kind) return null;
