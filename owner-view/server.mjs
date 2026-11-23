@@ -16,7 +16,7 @@ const cookieFields = "; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=";
 const maxBodyBytes = 4096;
 const accountNumberPattern = /^[1-9][0-9]{11}$/;
 const accountRoutePattern = /^\/accounts\/([1-9][0-9]{11})(\/[^\r\n]*)?$/;
-const dashboardPages = new Set(["/", "/overview", "/deployments", "/domains", "/activity"]);
+const dashboardPages = new Set(["/", "/overview", "/deployments", "/domains", "/activity", "/settings"]);
 const deploymentPage = /^\/deployments\/(?:release-[1-9]\d{0,19}-[1-9]\d{0,19}|history-[a-z0-9]{1,64}|pr-[1-9]\d{0,9}-[a-f0-9]{40})$/;
 const isDashboardPage = (path) => dashboardPages.has(path) || deploymentPage.test(path);
 const headers = {

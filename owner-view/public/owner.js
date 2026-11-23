@@ -10,13 +10,11 @@ const deploymentStatus = get("deployment-status");
 const deploymentViews = document.querySelectorAll("[data-deployment-view]");
 const navigation = document.querySelectorAll(".workspace-menu [data-section]");
 const staleAfterMs = 120_000;
-const dateFormat = new Intl.DateTimeFormat(undefined, {
-  month: "short", day: "numeric", year: "numeric", hour: "numeric",
-  minute: "2-digit", second: "2-digit", timeZoneName: "short",
-});
-const activityDateFormat = new Intl.DateTimeFormat(undefined, {
-  month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
-});
+const timeZoneSelect = get("time-zone");
+const timeZoneKey = "paige-cloud.time-zone";
+const browserTimeZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+let dateFormat;
+let activityDateFormat;
 const healthLabels = {
   healthy: ["Healthy", "good"],
   unhealthy: ["Unhealthy", "bad"],
@@ -56,14 +54,71 @@ function date(value) {
   return Number.isFinite(milliseconds) ? new Date(milliseconds) : null;
 }
 
-function time(value, format = dateFormat) {
+function time(value, format = "full", label) {
   const timestamp = date(value);
   if (!timestamp) return document.createTextNode("Time unavailable");
-  const element = document.createElement("time");
-  element.dateTime = timestamp.toISOString();
-  element.textContent = format.format(timestamp);
-  if (format !== dateFormat) element.title = dateFormat.format(timestamp);
-  return element;
+  const node = document.createElement("time");
+  node.dateTime = timestamp.toISOString();
+  const compact = format === "compact";
+  node.textContent = (compact ? activityDateFormat : dateFormat).format(timestamp);
+  if (compact) {
+    const timestampText = dateFormat.format(timestamp);
+    node.title = label ? label + " " + timestampText : timestampText;
+    if (label) node.setAttribute("aria-label", node.title);
+  }
+  return node;
+}
+
+function applyTimeZone() {
+  const fields = {
+    timeZone: timeZoneSelect.value || browserTimeZone,
+    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+  };
+  activityDateFormat = new Intl.DateTimeFormat(undefined, fields);
+  dateFormat = new Intl.DateTimeFormat(undefined, {
+    ...fields, year: "numeric", second: "2-digit", timeZoneName: "short",
+  });
+}
+
+function initTimeZone() {
+  if (browserTimeZone) {
+    const location = browserTimeZone.split("/").at(-1).replaceAll("_", " ");
+    timeZoneSelect.options[0].textContent = "Browser (" + location + ")";
+  }
+  const zones = Intl.supportedValuesOf?.("timeZone") ?? [
+    "America/Chicago", "America/Denver", "America/Los_Angeles", "Asia/Kolkata",
+    "Asia/Tokyo", "Australia/Sydney", "Europe/London", "Europe/Paris",
+  ];
+  const existingZones = new Set(Array.from(timeZoneSelect.options, (option) => option.value));
+  const groups = new Map();
+  for (const zone of zones) {
+    if (existingZones.has(zone)) continue;
+    const [region, ...place] = zone.split("/");
+    if (!groups.has(region)) {
+      const group = document.createElement("optgroup");
+      group.label = region;
+      groups.set(region, group);
+      timeZoneSelect.append(group);
+    }
+    const label = (place.join(" / ") || zone).replaceAll("_", " ");
+    groups.get(region).append(new Option(label, zone));
+  }
+  try {
+    timeZoneSelect.value = localStorage.getItem(timeZoneKey) ?? "";
+  } catch {
+    // Browser storage may be unavailable. The picker still works for this page.
+  }
+  if (timeZoneSelect.selectedIndex === -1) timeZoneSelect.value = "";
+  applyTimeZone();
+  timeZoneSelect.addEventListener("change", () => {
+    const hint = get("time-zone-hint");
+    try {
+      localStorage.setItem(timeZoneKey, timeZoneSelect.value);
+      hint.textContent = "Saved in this browser.";
+    } catch {
+      hint.textContent = "This browser blocked saving the change.";
+    }
+  });
 }
 
 function element(tag, className, value) {
@@ -81,7 +136,11 @@ function status(id, label, tone = "") {
 
 function setNotices(messages) {
   const notices = get("notices");
-  notices.replaceChildren(...messages.map(([message, tone]) => element("p", "notice " + tone, message)));
+  notices.replaceChildren(...messages.map(([content, tone]) => {
+    const notice = element("p", "notice " + tone);
+    notice.append(...(Array.isArray(content) ? content : [content]));
+    return notice;
+  }));
   notices.hidden = messages.length === 0;
 }
 
@@ -290,13 +349,8 @@ function deploymentEntry(row, prView) {
   else branch.setAttribute("aria-label", "Branch unavailable");
   const when = element("span", "deployment-time");
   const timestamp = row.at || (prView ? row.updatedAt : undefined);
-  if (timestamp) when.append(time(timestamp, activityDateFormat));
+  if (timestamp) when.append(time(timestamp, "compact", row.at ? row.timeLabel : "PR updated"));
   else when.append(element("span", "empty-value", "—"));
-  if (when.firstChild instanceof HTMLTimeElement) {
-    const stamp = when.firstChild;
-    stamp.title = (row.at ? row.timeLabel : "PR updated") + " " + stamp.title;
-    stamp.setAttribute("aria-label", stamp.title);
-  }
 
   const action = element("span", "deployment-action");
   if (row.previewUrl) {
@@ -493,7 +547,7 @@ function renderActivity(loading, stale, { receipts, previewRows }) {
   for (const row of events) {
     const item = element("li");
     item.append(workspaceLink(deploymentPath(row), row.title), element("span", "status " + row.tone, row.label));
-    if (row.at) item.append(time(row.at, activityDateFormat));
+    if (row.at) item.append(time(row.at, "compact"));
     list.append(item);
   }
   group.append(list);
@@ -514,8 +568,8 @@ function render({ loading = false, checked = false } = {}) {
   if (loading) messageList.push(["Checking production and preview status.", ""]);
   if (stale) {
     messageList.push([
-      (fetchFailed ? "Refresh failed. " : "") +
-      "Showing the last available data from " + dateFormat.format(checkedAt) + ". Refresh to check again.",
+      [fetchFailed ? "Refresh failed. " : "", "Showing the last available data from ",
+        time(snapshot.checkedAt), ". Refresh to check again."],
       "warn",
     ]);
   } else if (fetchFailed) {
@@ -531,7 +585,7 @@ function render({ loading = false, checked = false } = {}) {
     "bad",
   ]);
 
-  setNotices(messageList);
+  setNotices(section === "settings" ? [] : messageList);
   renderProduction(snapshot?.production, stale, loading);
   renderProductionReadback(snapshot?.production, stale, loading);
   status("health", healthLabel, healthTone);
@@ -707,9 +761,11 @@ const accountPath = location.pathname.match(/^\/accounts\/[1-9][0-9]{11}(?=\/|$)
 
 function showSection() {
   const deployments = section === "deployments" || section === "detail";
-  const title = { deployments: "Deployments", detail: "Deployment", domains: "Domains", activity: "Activity" }[section] ?? "Overview";
+  const title = { deployments: "Deployments", detail: "Deployment", domains: "Domains", activity: "Activity", settings: "Settings" }[section] ?? "Overview";
   pageTitle.textContent = title;
   document.title = title + " · PAIGE Cloud";
+  get("page-scope").hidden = section === "settings";
+  get("deployment-actions").hidden = section === "settings";
   document.body.classList.toggle("workspace-deployments", deployments);
   if (deployments) {
     const pilotLabel = get("pilot-link");
@@ -717,7 +773,7 @@ function showSection() {
     pilotLabel.classList.remove("primary");
     pilotLabel.append(element("span", "sr", " (new tab)"));
   }
-  for (const name of ["overview", "deployments", "detail", "domains", "activity"]) {
+  for (const name of ["overview", "deployments", "detail", "domains", "activity", "settings"]) {
     get(name + "-panel").hidden = section !== name;
   }
   for (const link of navigation) {
@@ -736,8 +792,9 @@ document.querySelector(".skip-link").addEventListener("click", (event) => {
 });
 const route = location.pathname.slice(accountPath.length);
 const detailId = route.startsWith("/deployments/") ? route.split("/").at(-1) : "";
-const section = detailId ? "detail" : ["/deployments", "/domains", "/activity"].includes(route) ? route.slice(1) : "overview";
+const section = detailId ? "detail" : ["/deployments", "/domains", "/activity", "/settings"].includes(route) ? route.slice(1) : "overview";
 
+initTimeZone();
 showSection();
 for (const button of deploymentViews) {
   button.addEventListener("click", () => {

@@ -425,6 +425,10 @@ details[open] > summary .chevron { transform: rotate(45deg); }
   background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
 }
 .workspace-card h2 { font-size: 1.06rem; }
+.settings-card { max-width: 30rem; gap: .55rem; }
+.settings-card h2 { margin-bottom: .35rem; }
+.time-zone-control { font-size: .9rem; font-weight: 600; }
+.settings-card select { width: min(100%, 20rem); min-width: 0; padding: .5rem .65rem; border: 1px solid var(--line); border-radius: 8px; background: var(--inset); color: var(--fg); }
 .workspace-card .preview-action { justify-self: start; min-height: 44px; }
 .workspace-feed { display: grid; list-style: none; padding: 0; margin: 0; }
 .workspace-feed li { display: flex; align-items: center; flex-wrap: wrap; gap: .45rem .8rem; padding: .65rem 0; font-size: .86rem; overflow-wrap: anywhere; }

@@ -267,10 +267,12 @@ test("owner HTTP surface gates assets and data, rejects tampering, and invalidat
   const cloudCookie = cloudLogin.headers.get("set-cookie").split(";")[0];
   assert.equal((await request("/api/status", { headers: { host: cloudHost, cookie: cloudCookie } })).status, 200);
   assert.equal((await request("/api/status", { headers: { host: aliasHost, cookie: cloudCookie } })).status, 401);
-  for (const page of ["/overview", "/deployments", "/domains", "/activity", "/deployments/release-123-1"]) {
+  for (const page of ["/overview", "/deployments", "/domains", "/activity", "/settings", "/deployments/release-123-1"]) {
     assert.match(await (await request(page, { headers: { cookie } })).text(), /href="\/deployments"/);
     assert.doesNotMatch(await (await request(page)).text(), /Deployment history/);
   }
+  assert.match(await (await request("/settings", { headers: { cookie } })).text(), /id="settings-panel"/);
+  assert.doesNotMatch(await (await request("/settings")).text(), /id="settings-panel"/);
   assert.equal((await request("/api/status", { headers: { cookie: cookie.slice(0, -1) + "?" } })).status, 401);
   const [first, second] = await Promise.all([
     request("/api/status", { headers: { cookie } }),
@@ -534,12 +536,14 @@ test("owner can manage two projects and invitations grant only the selected proj
     if (principal !== ownerId) updateProjectMembership(membershipPath, "grant", principal, "paige", "paige-agent-ai");
     assert.deepEqual(await (await at("/api/status", cookie)).json(), { receipt: "fixture" });
   }
-  const beforeCrossing = resolutions;
   const ownerPath = scopes.get(ownerCookie);
   const amberPath = scopes.get(amberCookie);
   assert.notEqual(ownerPath, amberPath);
+  assert.ok((await (await at("/projects", ownerCookie)).text()).includes(`href="${ownerPath}/settings"`));
+  assert.match(await (await request(ownerPath + "/settings", { headers: { cookie: ownerCookie } })).text(), /id="settings-panel"/);
+  const beforeCrossing = resolutions;
   for (const [cookie, otherPath] of [[ownerCookie, amberPath], [amberCookie, ownerPath]]) {
-    for (const path of ["/overview", "/deployments", "/projects", amberMembers, "/api/status"]) {
+    for (const path of ["/overview", "/deployments", "/settings", "/projects", amberMembers, "/api/status"]) {
       assert.equal((await request(otherPath + path, { headers: { cookie } })).status, 404);
     }
     assert.equal((await form(otherPath + amberMembers, { action: "invite", email: "wrong-scope@example.test" }, cookie)).status, 404);

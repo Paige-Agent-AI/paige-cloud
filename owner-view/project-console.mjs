@@ -33,7 +33,8 @@ export function shell(title, body, showDeployments, remaining, accountPath, acti
 ${showDeployments ? `<a href="${accountPath}/overview">Overview</a><a href="${accountPath}/deployments">Deployments</a>` : ""}
 <a href="${accountPath}/projects"${active === "projects" ? ' aria-current="page"' : ""}>Projects</a>
 ${showDeployments ? `<a href="${accountPath}/domains">Domains</a><a href="${accountPath}/activity">Activity</a>
-<a href="${accountPath}/projects/paige/paige-agent-ai/media"${active === "media" ? ' aria-current="page"' : ""}>Media</a>` : ""}</nav>
+<a href="${accountPath}/projects/paige/paige-agent-ai/media"${active === "media" ? ' aria-current="page"' : ""}>Media</a>
+<a href="${accountPath}/settings">Settings</a>` : ""}</nav>
 <main id="main" class="project-main" tabindex="-1" data-session-remaining="${remaining}" data-project-home="${accountPath}/projects" hidden><h1>${escape(title)}</h1>${body}</main>
 <noscript><p>Enable JavaScript to open your projects.</p></noscript></div></body></html>`;
 }
