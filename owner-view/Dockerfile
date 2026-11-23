@@ -12,7 +12,7 @@ COPY --chown=node:node package.json package-lock.json ./
 USER root
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 USER node
-COPY --chown=node:node server.mjs media.mjs media-pilot.mjs projects.mjs project-console.mjs memberships.mjs accounts.mjs status.mjs release-ledger.json production-receipts.mjs production-receipts.json pr-previews.mjs ./
+COPY --chown=node:node server.mjs media.mjs media-pilot.mjs projects.mjs project-console.mjs memberships.mjs accounts.mjs status.mjs release-ledger.json production-receipts.mjs production-receipts.json pr-previews.mjs github-builds.mjs ./
 COPY --chown=node:node public/ ./public/
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \

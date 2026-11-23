@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { accountPath, normalizeEmail, openAccounts, validCode, validPassword } from "./accounts.mjs";
 import { openProjectCatalog } from "./memberships.mjs";
@@ -8,6 +9,7 @@ import { matchProjectPage, projectPage } from "./project-console.mjs";
 import { createStreamProvider, mediaPage } from "./media.mjs";
 import { createMediaPilot, handleMediaPilot, matchPilotPage } from "./media-pilot.mjs";
 import { createPaigeProjectAccess, firstProject, parseProjectStatusPath } from "./projects.mjs";
+import { createPreviewDispatch, openGitHubBuilds } from "./github-builds.mjs";
 
 const readAsset = (file) => readFileSync(new URL("./public/" + file, import.meta.url));
 const sessionName = "__Host-paige_owner";
@@ -17,8 +19,9 @@ const maxBodyBytes = 4096;
 const accountNumberPattern = /^[1-9][0-9]{11}$/;
 const accountRoutePattern = /^\/accounts\/([1-9][0-9]{11})(\/[^\r\n]*)?$/;
 const dashboardPages = new Set(["/", "/overview", "/deployments", "/domains", "/activity"]);
-const deploymentPage = /^\/deployments\/(?:release-[1-9]\d{0,19}-[1-9]\d{0,19}|history-[a-z0-9]{1,64}|pr-[1-9]\d{0,9}-[a-f0-9]{40})$/;
+const deploymentPage = /^\/deployments\/(?:release-[1-9]\d{0,19}-[1-9]\d{0,19}|history-[a-z0-9]{1,64}|pr-[1-9]\d{0,9}-[a-f0-9]{40}|live-[a-f0-9]{40})$/;
 const isDashboardPage = (path) => dashboardPages.has(path) || deploymentPage.test(path);
+const buildEventsPath = "/api/organizations/paige/projects/paige-agent-ai/deployment-events";
 const headers = {
   "Cache-Control": "no-store, max-age=0",
   "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
@@ -75,7 +78,7 @@ function throttle(maxAttempts, maxPerEmail, maxConcurrent) {
 }
 
 export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
-  passwordHash, accounts, catalog, stream, mediaPilot, hlsPlayer, projectAccess: resolveRead }) {
+  passwordHash, accounts, catalog, stream, mediaPilot, hlsPlayer, githubBuilds, projectAccess: resolveRead }) {
   const allowedOrigins = new Map();
   for (const value of [origin, ...(aliasOrigin ? [aliasOrigin] : []), ...additionalOrigins]) {
     const url = new URL(value);
@@ -100,6 +103,7 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
   const limitSignUp = throttle(10, 4, 1);
   const limitSetup = throttle(5, 5, 1);
   const statusCache = new WeakMap();
+  const eventStreams = new Map();
 
   function authPage(mode, status, message = "") {
     const signIn = mode === "/session";
@@ -150,15 +154,47 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
   }
 
   function getStatus(reader) {
+    const mainVersion = githubBuilds?.mainVersion();
     const entry = statusCache.get(reader) ?? { cachedAt: -Infinity };
     statusCache.set(reader, entry);
-    if (Date.now() - entry.cachedAt < 3500) return Promise.resolve(entry.snapshot);
+    if (entry.mainVersion === mainVersion && Date.now() - entry.cachedAt < 3500) return Promise.resolve(entry.snapshot);
+    if (entry.pending && entry.pendingVersion !== mainVersion) return entry.pending.then(() => getStatus(reader));
+    entry.pendingVersion = mainVersion;
     entry.pending ??= Promise.resolve().then(reader.read).then((snapshot) => {
       entry.snapshot = snapshot;
+      entry.mainVersion = mainVersion;
       entry.cachedAt = Date.now();
       return snapshot;
     }).finally(() => { entry.pending = undefined; });
     return entry.pending;
+  }
+
+  function watchGitHubBuilds(id, session, response) {
+    const count = eventStreams.get(id) ?? 0;
+    if (count >= 3) { send(response, 429, text, "Too many event streams"); return; }
+    eventStreams.set(id, count + 1);
+    response.writeHead(200, { ...headers, "Content-Type": "text/event-stream", "X-Accel-Buffering": "no" });
+    function write(data) {
+      try {
+        if (sessions.get(id) === session && session.expires > Date.now() && resolveRead(session.principalId, firstProject) &&
+            response.write(data)) return;
+      } catch {
+        // Close the stream if current access cannot be established.
+      }
+      response.end();
+    }
+    // Recheck grants on each event and while the stream is idle.
+    const publish = (rows) => write(`event: builds\ndata: ${JSON.stringify({ rows: rows.slice(0, 20), mainVersion: githubBuilds.mainVersion(), now: Date.now() })}\n\n`);
+    const unsubscribe = githubBuilds.subscribe(publish);
+    const heartbeat = setInterval(() => write(": keepalive\n\n"), 15_000).unref();
+    response.once("close", () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+      const remaining = (eventStreams.get(id) ?? 1) - 1;
+      if (remaining) eventStreams.set(id, remaining);
+      else eventStreams.delete(id);
+    });
+    publish(githubBuilds.snapshot());
   }
 
   async function handle(request, response) {
@@ -181,6 +217,11 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
       send(response, 405, text, "Method not allowed", { Allow: "GET, POST" });
       return;
     }
+    if (path === "/hooks/github-builds" && githubBuilds) {
+      if (method !== "POST") { send(response, 405, text, "Method not allowed", { Allow: "POST" }); return; }
+      send(response, await githubBuilds.receive(request), text, "");
+      return;
+    }
     const id = sessionId(request);
     const now = Date.now();
     const session = sessions.get(id);
@@ -195,15 +236,23 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
         return;
       }
       path = match[2] ?? "/";
-      if (!(isDashboardPage(path) || matchProjectPage(path) || matchPilotPage(path) || parseProjectStatusPath(path))) {
+      if (!(isDashboardPage(path) || matchProjectPage(path) || matchPilotPage(path) || parseProjectStatusPath(path) || path === buildEventsPath)) {
         send(response, 404, text, "Not found");
         return;
       }
       if (!authorized) {
-        const signIn = method === "GET" && !parseProjectStatusPath(path) && (matchPilotPage(path)?.suffix ?? "") === "";
+        const signIn = method === "GET" && !parseProjectStatusPath(path) && path !== buildEventsPath && (matchPilotPage(path)?.suffix ?? "") === "";
         send(response, signIn ? 303 : 401, text, "Sign in required", signIn ? { Location: "/sign-in" } : {});
         return;
       }
+    }
+    if (path === buildEventsPath) {
+      if (!authorized) { send(response, 401, text, "Sign in required"); return; }
+      if ((accountPath && !numbered) || !resolveRead(session.principalId, firstProject)) { send(response, 404, text, "Not found"); return; }
+      if (method !== "GET") { send(response, 405, text, "Method not allowed", { Allow: "GET" }); return; }
+      if (!githubBuilds) { send(response, 204, text, ""); return; }
+      watchGitHubBuilds(id, session, response);
+      return;
     }
     const projectRoute = catalog && matchProjectPage(path);
     const pilotRoute = catalog && matchPilotPage(path);
@@ -400,6 +449,9 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
   const membershipPath = process.env.OWNER_VIEW_MEMBERSHIP_DB;
   const store = openProjectCatalog(membershipPath);
   const accounts = openAccounts(accountPath(membershipPath), membershipPath);
+  const githubBuilds = process.env.OWNER_VIEW_GITHUB_BUILD_WEBHOOK_SECRET && openGitHubBuilds(
+    join(dirname(membershipPath), "github-builds.sqlite"), process.env.OWNER_VIEW_GITHUB_BUILD_WEBHOOK_SECRET, Date.now,
+    createPreviewDispatch(process.env.OWNER_VIEW_PREVIEW_DISPATCH_TOKEN));
   const server = createOwnerServer({
     origin: process.env.OWNER_VIEW_ORIGIN,
     aliasOrigin: process.env.OWNER_VIEW_ALIAS_ORIGIN,
@@ -408,6 +460,7 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
     passwordHash: process.env.OWNER_VIEW_PASSWORD_SHA256,
     accounts,
     catalog: store,
+    githubBuilds,
     mediaPilot: createMediaPilot({ origin: process.env.OWNER_VIEW_MEDIA_PILOT_ORIGIN, key: process.env.OWNER_VIEW_MEDIA_PILOT_KEY }),
     hlsPlayer: process.env.OWNER_VIEW_MEDIA_PILOT_ORIGIN &&
       readFileSync(new URL("./node_modules/hls.js/dist/hls.min.js", import.meta.url)),
@@ -417,8 +470,8 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
       host: process.env.OWNER_VIEW_STREAM_PLAYBACK_HOST,
     }),
     projectAccess: createPaigeProjectAccess(process.env.OWNER_VIEW_COOLIFY_TOKEN, store.hasProjectRead,
-      process.env.OWNER_VIEW_PREVIEW_ACTIONS_TOKEN),
+      process.env.OWNER_VIEW_PREVIEW_ACTIONS_TOKEN, githubBuilds?.mainVersion),
   });
-  server.once("close", () => { accounts.close(); store.close(); });
+  server.once("close", () => { accounts.close(); store.close(); if (githubBuilds) githubBuilds.close(); });
   server.listen(8080, "0.0.0.0", () => console.log("PAIGE Cloud owner view is ready"));
 }

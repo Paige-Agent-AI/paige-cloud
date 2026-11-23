@@ -191,9 +191,51 @@ export async function readProductionStatus(fetchFrom = fetch) {
   };
 }
 
-export async function readOwnerStatus(token, fetchFrom = fetch) {
+export function createProductionStatusReader(fetchFrom = fetch, clock = Date.now, mainVersion = () => 0) {
+  let cachedMain;
+  let pendingMain;
+  let pendingVersion;
+
+  async function readMain() {
+    try {
+      const response = await fetchFrom("https://api.github.com/repos/Paige-Agent-AI/Paige-Agent-AI/git/ref/heads/main", {
+        headers: { Accept: "application/vnd.github+json", "User-Agent": "PAIGE-Cloud" },
+        redirect: "error", cache: "no-store", signal: AbortSignal.timeout(5500),
+      });
+      if (response.status !== 200) {
+        await response.body?.cancel();
+        return null;
+      }
+      const ref = JSON.parse(await readBody(response, 8192));
+      const sha = ref?.object?.sha;
+      return ref?.ref === "refs/heads/main" && ref.object?.type === "commit" &&
+        typeof sha === "string" && sha.length === 40 && commitId.test(sha) ? sha : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function getMain() {
+    const version = mainVersion();
+    if (cachedMain?.version === version && clock() < cachedMain.expiresAt) return Promise.resolve(cachedMain.commit);
+    if (pendingMain && pendingVersion !== version) return pendingMain.then(getMain);
+    pendingVersion = version;
+    pendingMain ??= readMain().then((commit) => {
+      cachedMain = { commit, version, expiresAt: clock() + (commit ? 180_000 : 60_000) };
+      return commit;
+    }).finally(() => { pendingMain = undefined; });
+    return pendingMain;
+  }
+
+  return async () => {
+    const [production, mainCommit] = await Promise.all([readProductionStatus(fetchFrom), getMain()]);
+    return { ...production, mainCommit };
+  };
+}
+
+export async function readOwnerStatus(token, fetchFrom = fetch, readProduction = () => readProductionStatus(fetchFrom)) {
   const [preview, production] = await Promise.all([
-    readPreviewStatus(token, fetchFrom), readProductionStatus(fetchFrom),
+    readPreviewStatus(token, fetchFrom), readProduction(),
   ]);
   return { ...preview, production };
 }

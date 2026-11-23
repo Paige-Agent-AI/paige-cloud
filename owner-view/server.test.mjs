@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { mkdtempSync, readFileSync, rmSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
@@ -13,6 +13,7 @@ import { createProjectAccess, firstProject, ownerId } from "./projects.mjs";
 import { createOwnerServer } from "./server.mjs";
 import { createStreamProvider } from "./media.mjs";
 import { createMediaPilot, pilotPath } from "./media-pilot.mjs";
+import { openGitHubBuilds } from "./github-builds.mjs";
 
 const origin = "https://owner.example.test";
 const alias = "https://cloud.example.test";
@@ -169,7 +170,7 @@ test("backfills account numbers for existing credential records and preserves th
   }
 });
 
-async function startServer(t, projectAccess, principalId = ownerId, realAccounts, catalog, stream, mediaPilot) {
+async function startServer(t, projectAccess, principalId = ownerId, realAccounts, catalog, stream, mediaPilot, githubBuilds) {
   const password = randomBytes(32).toString("base64url");
   const key = randomBytes(32).toString("base64url");
   const server = createOwnerServer({
@@ -179,6 +180,7 @@ async function startServer(t, projectAccess, principalId = ownerId, realAccounts
     catalog,
     stream,
     mediaPilot,
+    githubBuilds,
     accounts: realAccounts ?? {
       hasOwner: () => true,
       isOwnerEmail: (email) => principalId === ownerId && email === ownerEmail,
@@ -194,7 +196,7 @@ async function startServer(t, projectAccess, principalId = ownerId, realAccounts
       const chunks = [];
       incoming.on("data", (chunk) => chunks.push(chunk));
       incoming.on("error", reject);
-      incoming.on("end", () => resolve(new Response(Buffer.concat(chunks), {
+      incoming.on("end", () => resolve(new Response(incoming.statusCode === 204 ? null : Buffer.concat(chunks), {
         status: incoming.statusCode, headers: incoming.headers,
       })));
     });
@@ -205,8 +207,45 @@ async function startServer(t, projectAccess, principalId = ownerId, realAccounts
     method: "POST", headers: { origin: suppliedOrigin, "content-type": "application/x-www-form-urlencoded" },
     body: "email=" + ownerEmail + "&password=" + secret,
   });
-  return { request, login, password, key };
+  return { request, login, password, key, base };
 }
+
+test("streams signed build updates only while the reader's session and project grant are valid", async (t) => {
+  const secret = "d".repeat(64);
+  const builds = openGitHubBuilds(":memory:", secret);
+  let allowed = true;
+  const access = createProjectAccess([{ ...firstProject, readStatus: async () => ({}), environments: {} }], () => allowed);
+  const { request, login, base } = await startServer(t, access, ownerId, undefined, undefined, undefined, undefined, builds);
+  t.after(() => builds.close());
+  const url = "/api/organizations/paige/projects/paige-agent-ai/deployment-events";
+  assert.equal((await request(url)).status, 401);
+  const signedIn = await login();
+  const cookie = signedIn.headers.get("set-cookie").split(";")[0];
+  const incoming = await new Promise((resolve, reject) => {
+    const outgoing = httpRequest(base + url, { headers: { host: "owner.example.test", "x-forwarded-proto": "https", cookie } }, resolve);
+    outgoing.on("error", reject);
+    outgoing.end();
+  });
+  t.after(() => incoming.destroy());
+  assert.equal(incoming.statusCode, 200);
+  assert.equal(incoming.headers["content-type"], "text/event-stream");
+  const events = incoming[Symbol.asyncIterator]();
+  assert.match((await events.next()).value.toString(), /"rows":\[\]/);
+  const repo = { full_name: "Paige-Agent-AI/Paige-Agent-AI" };
+  const payload = (number) => JSON.stringify({ repository: repo, action: "opened", pull_request: {
+    number, base: { ref: "main", repo }, head: { repo, sha: "f".repeat(40) }, updated_at: new Date().toISOString(),
+  } });
+  const deliver = (body, valid = true) => request("/hooks/github-builds", { method: "POST", body, headers: {
+    "x-github-event": "pull_request", "x-hub-signature-256": "sha256=" + createHmac("sha256", valid ? secret : "test").update(body).digest("hex"),
+  } });
+  assert.equal((await deliver(payload(38), false)).status, 401);
+  assert.equal((await deliver(payload(38))).status, 204);
+  assert.match((await events.next()).value.toString(), /"pull":38/);
+  allowed = false;
+  assert.equal((await deliver(payload(39))).status, 204);
+  assert.equal((await events.next()).done, true);
+  assert.equal((await request(url, { headers: { cookie } })).status, 404);
+});
 
 test("owner HTTP surface gates assets and data, rejects tampering, and invalidates logout", async (t) => {
   let reads = 0;
@@ -267,7 +306,7 @@ test("owner HTTP surface gates assets and data, rejects tampering, and invalidat
   const cloudCookie = cloudLogin.headers.get("set-cookie").split(";")[0];
   assert.equal((await request("/api/status", { headers: { host: cloudHost, cookie: cloudCookie } })).status, 200);
   assert.equal((await request("/api/status", { headers: { host: aliasHost, cookie: cloudCookie } })).status, 401);
-  for (const page of ["/overview", "/deployments", "/domains", "/activity", "/deployments/release-123-1"]) {
+  for (const page of ["/overview", "/deployments", "/domains", "/activity", "/deployments/release-123-1", "/deployments/live-" + "a".repeat(40)]) {
     assert.match(await (await request(page, { headers: { cookie } })).text(), /href="\/deployments"/);
     assert.doesNotMatch(await (await request(page)).text(), /Deployment history/);
   }

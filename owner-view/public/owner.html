@@ -87,10 +87,15 @@
           <span class="production-strip-name">Production domains</span>
           <span class="status" id="receipt-health">Checking</span>
           <span class="production-strip-commit" id="receipt-current"></span>
+          <span class="production-strip-commit" id="receipt-main"></span>
           <span class="chevron" aria-hidden="true"></span>
         </summary>
         <p class="small muted" id="receipt-match"></p>
         <ul class="production-domains" id="receipt-domains" aria-label="Production health checks"></ul>
+      </details>
+      <details class="production-strip" id="github-builds" hidden>
+        <summary><span class="production-strip-name">GitHub builds</span><span class="production-strip-commit" id="github-build-latest"></span><span class="chevron" aria-hidden="true"></span></summary>
+        <ul class="workspace-feed" id="github-build-list" aria-label="Recent GitHub builds"></ul>
       </details>
       <div class="deployment-toolbar">
         <div class="deployment-views" role="group" aria-label="Deployment view">
@@ -104,6 +109,7 @@
           <label><span class="sr">Deployment status</span><select id="deployment-status">
             <option value="">All statuses</option>
             <option value="ready">Successful</option>
+            <option value="receipt-unavailable">Receipt unavailable</option>
             <option value="built">Build passed</option>
             <option value="in-progress">In progress</option>
             <option value="queued">Queued</option>
