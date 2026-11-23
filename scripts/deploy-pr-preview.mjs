@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { setTimeout } from "node:timers/promises";
-import { previewUrlFor } from "../owner-view/pr-previews.mjs";
+import { dedicatedPreviewIp, previewUrlFor } from "../owner-view/pr-previews.mjs";
 
 const receiptPath = process.argv[2];
 assert.ok(receiptPath, "Usage: node scripts/deploy-pr-preview.mjs <paige-pr-preview.json>");
@@ -28,15 +28,20 @@ if (automated) {
 const digest = /^ghcr\.io\/paige-agent-ai\/paige-agent-ai-pr-preview@sha256:([a-f0-9]{64})$/.exec(receipt.image ?? "")?.[1];
 assert.ok(digest, "The preview-only registry digest is required.");
 const tag = `sha256-${digest}`;
-const domain = previewUrlFor(pr, !automated);
+const previewIp = automated ? dedicatedPreviewIp(process.env.PAIGE_PREVIEW_PUBLIC_IP) : undefined;
+const domain = previewUrlFor(pr, !automated, previewIp);
 const name = `paige-pr-preview-${pr}`;
 const project = automated ? process.env.PAIGE_PREVIEW_PROJECT : "mvokcozpkh3u8grmordxzjly";
 const environment = automated ? process.env.PAIGE_PREVIEW_ENVIRONMENT : "igihntzdp7htuxz6yqxdx3ql";
 const environmentName = automated ? "pull-requests" : "f2-preview";
-const destination = automated ? process.env.PAIGE_PREVIEW_DESTINATION : "qhj2gr632xrfotx24vphy98v";
+const sharedDestination = "qhj2gr632xrfotx24vphy98v";
+const destination = automated ? process.env.PAIGE_PREVIEW_DESTINATION : sharedDestination;
 const sharedServer = "p2mh5nemklmkmb6rtnuw8swd";
 const server = automated ? process.env.PAIGE_PREVIEW_SERVER : sharedServer;
-if (automated) assert.notEqual(server, sharedServer, "Automatic provisioning requires a separate preview server.");
+if (automated) {
+  assert.notEqual(server, sharedServer, "Automatic provisioning requires a separate preview server.");
+  assert.notEqual(destination, sharedDestination, "Automatic provisioning requires a separate Docker destination.");
+}
 const resourceId = /^[a-z0-9]{20,32}$/;
 for (const id of [project, environment, destination, server]) assert.match(id ?? "", resourceId);
 const coolifyBase = "https://app.coolify.io/api/v1";
@@ -118,6 +123,7 @@ assert.equal(app.health_check_path, "/healthz");
 if (automated) assert.equal(app.health_check_enabled, true);
 const destinations = await coolify(`${path}/destinations`);
 assert.deepEqual(destinations.map((item) => item.uuid), [destination]);
+if (automated) assert.equal(destinations[0].server_uuid, server, "The preview Docker destination must belong to its dedicated server.");
 assert.deepEqual(await coolify(`${path}/envs`), [], "A visual preview must have no configured environment variables.");
 
 async function verifiesLive() {

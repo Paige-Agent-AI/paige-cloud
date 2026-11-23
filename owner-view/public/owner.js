@@ -269,9 +269,12 @@ function historyEntry(deployment) {
 }
 
 function pullEntry(row, stale) {
-  const expected = "https://pr-" + row.number + ".preview.179.66.154.248.sslip.io";
-  const knownUrl = row.previewUrl === expected || (row.number === 3365 &&
-    row.previewUrl === "https://pr-3365-56f13b6.179.66.154.248.sslip.io");
+  const publicIp = previewRunData?.publicIp;
+  const expected = Number.isSafeInteger(row.number) && row.number > 0 && /^(?:\d{1,3}\.){3}\d{1,3}$/.test(publicIp ?? "")
+    ? "https://pr-" + row.number + ".preview." + publicIp + ".sslip.io" : undefined;
+  const knownUrl = Boolean(row.previewUrl && (row.previewUrl === expected ||
+    (row.number === 3365 && row.previewUrl === "https://pr-3365-56f13b6.179.66.154.248.sslip.io") ||
+    (row.number === 3398 && row.previewUrl === "https://pr-3398.preview.179.66.154.248.sslip.io")));
   const previewUrl = knownUrl && !stale && row.build === "built" ? row.previewUrl : undefined;
   const [label, tone, state] = previewUrl ? ["Ready", "good", "ready"] :
     Object.hasOwn(previewLabels, row.build) ? previewLabels[row.build] : previewLabels.unknown;

@@ -24,6 +24,8 @@ The private Cloud repository's `paige-pr-previews` environment admits only its `
 
 Use a separate preview server for the unattended Coolify Write credential. Bootstrap a resource in the dedicated preview scope on that server before enabling automatic application provisioning. Coolify lets a project-scoped token place resources only on servers already hosting a resource in its scope. Project-scoped Write permissions can reach the underlying Docker host. Keep the deployment switch off for shared hosting. Signed events still build the preview image, and an operator can deploy a verified pilot receipt.
 
+Set `PAIGE_PREVIEW_PUBLIC_IP` in both the private GitHub preview environment and the PAIGE Cloud console runtime. Each preview uses `https://pr-<number>.preview.<public-ip>.sslip.io`. Check that the preview server's public ports 80 and 443 reach its Coolify proxy and that the server can pull the preview image by digest. Keep the two IP settings in sync when moving hosts.
+
 Use one signed delivery from GitHub and follow it through Actions, Coolify, and the console to verify a rollout. Check the full commit in `release.json` and the health response in `/healthz`. Before retrying a timed-out rollout, look up the existing Coolify deployment. Use **Re-run all jobs** so the build and deploy jobs share the same workflow attempt. Builds reject run receipts for an old PR head or a different workflow attempt.
 
 ## Production release history
