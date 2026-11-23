@@ -270,9 +270,12 @@ function historyEntry(deployment) {
 
 function pullEntry(row, stale) {
   const publicIp = previewRunData?.publicIp;
+  const pagesProject = previewRunData?.pagesProject;
   const expected = Number.isSafeInteger(row.number) && row.number > 0 && /^(?:\d{1,3}\.){3}\d{1,3}$/.test(publicIp ?? "")
     ? "https://pr-" + row.number + ".preview." + publicIp + ".sslip.io" : undefined;
-  const knownUrl = Boolean(row.previewUrl && (row.previewUrl === expected ||
+  const pagesUrl = Number.isSafeInteger(row.number) && row.number > 0 && /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(pagesProject ?? "")
+    ? "https://pr-" + row.number + "." + pagesProject + ".pages.dev" : undefined;
+  const knownUrl = Boolean(row.previewUrl && (row.previewUrl === expected || row.previewUrl === pagesUrl ||
     (row.number === 3365 && row.previewUrl === "https://pr-3365-56f13b6.179.66.154.248.sslip.io") ||
     (row.number === 3398 && row.previewUrl === "https://pr-3398.preview.179.66.154.248.sslip.io")));
   const previewUrl = knownUrl && !stale && row.build === "built" ? row.previewUrl : undefined;
