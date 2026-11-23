@@ -9,6 +9,10 @@ const pilot = {
   url: "https://pr-3365-56f13b6.179.66.154.248.sslip.io", state: "built",
 };
 
+export function previewUrlFor(number, legacy = false) {
+  return legacy && number === pilot.number ? pilot.url : `https://pr-${number}.preview.179.66.154.248.sslip.io`;
+}
+
 function timestamp(value) {
   const milliseconds = typeof value === "string" ? Date.parse(value) : NaN;
   return Number.isFinite(milliseconds) ? new Date(milliseconds).toISOString() : undefined;
@@ -21,6 +25,15 @@ async function readJson(url, fetchFrom, headers, signal) {
   } catch {
     return undefined;
   }
+}
+
+async function isHealthy(url, fetchFrom, signal) {
+  try {
+    const response = await fetchFrom(`${url}/healthz`, { redirect: "error", signal });
+    if (response.status === 200) return (await response.text()).trim() === "ok";
+    await response.body?.cancel();
+  } catch {}
+  return false;
 }
 
 function pullRows(pulls) {
@@ -90,15 +103,21 @@ export function createPrPreviewReader(actionsToken, fetchFrom = fetch, clock = D
         row.buildCreatedAt = latest?.createdAt;
       }
       if (row.build === "built") {
-        const url = row.number === pilot.number ? pilot.url : `https://pr-${row.number}.preview.179.66.154.248.sslip.io`;
-        candidates.push({ row, url, cloud: latest.cloud });
+        const urls = [previewUrlFor(row.number)];
+        if (row.number === pilot.number) urls.push(pilot.url);
+        candidates.push({ row, urls, cloud: latest.cloud });
       }
     }
     // Bound probe concurrency. No credentials or PR-provided URLs go to preview hosts.
     for (let index = 0; index < candidates.length && !signal.aborted; index += 8) {
-      await Promise.all(candidates.slice(index, index + 8).map(async ({ row, url, cloud }) => {
-        const live = await readJson(`${url}/release.json`, fetchFrom, {}, signal);
-        if (live?.frontendCommit === row.commit && live.cloudCommit === cloud) row.previewUrl = url;
+      await Promise.all(candidates.slice(index, index + 8).map(async ({ row, urls, cloud }) => {
+        for (const url of urls) {
+          const live = await readJson(`${url}/release.json`, fetchFrom, {}, signal);
+          if (live?.frontendCommit !== row.commit || live.cloudCommit !== cloud) continue;
+          if (!await isHealthy(url, fetchFrom, signal)) continue;
+          row.previewUrl = url;
+          break;
+        }
       }));
     }
     return { state: "ready", builds: canResolve ? "available" : canReadBuilds ? "unavailable" : "unconfigured",

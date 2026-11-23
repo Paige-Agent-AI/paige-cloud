@@ -213,7 +213,7 @@ function observedProductionEntry(production) {
 }
 
 function productionEntry(receipt, production, stale) {
-  const current = !stale && receipt.commit === production.receiptCommit;
+  const current = !stale && receipt.deployment === production.receiptDeployment;
   return {
     id: "release-" + receipt.runId + "-" + receipt.attempt,
     title: "PR #" + receipt.pullRequest + " · Production release",
@@ -232,6 +232,18 @@ function productionEntry(receipt, production, stale) {
       receiptLink("/actions/runs/" + receipt.runId + "/artifacts/" + receipt.artifactId, "Download release receipt")],
     domains: current ? production.domains : [],
     search: "PR #" + receipt.pullRequest + " " + receipt.deployment,
+  };
+}
+
+function productionProviderEntry(deployment, stale) {
+  const [label, tone, state] = deployment.status === "finished" ? ["Finished · Receipt unavailable", "warn", "receipt-unavailable"]
+    : deploymentLabels[deployment.status] ?? ["Unknown", "warn", "unknown"];
+  return {
+    id: "history-" + deployment.id, title: "Production rollout", environment: "Production",
+    status: state, label: stale ? "Last recorded · " + label : label, tone: stale ? "warn" : tone,
+    at: deployment.at, timeLabel: "Coolify activity", elapsed: deployment.elapsedSeconds,
+    fields: [["Coolify deployment", element("code", "", deployment.id)], ["Release receipt", "Unavailable for this rollout"]],
+    search: deployment.id,
   };
 }
 
@@ -356,17 +368,23 @@ function deploymentIndex(stale) {
   const productionStale = stale || !productionAt || Date.now() - productionAt.getTime() >= staleAfterMs;
   const pullRows = (previewRunData?.rows ?? []).map((row) => pullEntry(row, previewStale));
   const receipts = (production?.receipts ?? []).map((receipt) => productionEntry(receipt, production, productionStale));
+  const receiptDeployments = new Set((production?.receipts ?? []).map((receipt) => receipt.deployment));
+  const providerRows = (production?.deployments ?? []).filter((row) => !receiptDeployments.has(row.id))
+    .map((row) => productionProviderEntry(row, productionStale || production.providerSource === "stale"));
   const observed = productionStale ? null : observedProductionEntry(production);
   const history = (snapshot?.history ?? []).map(historyEntry);
-  return { previewStale, productionStale, pullRows, receipts, observed, history, previewRows: [...pullRows.filter((row) => row.hasBuild), ...history] };
+  return {
+    previewStale, productionStale, pullRows, receipts, observed, history,
+    productionRows: [...(observed ? [observed] : []), ...receipts, ...providerRows],
+    previewRows: [...pullRows.filter((row) => row.hasBuild), ...history],
+  };
 }
 
 function renderDeployments(loading, index) {
   const output = get("deployment-rows");
   const list = get("deployment-summary");
   const empty = get("empty");
-  const { previewStale, productionStale, pullRows, receipts, observed, previewRows } = index;
-  const productionRows = observed ? [observed, ...receipts] : receipts;
+  const { previewStale, productionStale, pullRows, productionRows, previewRows } = index;
   const prView = deploymentView === "pull-requests";
   const entries = prView ? pullRows : deploymentView === "production" ? productionRows :
     deploymentView === "preview" ? previewRows : [...productionRows, ...previewRows];
@@ -379,6 +397,15 @@ function renderDeployments(loading, index) {
     .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || (date(b.at || (prView && b.updatedAt))?.getTime() ?? 0)
       - (date(a.at || (prView && a.updatedAt))?.getTime() ?? 0));
   const notes = [];
+  if (!prView && deploymentView !== "preview" && snapshot?.production) {
+    const { providerSource, receiptSource } = snapshot.production;
+    if (providerSource === "stale") notes.push("Showing last recorded Coolify rollouts");
+    else if (providerSource === "partial") notes.push("Showing part of Coolify production history");
+    else if (providerSource !== "available") notes.push("Full Coolify production history unavailable");
+    if (receiptSource === "checking") notes.push("Checking GitHub receipts");
+    if (receiptSource === "unconfigured") notes.push("GitHub receipt sync not connected");
+    if (["unavailable", "partial"].includes(receiptSource)) notes.push("Some GitHub receipts may be missing");
+  }
   if (deploymentView !== "production") {
     if (previewRequest || (loading && !previewRunData)) notes.push("Checking PR previews");
     else if (!previewRunData || previewFetchFailed) notes.push("PR preview status unavailable");
@@ -387,7 +414,10 @@ function renderDeployments(loading, index) {
     if (previewRunData?.partial) notes.push("Showing the first " + pullRows.length + " open PRs");
     if (!prView && snapshot && !Array.isArray(snapshot.history)) notes.push("Coolify history unavailable");
   }
-  const count = rows.length === entries.length ? String(rows.length) : rows.length + " of " + entries.length;
+  const records = entries.filter((row) => !row.id.startsWith("live-")).length;
+  const visibleRecords = rows.filter((row) => !row.id.startsWith("live-")).length;
+  if (rows.some((row) => row.id.startsWith("live-"))) notes.unshift("Live source shown separately");
+  const count = visibleRecords === records ? String(records) : visibleRecords + " of " + records;
   list.textContent = [count + (prView ? " open PRs" : " deployments"), ...notes].join(" · ");
   if (prView) output.setAttribute("aria-label", "Open pull requests");
   else output.setAttribute("aria-label", "Deployments");
@@ -431,9 +461,9 @@ function card(title) {
   return panel;
 }
 
-function renderDetail(loading, { receipts, observed, history, pullRows }) {
+function renderDetail(loading, { productionRows, history, pullRows }) {
   const panel = get("detail-panel");
-  const row = observed?.id === detailId ? observed : [...receipts, ...history, ...pullRows].find((item) => item.id === detailId);
+  const row = [...productionRows, ...history, ...pullRows].find((item) => item.id === detailId);
   const key = JSON.stringify([row, snapshot?.checkedAt, previewRunData?.checkedAt, loading, !!previewRequest]);
   if (panel.dataset.renderKey === key) return;
   panel.dataset.renderKey = key;
@@ -515,10 +545,11 @@ function renderDomains(loading, stale) {
   panel.replaceChildren(group);
 }
 
-function renderActivity(loading, stale, { receipts, previewRows }) {
+function renderActivity(loading, stale, { productionRows, previewRows }) {
   const panel = get("activity-panel");
   const group = card("Release and build events");
-  const events = [...receipts, ...previewRows].sort((a, b) => (date(b.at)?.getTime() ?? 0) - (date(a.at)?.getTime() ?? 0));
+  const events = [...productionRows, ...previewRows].filter((row) => date(row.at))
+    .sort((a, b) => date(b.at).getTime() - date(a.at).getTime());
   if (stale || previewFetchFailed) group.append(element("p", "muted small", "Showing available recorded activity."));
   if (!events.length) group.append(element("p", "muted", loading ? "Loading release activity…" : "No recorded release activity."));
   const list = element("ol", "workspace-feed");

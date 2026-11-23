@@ -16,4 +16,18 @@ EXPECTED_CLOUD_COMMIT="$(git rev-parse HEAD)" bash scripts/build-preview.sh paig
 
 The GitHub Actions workflow runs the same script before publishing. To run a published image locally, set `PAIGE_PREVIEW_IMAGE` to the recorded `ghcr.io/paige-agent-ai/paige-cloud-preview@sha256:…` digest and run `docker compose up`. Compose binds port 8080 to localhost.
 
+## Pull request previews
+
+The signed GitHub webhook queues a preview for each new head of a same-repository PAIGE Agent AI pull request targeting `main`. GitHub Actions checks that exact open PR, builds a static image with a preview-only configuration, and publishes an image receipt. A separate job deploys the verified digest to the dedicated Coolify project. The console links the PR's stable HTTPS URL after the running preview reports the exact PR commit and passes its health check.
+
+The private Cloud repository's `paige-pr-previews` environment admits only its `main` branch. Configure `PAIGE_PREVIEW_PROJECT`, `PAIGE_PREVIEW_ENVIRONMENT`, `PAIGE_PREVIEW_DESTINATION`, and `PAIGE_PREVIEW_SERVER` there. Store `PAIGE_PREVIEW_COOLIFY_TOKEN` there with Read, Write, and Deploy permissions scoped to the dedicated Coolify preview project. Set the repository variable `PAIGE_PREVIEW_AUTO_DEPLOY_ENABLED` to `true` after verifying that scope. The console uses `OWNER_VIEW_PREVIEW_DISPATCH_TOKEN` with Actions write access only to the private Cloud repository. Its existing `OWNER_VIEW_PREVIEW_ACTIONS_TOKEN` reads preview runs independently.
+
+Use one signed delivery from GitHub and follow it through Actions, Coolify, and the console to verify a rollout. Check the full commit in `release.json` and the health response in `/healthz`. Before retrying a timed-out rollout, look up the existing Coolify deployment. Use **Re-run all jobs** so the build and deploy jobs share the same workflow attempt. Builds reject run receipts for an old PR head or a different workflow attempt.
+
+## Production release history
+
+The console imports verified production receipts from canonical PAIGE Agent AI GitHub Actions and reads deployment history from the `paige-full-app` Coolify application. Set the console's `OWNER_VIEW_PRODUCTION_ACTIONS_TOKEN` to Actions read access on only the canonical GitHub repository. Set `OWNER_VIEW_PRODUCTION_COOLIFY_TOKEN` to read access on only that Coolify application. Neither history reader needs deployment or secret-read permissions. Verified receipts persist in the console's existing data volume. Provider rollouts without corroborating evidence are labeled accordingly. Older expired receipts may be missing from GitHub.
+
+For subscriber onboarding, allocate a dedicated tenant project and preview deployment scope. Bind the repository, registry, approved deployment destinations, and HTTPS preview domain to that project. Production history credentials and preview deploy credentials belong to the subscriber's project, with separate production and preview permissions. Verify the same PR-to-HTTPS flow and project membership checks before enabling automation for the subscriber. The current deployment is configured for PAIGE Agent AI.
+
 The previous v3 and v4 URLs and deployment IDs are in the operating record. The old README URL beginning `h0llaikzrfpua1ugygaadpjq` returned HTTP 503 on November 20, 2026.

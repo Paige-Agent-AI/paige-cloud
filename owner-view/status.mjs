@@ -134,7 +134,10 @@ export async function readPreviewStatus(token, fetchFrom = fetch) {
   };
 }
 
-export async function readProductionStatus(fetchFrom = fetch) {
+export async function readProductionStatus(fetchFrom = fetch, readHistory) {
+  const historyRequest = readHistory && Promise.resolve().then(readHistory).catch(() => ({
+    deployments: [], receipts: productionReceipts, providerSource: "unavailable", receiptSource: "unavailable",
+  }));
   const request = (url, type) => fetchFrom(url, {
     method: "GET", headers: { Accept: type }, redirect: "error", cache: "no-store",
     signal: AbortSignal.timeout(6500),
@@ -177,21 +180,29 @@ export async function readProductionStatus(fetchFrom = fetch) {
   const revisions = new Set(sources.map(({ frontendCommit, cloudCommit }) => `${frontendCommit}:${cloudCommit}`));
   const identity = revisions.size > 1 ? "mismatch" : sources.length === domains.length ? "matched" : "unavailable";
   const frontend = identity === "matched" ? sources[0].frontendCommit : null;
-  const matchingReceipt = frontend && frontend === sources[0].cloudCommit &&
-    productionReceipts.find((receipt) => receipt.commit === frontend);
+  const history = await historyRequest;
+  const receipts = history?.receipts ?? productionReceipts;
+  const historyKnown = ["available", "partial"].includes(history?.providerSource);
+  const newestFinished = historyKnown && history.deployments.filter((row) => row.status === "finished")
+    .reduce((newest, row) => !newest || row.at > newest.at ? row : newest, null);
+  const useLegacyMatch = !history || history.providerSource === "unconfigured";
+  const matchingReceipt = frontend && frontend === sources[0].cloudCommit && receipts.find((receipt) =>
+    receipt.commit === frontend && (useLegacyMatch || receipt.deployment === newestFinished?.id));
   return {
     checkedAt: new Date().toISOString(),
     state: domains.every((domain) => domain.state === "healthy") ? "healthy" :
       domains.some((domain) => domain.state === "unhealthy") ? "unhealthy" : "unavailable",
     identity,
     frontendCommit: frontend,
-    receipts: productionReceipts,
+    receipts,
     receiptCommit: matchingReceipt?.commit ?? null,
+    receiptDeployment: matchingReceipt?.deployment ?? null,
+    ...(history && { deployments: history.deployments, providerSource: history.providerSource, receiptSource: history.receiptSource }),
     domains,
   };
 }
 
-export function createProductionStatusReader(fetchFrom = fetch, clock = Date.now, mainVersion = () => 0) {
+export function createProductionStatusReader(fetchFrom = fetch, clock = Date.now, mainVersion = () => 0, readHistory) {
   let cachedMain;
   let pendingMain;
   let pendingVersion;
@@ -228,7 +239,7 @@ export function createProductionStatusReader(fetchFrom = fetch, clock = Date.now
   }
 
   return async () => {
-    const [production, mainCommit] = await Promise.all([readProductionStatus(fetchFrom), getMain()]);
+    const [production, mainCommit] = await Promise.all([readProductionStatus(fetchFrom, readHistory), getMain()]);
     return { ...production, mainCommit };
   };
 }
