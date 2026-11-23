@@ -34,7 +34,9 @@ const project = automated ? process.env.PAIGE_PREVIEW_PROJECT : "mvokcozpkh3u8gr
 const environment = automated ? process.env.PAIGE_PREVIEW_ENVIRONMENT : "igihntzdp7htuxz6yqxdx3ql";
 const environmentName = automated ? "pull-requests" : "f2-preview";
 const destination = automated ? process.env.PAIGE_PREVIEW_DESTINATION : "qhj2gr632xrfotx24vphy98v";
-const server = automated ? process.env.PAIGE_PREVIEW_SERVER : "p2mh5nemklmkmb6rtnuw8swd";
+const sharedServer = "p2mh5nemklmkmb6rtnuw8swd";
+const server = automated ? process.env.PAIGE_PREVIEW_SERVER : sharedServer;
+if (automated) assert.notEqual(server, sharedServer, "Automatic provisioning requires a separate preview server.");
 const resourceId = /^[a-z0-9]{20,32}$/;
 for (const id of [project, environment, destination, server]) assert.match(id ?? "", resourceId);
 const coolifyBase = "https://app.coolify.io/api/v1";
@@ -82,7 +84,8 @@ async function verifyHead() {
 await verifyHead();
 if (automated) await verifyPreviewScope();
 
-const env = await coolify(`/projects/${project}/${environmentName}`);
+const environmentPath = `/projects/${project}/${environmentName}`;
+const env = await coolify(environmentPath);
 assert.equal(env.uuid, environment);
 let matches = env.applications.filter((app) => app.name === name);
 assert.ok(matches.length <= 1, "More than one app uses this PR preview address.");
@@ -94,14 +97,17 @@ if (!matches.length) {
     health_check_return_code: 200, limits_memory: "128m", limits_cpus: "0.25", instant_deploy: false,
     is_force_https_enabled: true, is_preview_deployments_enabled: false,
   });
-  matches = [created];
+  const populated = await coolify(environmentPath);
+  assert.equal(populated.uuid, environment);
+  matches = populated.applications.filter((app) => app.name === name && app.uuid === created.uuid);
+  assert.equal(matches.length, 1, "The new preview is missing from its intended environment.");
 }
-const { uuid } = matches[0];
+const { uuid, id: applicationId } = matches[0];
 assert.match(uuid ?? "", resourceId);
+assert.match(String(applicationId), /^[1-9][0-9]*$/);
 const path = `/applications/${uuid}`;
 const app = await coolify(path);
 assert.equal(app.uuid, uuid);
-assert.match(String(app.id), /^[1-9][0-9]*$/);
 assert.equal(app.name, name);
 assert.equal(app.fqdn, domain);
 assert.equal(app.environment_id, env.id);
@@ -136,7 +142,7 @@ await verifyHead();
 let deployment;
 if (active.length) {
   assert.ok(active.length === 1 && app.docker_registry_image_tag === tag, "Another preview deployment is already active.");
-  assert.equal(String(active[0].application_id), String(app.id));
+  assert.equal(String(active[0].application_id), String(applicationId));
   deployment = active[0].deployment_uuid;
 } else {
   console.log(JSON.stringify({ pr, app: uuid, url: domain, previousTag: app.docker_registry_image_tag,
@@ -146,7 +152,7 @@ if (active.length) {
   const nextHistory = await coolify(`/deployments/applications/${uuid}`);
   const newRollout = nextHistory.deployments[0];
   if (newRollout && newRollout.deployment_uuid !== history.deployments[0]?.deployment_uuid) {
-    assert.equal(String(newRollout.application_id), String(app.id));
+    assert.equal(String(newRollout.application_id), String(applicationId));
     deployment = newRollout.deployment_uuid;
   } else {
     const result = await coolify("/deploy", "POST", { uuid });
@@ -161,7 +167,7 @@ const deadline = performance.now() + (automated ? 16 : 3) * 60_000;
 while (performance.now() < deadline) {
   const observed = await coolify(`/deployments/${deployment}`);
   assert.equal(observed.deployment_uuid, deployment);
-  assert.equal(String(observed.application_id), String(app.id));
+  assert.equal(String(observed.application_id), String(applicationId));
   assert.ok(["queued", "in_progress", "finished"].includes(observed.status), `Preview deployment ended as ${observed.status}.`);
   if (observed.status === "finished") {
     const running = await coolify(path);

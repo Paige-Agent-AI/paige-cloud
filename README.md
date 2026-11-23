@@ -22,6 +22,8 @@ The signed GitHub webhook queues a preview for each new head of a same-repositor
 
 The private Cloud repository's `paige-pr-previews` environment admits only its `main` branch. Configure `PAIGE_PREVIEW_PROJECT`, `PAIGE_PREVIEW_ENVIRONMENT`, `PAIGE_PREVIEW_DESTINATION`, and `PAIGE_PREVIEW_SERVER` there. Store `PAIGE_PREVIEW_COOLIFY_TOKEN` there with Read, Write, and Deploy permissions scoped to the dedicated Coolify preview project. Set the repository variable `PAIGE_PREVIEW_AUTO_DEPLOY_ENABLED` to `true` after verifying that scope. The console uses `OWNER_VIEW_PREVIEW_DISPATCH_TOKEN` with Actions write access only to the private Cloud repository. Its existing `OWNER_VIEW_PREVIEW_ACTIONS_TOKEN` reads preview runs independently.
 
+Use a separate preview server for the unattended Coolify Write credential. Bootstrap a resource in the dedicated preview scope on that server before enabling automatic application provisioning. Coolify lets a project-scoped token place resources only on servers already hosting a resource in its scope. Project-scoped Write permissions can reach the underlying Docker host. Keep the deployment switch off for shared hosting. Signed events still build the preview image, and an operator can deploy a verified pilot receipt.
+
 Use one signed delivery from GitHub and follow it through Actions, Coolify, and the console to verify a rollout. Check the full commit in `release.json` and the health response in `/healthz`. Before retrying a timed-out rollout, look up the existing Coolify deployment. Use **Re-run all jobs** so the build and deploy jobs share the same workflow attempt. Builds reject run receipts for an old PR head or a different workflow attempt.
 
 ## Production release history
