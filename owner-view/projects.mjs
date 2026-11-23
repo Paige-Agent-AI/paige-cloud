@@ -43,9 +43,9 @@ export function createProjectAccess(projects, hasProjectRead) {
   };
 }
 
-export function createPaigeProjectAccess(token, hasProjectRead, actionsToken, mainVersion) {
+export function createPaigeProjectAccess(token, hasProjectRead, actionsToken, mainVersion, readProductionHistory) {
   if (!/^[\x21-\x7e]{16,512}$/.test(token ?? "")) throw new Error("A scoped Coolify read token is required.");
-  const readProduction = createProductionStatusReader(fetch, Date.now, mainVersion);
+  const readProduction = createProductionStatusReader(fetch, Date.now, mainVersion, readProductionHistory);
   return createProjectAccess([{
     ...firstProject,
     readStatus: () => readOwnerStatus(token, fetch, readProduction),

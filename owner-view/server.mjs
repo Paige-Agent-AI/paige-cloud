@@ -10,6 +10,7 @@ import { createStreamProvider, mediaPage } from "./media.mjs";
 import { createMediaPilot, handleMediaPilot, matchPilotPage } from "./media-pilot.mjs";
 import { createPaigeProjectAccess, firstProject, parseProjectStatusPath } from "./projects.mjs";
 import { createPreviewDispatch, openGitHubBuilds } from "./github-builds.mjs";
+import { createProductionHistory } from "./production-history.mjs";
 
 const readAsset = (file) => readFileSync(new URL("./public/" + file, import.meta.url));
 const sessionName = "__Host-paige_owner";
@@ -452,6 +453,11 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
   const githubBuilds = process.env.OWNER_VIEW_GITHUB_BUILD_WEBHOOK_SECRET && openGitHubBuilds(
     join(dirname(membershipPath), "github-builds.sqlite"), process.env.OWNER_VIEW_GITHUB_BUILD_WEBHOOK_SECRET, Date.now,
     createPreviewDispatch(process.env.OWNER_VIEW_PREVIEW_DISPATCH_TOKEN));
+  const history = createProductionHistory({
+    actionsToken: process.env.OWNER_VIEW_PRODUCTION_ACTIONS_TOKEN,
+    coolifyToken: process.env.OWNER_VIEW_PRODUCTION_COOLIFY_TOKEN,
+    filename: join(dirname(membershipPath), "production-history.sqlite"),
+  });
   const server = createOwnerServer({
     origin: process.env.OWNER_VIEW_ORIGIN,
     aliasOrigin: process.env.OWNER_VIEW_ALIAS_ORIGIN,
@@ -470,8 +476,13 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
       host: process.env.OWNER_VIEW_STREAM_PLAYBACK_HOST,
     }),
     projectAccess: createPaigeProjectAccess(process.env.OWNER_VIEW_COOLIFY_TOKEN, store.hasProjectRead,
-      process.env.OWNER_VIEW_PREVIEW_ACTIONS_TOKEN, githubBuilds?.mainVersion),
+      process.env.OWNER_VIEW_PREVIEW_ACTIONS_TOKEN, githubBuilds?.mainVersion, history.read),
   });
-  server.once("close", () => { accounts.close(); store.close(); if (githubBuilds) githubBuilds.close(); });
+  server.once("close", () => {
+    accounts.close();
+    store.close();
+    githubBuilds?.close();
+    history.close();
+  });
   server.listen(8080, "0.0.0.0", () => console.log("PAIGE Cloud owner view is ready"));
 }
