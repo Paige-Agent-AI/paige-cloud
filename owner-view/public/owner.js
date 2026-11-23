@@ -777,7 +777,8 @@ function buildDuration(ms) {
 function renderGitHubBuilds(rows, offset) {
   const panel = get("github-builds");
   const latest = get("github-build-latest");
-  const labels = { pull: "Pull received", "main-checks": "Main CI", "pull-checks": "PR CI", preview: "Preview build", production: "Release workflow" };
+  const labels = { pull: "Pull received", "main-checks": "Main CI", "pull-checks": "PR CI",
+    "main-image": "Main image build", preview: "Preview build", production: "Release workflow" };
   const phaseNames = { received: "Received", queued: "Queued", running: "Running", completed: "Completed" };
   const conclusions = { success: "Passed", failure: "Failed", cancelled: "Cancelled", timed_out: "Timed out", skipped: "Skipped" };
   const dispatchLabels = { pending: "Preview queued", accepted: "Preview requested", rejected: "Preview request rejected",
