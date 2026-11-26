@@ -718,7 +718,7 @@ test("owner can manage two projects and invitations grant only the selected proj
   assert.equal(reopened.hasProjectRead(amberId, "amber", "demo"), false);
   assert.equal(reopened.hasProjectRead(ownerId, "paige", "paige-agent-ai"), true);
   assert.equal(reopened.registrations(ownerId, { organizationId: "amber", projectId: "demo" }).applications[0].id, "gateway");
-  assert.deepEqual(reopened.applicationBinding(ownerId, targetInput).binding, {
+  assert.deepEqual({ ...reopened.applicationBinding(ownerId, targetInput).binding }, {
     revision: 2, targetId: null, targetFingerprint: null,
   });
   const scope = { organizationId: "amber", projectId: "demo" };
