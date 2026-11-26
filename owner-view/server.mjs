@@ -11,6 +11,7 @@ import { createMediaPilot, handleMediaPilot, matchPilotPage } from "./media-pilo
 import { createPaigeProjectAccess, firstProject, parseProjectStatusPath } from "./projects.mjs";
 import { createPreviewDispatch, openGitHubBuilds } from "./github-builds.mjs";
 import { createProductionHistory } from "./production-history.mjs";
+import { createBindingTargets } from "./provider-bindings.mjs";
 
 const readAsset = (file) => readFileSync(new URL("./public/" + file, import.meta.url));
 const sessionName = "__Host-paige_owner";
@@ -81,7 +82,7 @@ function throttle(maxAttempts, maxPerEmail, maxConcurrent) {
 }
 
 export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
-  passwordHash, accounts, catalog, stream, mediaPilot, hlsPlayer, githubBuilds, projectAccess: resolveRead }) {
+  passwordHash, accounts, catalog, stream, mediaPilot, hlsPlayer, githubBuilds, projectAccess: resolveRead, bindingTargets }) {
   const allowedOrigins = new Map();
   for (const value of [origin, ...(aliasOrigin ? [aliasOrigin] : []), ...additionalOrigins]) {
     const url = new URL(value);
@@ -296,9 +297,9 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
       }
       const params = { route: projectRoute, form, method, principal: session.principalId,
         origin, catalog, accounts, showDeployments: !!resolveRead(session.principalId, firstProject),
-        remaining: Math.max(0, session.expires - Date.now()), accountPath };
+        remaining: Math.max(0, session.expires - Date.now()), accountPath, bindingTargets };
       const sessionCurrent = () => sessions.get(id) === session && session.expires > Date.now();
-      if (method === "GET" && projectRoute.registry && ["production", "f2-preview"].includes(projectRoute.environmentId) &&
+      if (method === "GET" && projectRoute.registry && !projectRoute.applicationId && ["production", "f2-preview"].includes(projectRoute.environmentId) &&
           projectRoute.organizationId === firstProject.organizationId && projectRoute.projectId === firstProject.projectId &&
           catalog.registrations(session.principalId, projectRoute)?.environments.some(env => env.id === projectRoute.environmentId)) {
         const reader = resolveRead(session.principalId, projectRoute);
@@ -484,6 +485,7 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
     filename: join(dirname(membershipPath), "production-history.sqlite"),
   });
   const server = createOwnerServer({
+    bindingTargets: createBindingTargets(process.env.OWNER_VIEW_BINDING_TARGETS),
     origin: process.env.OWNER_VIEW_ORIGIN,
     aliasOrigin: process.env.OWNER_VIEW_ALIAS_ORIGIN,
     additionalOrigins: (process.env.OWNER_VIEW_ADDITIONAL_ORIGINS ?? "").split(",")

@@ -191,6 +191,16 @@ export function openProjectCatalog(path) {
         FOREIGN KEY (organization_id, project_id, environment_id)
           REFERENCES project_environments (organization_id, project_id, environment_id)
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS application_provider_bindings (
+        organization_id TEXT NOT NULL, project_id TEXT NOT NULL, environment_id TEXT NOT NULL, application_id TEXT NOT NULL,
+        revision INTEGER NOT NULL CHECK (revision BETWEEN 1 AND 2147483647),
+        target_id TEXT, target_fingerprint TEXT,
+        CHECK ((target_id IS NULL AND target_fingerprint IS NULL) OR
+          (target_id IS NOT NULL AND target_fingerprint IS NOT NULL AND length(target_fingerprint) = 64)),
+        PRIMARY KEY (organization_id, project_id, environment_id, application_id),
+        FOREIGN KEY (organization_id, project_id, environment_id, application_id)
+          REFERENCES project_applications (organization_id, project_id, environment_id, application_id)
+      ) STRICT;
       CREATE TABLE IF NOT EXISTS project_invitations (
         organization_id TEXT NOT NULL,
         project_id TEXT NOT NULL,
@@ -241,6 +251,13 @@ export function openProjectCatalog(path) {
       WHERE organization_id = ? AND project_id = ? ORDER BY environment_id`);
     const applications = db.prepare(`SELECT environment_id AS environmentId, application_id AS id, name, kind
       FROM project_applications WHERE organization_id = ? AND project_id = ? ORDER BY environment_id, application_id`);
+    const targetApp = db.prepare(`SELECT application_id AS id, name, kind FROM project_applications
+      WHERE organization_id = ? AND project_id = ? AND environment_id = ? AND application_id = ?`);
+    const readBinding = db.prepare(`SELECT revision, target_id AS targetId, target_fingerprint AS targetFingerprint
+      FROM application_provider_bindings WHERE organization_id = ? AND project_id = ? AND environment_id = ? AND application_id = ?`);
+    const saveBinding = db.prepare(`INSERT INTO application_provider_bindings VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (organization_id, project_id, environment_id, application_id) DO UPDATE SET
+        revision=excluded.revision, target_id=excluded.target_id, target_fingerprint=excluded.target_fingerprint`);
     const addEnvironment = db.prepare(`INSERT INTO project_environments
       SELECT ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM project_environments
         WHERE organization_id = ? AND project_id = ?) < 50 ON CONFLICT DO NOTHING`);
@@ -287,6 +304,28 @@ export function openProjectCatalog(path) {
     const find = (email, code) => invite.get(email, hashCode(code), Date.now());
     return {
       get: (scope) => byProject.get(scope.organizationId, scope.projectId),
+      applicationBinding(principal, { organizationId: org, projectId: id, environmentId, applicationId }) {
+        return transaction(db, () => {
+          const project = byProject.get(org, id);
+          if (!project || project.archived || !access.get(principal, org, id)) return undefined;
+          const scope = [org, id, environmentId, applicationId];
+          const application = targetApp.get(...scope);
+          return application && { application, binding: readBinding.get(...scope) };
+        });
+      },
+      changeApplicationBinding(principal, { organizationId: org, projectId: id, environmentId, applicationId }, revision, target) {
+        if (principal !== ownerId) return "unavailable";
+        return transaction(db, () => {
+          const project = byProject.get(org, id);
+          const scope = [org, id, environmentId, applicationId];
+          if (!project || project.archived || !access.get(principal, org, id) || !targetApp.get(...scope)) return "unavailable";
+          const current = readBinding.get(...scope);
+          if (revision !== (current?.revision ?? 0) || revision >= 2147483647) return "conflict";
+          if (!target && !current?.targetId) return "conflict";
+          saveBinding.run(...scope, revision + 1, target?.id ?? null, target?.fingerprint ?? null);
+          return "saved";
+        });
+      },
       registrations(principal, { organizationId: org, projectId: id }) {
         return transaction(db, () => {
           const project = byProject.get(org, id);
