@@ -9,6 +9,7 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { initializeAccounts, openAccounts } from "./accounts.mjs";
 import { initializeMembershipStore, openMembershipStore, openProjectCatalog, updateProjectMembership } from "./memberships.mjs";
+import { createBindingTargets } from "./provider-bindings.mjs";
 import { createProjectAccess, firstProject, ownerId } from "./projects.mjs";
 import { createOwnerServer } from "./server.mjs";
 import { createStreamProvider } from "./media.mjs";
@@ -170,7 +171,7 @@ test("backfills account numbers for existing credential records and preserves th
   }
 });
 
-async function startServer(t, projectAccess, principalId = ownerId, realAccounts, catalog, stream, mediaPilot, githubBuilds) {
+async function startServer(t, projectAccess, principalId = ownerId, realAccounts, catalog, stream, mediaPilot, githubBuilds, bindingTargets) {
   const password = randomBytes(32).toString("base64url");
   const key = randomBytes(32).toString("base64url");
   const server = createOwnerServer({
@@ -181,6 +182,7 @@ async function startServer(t, projectAccess, principalId = ownerId, realAccounts
     stream,
     mediaPilot,
     githubBuilds,
+    bindingTargets,
     accounts: realAccounts ?? {
       hasOwner: () => true,
       isOwnerEmail: (email) => principalId === ownerId && email === ownerEmail,
@@ -525,7 +527,11 @@ test("owner can manage two projects and invitations grant only the selected proj
   } });
   const access = createProjectAccess(readers, catalog.hasProjectRead);
   let resolutions = 0;
-  const { request } = await startServer(t, (...args) => { resolutions++; return access(...args); }, ownerId, accounts, catalog);
+  const targetInput = { organizationId: "amber", projectId: "demo", environmentId: "development", applicationId: "gateway",
+    id: "approved-target", provider: "coolify", version: 1, resourceId: "a".repeat(24) };
+  let targets = createBindingTargets(JSON.stringify([targetInput]));
+  const { request } = await startServer(t, (...args) => { resolutions++; return access(...args); }, ownerId, accounts, catalog,
+    undefined, undefined, undefined, scope => targets(scope));
   const scopes = new Map();
   const scoped = (path, cookie) => cookie && scopes.has(cookie) && /^\/(projects|join|api)(?:\/|$)/.test(path)
     ? scopes.get(cookie) + path : path;
@@ -564,6 +570,7 @@ test("owner can manage two projects and invitations grant only the selected proj
   assert.match(await (await at(applications, ownerCookie)).text(), /No environments registered/);
   assert.equal((await form(applications, env, ownerCookie, alias)).status, 403);
   assert.equal((await form(applications, app, ownerCookie)).status, 409);
+  const bindingPath = applications + "/development/gateway";
   assert.equal((await form(applications, env, ownerCookie)).status, 303);
   const dev = await at(applications + "/development", ownerCookie);
   assert.equal(dev.status, 200);
@@ -588,6 +595,31 @@ test("owner can manage two projects and invitations grant only the selected proj
   assert.equal((await form(applications, { ...app, kind: "provider" }, ownerCookie)).status, 400);
   assert.equal((await form(applications, app, ownerCookie)).status, 303);
   assert.equal((await form(applications, app, ownerCookie)).status, 409);
+  const option = `${targetInput.id}:${targets(targetInput)[0].fingerprint}`;
+  const bind = { action: "bind", revision: "0", target: option };
+  assert.match(await (await at(bindingPath, ownerCookie)).text(), /No provider target selected/);
+  assert.equal((await form(bindingPath, { ...bind, target: "https://example.test" }, ownerCookie)).status, 400);
+  assert.equal((await form(bindingPath, bind, ownerCookie, alias)).status, 403);
+  assert.equal((await form(bindingPath, bind, ownerCookie)).status, 303);
+  assert.equal((await form(bindingPath, bind, ownerCookie)).status, 409);
+  assert.match(await (await at(bindingPath, ownerCookie)).text(), /Approved target bound/);
+  targets = createBindingTargets(JSON.stringify([{ ...targetInput, version: 2, resourceId: "b".repeat(24) }]));
+  assert.match(await (await at(bindingPath, ownerCookie)).text(), /no longer matches current approval/);
+  assert.equal((await form(bindingPath, { ...bind, revision: "1" }, ownerCookie)).status, 400);
+  const restartedCatalog = openProjectCatalog(membershipPath);
+  stores.push(restartedCatalog);
+  // The startup path sees a revoked approval. Restoring exact approval bytes on
+  // another startup must not reactivate the old record or accept an old form.
+  await startServer(t, access, ownerId, accounts, restartedCatalog);
+  targets = createBindingTargets(JSON.stringify([targetInput]));
+  await startServer(t, access, ownerId, accounts, restartedCatalog,
+    undefined, undefined, undefined, targets);
+  assert.match(await (await at(bindingPath, ownerCookie)).text(), /no longer matches current approval/);
+  assert.equal((await form(bindingPath, { ...bind, revision: "1" }, ownerCookie)).status, 409);
+  assert.equal((await form(bindingPath, { ...bind, revision: "2" }, ownerCookie)).status, 303);
+  assert.match(await (await at(bindingPath, ownerCookie)).text(), /Approved target bound/);
+  assert.equal((await form(bindingPath, { action: "unbind", revision: "3" }, ownerCookie)).status, 303);
+  assert.match(await (await at(bindingPath, ownerCookie)).text(), /Binding revision 4/);
   assert.equal((await form(amber, { action: "rename", name: "Amber Studio" }, ownerCookie)).status, 303);
   assert.equal((await form("/projects/paige/paige-agent-ai", { action: "archive" }, ownerCookie)).status, 400);
   assert.equal((await form("/projects/paige/paige-agent-ai", { action: "rename", name: "Rename canonical" }, ownerCookie)).status, 400);
@@ -635,6 +667,9 @@ test("owner can manage two projects and invitations grant only the selected proj
   assert.doesNotMatch(await (await at(applications, amberCookie)).text(), /Register an environment/);
   assert.equal((await form(applications, { ...app, id: "forbidden" }, amberCookie)).status, 404);
   assert.equal((await at(applications, violetCookie)).status, 404);
+  assert.match(await (await at(bindingPath, amberCookie)).text(), /Binding revision 4/);
+  assert.equal((await form(bindingPath, { action: "unbind", revision: "4" }, amberCookie)).status, 404);
+  assert.equal((await at(bindingPath, violetCookie)).status, 404);
   assert.doesNotMatch(await (await at("/projects", amberCookie)).text(), /Violet/);
   assert.equal((await at(violet, amberCookie)).status, 404);
   assert.equal((await at(amber, violetCookie)).status, 404);
@@ -695,6 +730,9 @@ test("owner can manage two projects and invitations grant only the selected proj
   assert.equal(reopened.hasProjectRead(amberId, "amber", "demo"), false);
   assert.equal(reopened.hasProjectRead(ownerId, "paige", "paige-agent-ai"), true);
   assert.equal(reopened.registrations(ownerId, { organizationId: "amber", projectId: "demo" }).applications[0].id, "gateway");
+  assert.deepEqual({ ...reopened.applicationBinding(ownerId, targetInput).binding }, {
+    revision: 4, targetId: null, targetFingerprint: null, invalidated: 0,
+  });
   const scope = { organizationId: "amber", projectId: "demo" };
   for (let i = 2; i < 50; i++) {
     assert.equal(reopened.register(ownerId, scope, { kind: "environment", id: `dev-${i}`, name: "Development" }), "created");

@@ -1,5 +1,6 @@
 import { normalizeEmail, validCode } from "./accounts.mjs";
 import { firstProject, isProjectSlug, ownerId } from "./projects.mjs";
+import { bindingState } from "./provider-bindings.mjs";
 
 export const escape = (value) => String(value).replace(/[&<>"']/g, (char) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
@@ -14,12 +15,12 @@ export function matchProjectPage(path) {
   const parts = path?.split("/") ?? [];
   const members = parts.length === 5 && parts[4] === "members";
   const registry = parts[4] === "applications" &&
-    (parts.length === 5 || (parts.length === 6 && isProjectSlug(parts[5])));
+    (parts.length === 5 || ([6, 7].includes(parts.length) && parts.slice(5).every(isProjectSlug)));
   const media = parts[4] === "media" && (parts.length === 5 || (parts.length === 6 && /^[a-f0-9]{20}$/.test(parts[5])));
   if ((parts.length !== 4 && !members && !media && !registry) || parts[0] || parts[1] !== "projects" ||
       !parts.slice(2, 4).every(isProjectSlug)) return undefined;
   return { path, organizationId: parts[2], projectId: parts[3], members, media, registry,
-    environmentId: registry ? parts[5] : undefined, streamId: media ? parts[5] : undefined };
+    environmentId: registry ? parts[5] : undefined, applicationId: registry ? parts[6] : undefined, streamId: media ? parts[5] : undefined };
 }
 
 export function shell(title, body, showDeployments, remaining, accountPath, active = "projects") {
@@ -119,7 +120,7 @@ function invitationPanel(email, code, subject, message, back, backLabel) {
     <p class="muted">Send the draft to deliver the invitation.</p><p><a href="${back}">${backLabel}</a></p></section>`;
 }
 
-export function projectPage({ route, form, method, principal, origin, catalog, accounts, showDeployments, remaining, accountPath = "", environmentEvidence }) {
+export function projectPage({ route, form, method, principal, origin, catalog, accounts, showDeployments, remaining, accountPath = "", environmentEvidence, bindingTargets = () => [] }) {
   const manage = principal === ownerId;
   const page = (title, body, status = 200) => ({ status, html: shell(title, body, showDeployments, remaining, accountPath) });
   const redirect = (location) => ({ status: 303, location: accountPath + location });
@@ -183,6 +184,40 @@ export function projectPage({ route, form, method, principal, origin, catalog, a
   const project = catalog.get(route);
   if (!project || (!manage && (route.members || !catalog.hasProjectRead(principal, organizationId, projectId)))) return { status: 404 };
   if (route.registry) {
+    if (route.applicationId) {
+      const record = catalog.applicationBinding(principal, route);
+      if (!record) return { status: 404 };
+      const { application, binding } = record, targets = bindingTargets(route), revision = binding?.revision ?? 0;
+      const state = bindingState(binding, targets);
+      const statusText = { unbound: "No provider target selected.", bound: "Approved target bound.", "approval-unavailable": "Saved target no longer matches current approval." };
+      const path = accountPath + route.path;
+      const render = (message = "", status = 200) => ({ status, html: shell(application.name, `
+        <p class="registration-breadcrumb muted"><a href="${escape(path.slice(0, path.lastIndexOf("/")))}">Environment</a> / <code>${escape(application.id)}</code></p>
+        ${message ? `<p class="notice bad" role="alert">${message}</p>` : ""}
+        <section class="project-panel"><h2>Desired provider binding</h2>
+        <p>${statusText[state]}${state === "bound" ? ` <code>${escape(binding.targetId)}</code>` : ""}</p>
+        <p class="muted">Binding revision ${revision}. This records a desired target, not a deployment or health observation.</p>
+        ${manage && targets.length ? `<form class="project-form" method="post" action="${escape(path)}">${action("bind")}
+          <input type="hidden" name="revision" value="${revision}">
+          <label for="binding-target">Approved target</label><select id="binding-target" name="target" required>
+          ${targets.map(target => `<option value="${escape(`${target.id}:${target.fingerprint}`)}"${state === "bound" && target.id === binding.targetId ? " selected" : ""}>${escape(target.id)} · Coolify · v${target.version}</option>`).join("")}</select>
+          ${button("Save binding", true)}</form>` : manage ? '<p class="muted">No approved targets for this application.</p>' : ""}
+        ${manage && binding?.targetId ? `<form class="project-form" method="post" action="${escape(path)}">${action("unbind")}
+          <input type="hidden" name="revision" value="${revision}">${button("Remove binding")}</form>` : ""}</section>`,
+        showDeployments, remaining, accountPath, "applications") });
+      if (!post) return render();
+      const operation = form?.get("action");
+      const suppliedRevision = form?.get("revision");
+      const target = targets.find(x => `${x.id}:${x.fingerprint}` === form?.get("target"));
+      if (typeof suppliedRevision !== "string" || !/^(0|[1-9][0-9]{0,9})$/.test(suppliedRevision) ||
+          !(operation === "bind" && target && form.size === 3 || operation === "unbind" && form.size === 2)) {
+        return render("Select an approved target or remove the existing binding.", 400);
+      }
+      const result = catalog.changeApplicationBinding(principal, route, Number(suppliedRevision), operation === "bind" ? target : null);
+      if (result === "unavailable") return { status: 404 };
+      if (result !== "saved") return render("The binding changed or is unavailable. Reload before retrying.", 409);
+      return redirect(route.path);
+    }
     const records = catalog.registrations(principal, route);
     if (!records) return { status: 404 };
     if (route.environmentId) {
@@ -201,7 +236,7 @@ export function projectPage({ route, form, method, principal, origin, catalog, a
         ${environmentEvidence?.checkedAt ? `<p class="muted">Last checked <time datetime="${escape(environmentEvidence.checkedAt)}">${escape(environmentEvidence.checkedAt)}</time></p>` : ""}
         ${linked ? `<p><a href="${evidencePath}">${selected.id === "production" ? "Open production release comparison" : "Open existing preview evidence"}</a></p>` : ""}</section>
         <section class="project-panel"><h2>Registered applications and services</h2>
-        ${apps.length ? `<ul class="project-list">${apps.map(app => `<li><span>${escape(app.name)} · <code>${escape(app.id)}</code> · ${escape(app.kind)}</span></li>`).join("")}</ul>` : "<p>No applications or services registered.</p>"}
+        ${apps.length ? `<ul class="project-list">${apps.map(app => `<li><span><a href="${accountPath + route.path}/${escape(app.id)}">${escape(app.name)}</a> · <code>${escape(app.id)}</code> · ${escape(app.kind)}</span></li>`).join("")}</ul>` : "<p>No applications or services registered.</p>"}
         <p class="muted">Registration does not establish that these records are deployed.</p></section>`, showDeployments, remaining, accountPath, "applications") };
     }
     const render = (message, status = 200) => ({ status, html: shell("Applications", registrationsPanel(project, records, manage, accountPath, message),
