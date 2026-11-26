@@ -670,6 +670,23 @@ test("owner can manage two projects and invitations grant only the selected proj
   assert.equal(reopened.hasProjectRead(amberId, "amber", "demo"), false);
   assert.equal(reopened.hasProjectRead(ownerId, "paige", "paige-agent-ai"), true);
   assert.equal(reopened.registrations(ownerId, { organizationId: "amber", projectId: "demo" }).applications[0].id, "gateway");
+  const scope = { organizationId: "amber", projectId: "demo" };
+  for (let i = 1; i < 50; i++) {
+    assert.equal(reopened.register(ownerId, scope, { kind: "environment", id: `dev-${i}`, name: "Development" }), "created");
+  }
+  assert.equal(reopened.register(ownerId, scope, { kind: "environment", id: "extra", name: "Extra" }), "conflict");
+  for (let i = 1; i < 100; i++) {
+    assert.equal(reopened.register(ownerId, scope, { kind: "application", environmentId: "development", id: `app-${i}`, name: "Application" }), "created");
+  }
+  assert.equal(reopened.register(ownerId, scope, { kind: "service", environmentId: "development", id: "extra", name: "Extra" }), "conflict");
+  assert.deepEqual(reopened.registrations(ownerId, { organizationId: "violet", projectId: "demo" }), { environments: [], applications: [] });
+  assert.equal(reopened.archive("amber", "demo", true), true);
+  assert.equal(reopened.registrations(ownerId, scope), undefined);
+  assert.equal(reopened.register(ownerId, scope, { kind: "environment", id: "archived", name: "Archived" }), "unavailable");
+  assert.equal(reopened.archive("amber", "demo", false), true);
+  const restored = reopened.registrations(ownerId, scope);
+  assert.equal(restored.environments.length, 50);
+  assert.equal(restored.applications.length, 100);
 });
 
 test("project status checks organization and project grants before reading environment data", async (t) => {

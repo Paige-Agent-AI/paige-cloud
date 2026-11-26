@@ -91,7 +91,7 @@ function registrationsPanel(project, registrations, manage, accountPath, message
     ${applications.some(app => app.environmentId === env.id) ? `<ul class="registration-items">${applications.filter(app => app.environmentId === env.id).map(app =>
       `<li><strong>${escape(app.name)}</strong> <code>${escape(app.id)}</code> · ${app.kind === "service" ? "Service" : "Application"}</li>`).join("")}</ul>`
       : '<p class="muted">No applications or services registered.</p>'}</div></li>`).join("");
-  return `<p class="muted"><a href="${accountPath}/projects">Projects</a> / <a href="${base}">${escape(project.name)}</a> / ${escape(project.organizationId)}/${escape(project.projectId)}</p>
+  return `<p class="muted registration-breadcrumb"><a href="${accountPath}/projects">Projects</a> / <a href="${base}">${escape(project.name)}</a> / ${escape(project.organizationId)}/${escape(project.projectId)}</p>
     ${message ? `<p class="notice bad" role="alert">${message}</p>` : ""}
     <section class="project-panel" aria-labelledby="environments"><h2 id="environments">Environments</h2>
     <p class="muted">Registration saves a Cloud record only. It does not deploy an app or connect a provider.</p>
