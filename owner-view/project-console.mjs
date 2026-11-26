@@ -120,7 +120,7 @@ function invitationPanel(email, code, subject, message, back, backLabel) {
     <p class="muted">Send the draft to deliver the invitation.</p><p><a href="${back}">${backLabel}</a></p></section>`;
 }
 
-export function projectPage({ route, form, method, principal, origin, catalog, accounts, showDeployments, remaining, accountPath = "", environmentEvidence, bindingTargets = () => [] }) {
+export function projectPage({ route, form, method, principal, origin, catalog, accounts, showDeployments, remaining, accountPath = "", environmentEvidence, bindingTargets = () => [], workloadEvidence }) {
   const manage = principal === ownerId;
   const page = (title, body, status = 200) => ({ status, html: shell(title, body, showDeployments, remaining, accountPath) });
   const redirect = (location) => ({ status: 303, location: accountPath + location });
@@ -203,7 +203,14 @@ export function projectPage({ route, form, method, principal, origin, catalog, a
           ${targets.map(target => `<option value="${escape(`${target.id}:${target.fingerprint}`)}"${state === "bound" && target.id === binding.targetId ? " selected" : ""}>${escape(target.id)} · Coolify · v${target.version}</option>`).join("")}</select>
           ${button("Save binding", true)}</form>` : manage ? '<p class="muted">No approved targets for this application.</p>' : ""}
         ${manage && binding?.targetId ? `<form class="project-form" method="post" action="${escape(path)}">${action("unbind")}
-          <input type="hidden" name="revision" value="${revision}">${button("Remove binding")}</form>` : ""}</section>`,
+          <input type="hidden" name="revision" value="${revision}">${button("Remove binding")}</form>` : ""}</section>
+        <section class="project-panel"><h2>Provider observation</h2>
+          ${state !== "bound" ? "<p>No current approved binding.</p>" : !workloadEvidence ? "<p>No authorized workload reader configured.</p>" :
+            workloadEvidence.observation ? `<p>Coolify reports: ${escape(workloadEvidence.observation.state)}</p>
+              <p class="muted">Read at <time datetime="${escape(workloadEvidence.observation.checkedAt)}">${escape(workloadEvidence.observation.checkedAt)}</time>.</p>` :
+              "<p>Provider evidence unavailable.</p>"}
+          <p class="muted">This does not verify a running image, release identity, or recovery.</p>
+        </section>`,
         showDeployments, remaining, accountPath, "applications") });
       if (!post) return render();
       const operation = form?.get("action");

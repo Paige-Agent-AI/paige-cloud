@@ -11,7 +11,8 @@ import { createMediaPilot, handleMediaPilot, matchPilotPage } from "./media-pilo
 import { createPaigeProjectAccess, firstProject, parseProjectStatusPath } from "./projects.mjs";
 import { createPreviewDispatch, openGitHubBuilds } from "./github-builds.mjs";
 import { createProductionHistory } from "./production-history.mjs";
-import { createBindingTargets } from "./provider-bindings.mjs";
+import { bindingReadTarget, createBindingTargets } from "./provider-bindings.mjs";
+import { createBoundApplicationReader } from "./status.mjs";
 
 const readAsset = (file) => readFileSync(new URL("./public/" + file, import.meta.url));
 const sessionName = "__Host-paige_owner";
@@ -82,7 +83,7 @@ function throttle(maxAttempts, maxPerEmail, maxConcurrent) {
 }
 
 export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
-  passwordHash, accounts, catalog, stream, mediaPilot, hlsPlayer, githubBuilds, projectAccess: resolveRead, bindingTargets }) {
+  passwordHash, accounts, catalog, stream, mediaPilot, hlsPlayer, githubBuilds, projectAccess: resolveRead, bindingTargets, boundApplicationReader }) {
   if (bindingTargets !== undefined && typeof bindingTargets !== "function") throw new Error("Invalid provider target resolver");
   const loadTargets = bindingTargets ?? (() => []);
   const allowedOrigins = new Map();
@@ -302,6 +303,23 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
         origin, catalog, accounts, showDeployments: !!resolveRead(session.principalId, firstProject),
         remaining: Math.max(0, session.expires - Date.now()), accountPath, bindingTargets: loadTargets };
       const sessionCurrent = () => sessions.get(id) === session && session.expires > Date.now();
+      if (method === "GET" && projectRoute.applicationId && boundApplicationReader) {
+        const current = () => catalog.applicationBinding(session.principalId, projectRoute);
+        const record = current();
+        const target = bindingReadTarget(record?.binding, loadTargets(projectRoute));
+        const read = target && boundApplicationReader(target);
+        if (read) {
+          const result = await Promise.resolve().then(read).catch(() => null);
+          if (!sessionCurrent()) { send(response, 401, text, "Sign in required"); return; }
+          const latest = current();
+          if (!latest) { send(response, 404, text, "Not found"); return; }
+          const after = bindingReadTarget(latest.binding, loadTargets(projectRoute));
+          if (latest.binding?.revision !== record.binding.revision || after?.fingerprint !== target.fingerprint) {
+            send(response, 409, text, "Binding changed. Reload to check evidence."); return;
+          }
+          params.workloadEvidence = { observation: result };
+        }
+      }
       if (method === "GET" && projectRoute.registry && !projectRoute.applicationId && ["production", "f2-preview"].includes(projectRoute.environmentId) &&
           projectRoute.organizationId === firstProject.organizationId && projectRoute.projectId === firstProject.projectId &&
           catalog.registrations(session.principalId, projectRoute)?.environments.some(env => env.id === projectRoute.environmentId)) {
@@ -489,6 +507,8 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
   });
   const server = createOwnerServer({
     bindingTargets: createBindingTargets(process.env.OWNER_VIEW_BINDING_TARGETS),
+    boundApplicationReader: createBoundApplicationReader(process.env.OWNER_VIEW_WORKLOAD_READ_TOKEN,
+      process.env.OWNER_VIEW_WORKLOAD_READ_FINGERPRINT),
     origin: process.env.OWNER_VIEW_ORIGIN,
     aliasOrigin: process.env.OWNER_VIEW_ALIAS_ORIGIN,
     additionalOrigins: (process.env.OWNER_VIEW_ADDITIONAL_ORIGINS ?? "").split(",")

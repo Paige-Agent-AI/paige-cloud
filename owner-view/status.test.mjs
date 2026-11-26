@@ -273,3 +273,27 @@ test("shows verified receipt evidence separately from live health and fails clos
   assert.deepEqual(verifiedProductionReceipts([{ ...row, domains: [row.domains[0], row.domains[0], row.domains[0]] }]), []);
   assert.doesNotMatch(JSON.stringify(verifiedProductionReceipts([{ ...row, privateData: "omit this" }])), /omit this/);
 });
+// Workload evidence reads are opt-in and scoped to the approved binding fingerprint.
+test("bound workload reader uses one fixed GET and withholds foreign responses", async () => {
+  const { createBoundApplicationReader } = await import("./status.mjs");
+  const id = "a".repeat(24), fingerprint = "b".repeat(64);
+  const token = "fixture-read-only-token";
+  let responseId = id, calls = 0;
+  const reader = createBoundApplicationReader(token, fingerprint, async (url, opts) => {
+    calls++;
+    assert.equal(url, `https://app.coolify.io/api/v1/applications/${id}`);
+    assert.equal(opts.method, "GET");
+    assert.equal(opts.redirect, "error");
+    assert.equal(opts.headers.Authorization, `Bearer ${token}`);
+    return Response.json({ uuid: responseId, status: "running:healthy", secret: "not-returned" });
+  });
+  const target = { provider: "coolify", resourceId: id, fingerprint };
+  assert.equal(reader({ ...target, fingerprint: "c".repeat(64) }), undefined);
+  assert.equal(calls, 0);
+  const observed = await reader(target)();
+  assert.equal(observed.state, "Running · healthy");
+  assert.deepEqual(Object.keys(observed).sort(), ["checkedAt", "state"]);
+  responseId = "d".repeat(24);
+  assert.equal(await reader(target)(), null);
+  assert.equal(calls, 2);
+});
