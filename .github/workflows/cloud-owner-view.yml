@@ -35,7 +35,7 @@ jobs:
           printf 'Verified owner-view PR head `%s` (tests and image build; not published).\n' "$REVIEW_HEAD" >> "$GITHUB_STEP_SUMMARY"
 
   publish:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/ant-177-owner-view-') && github.repository == 'Paige-Agent-AI/paige-cloud-preview'
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/ant-177-owner-view-') && github.repository_id == '1465755482'
     permissions:
       contents: read
       packages: write
