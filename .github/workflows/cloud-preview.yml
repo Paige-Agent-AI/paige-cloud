@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   build:
-    if: github.repository == 'Paige-Agent-AI/paige-cloud-preview' && github.ref == 'refs/heads/main'
+    if: github.repository_id == '1465755482' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
