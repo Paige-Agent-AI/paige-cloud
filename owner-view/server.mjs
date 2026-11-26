@@ -298,12 +298,29 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
         origin, catalog, accounts, showDeployments: !!resolveRead(session.principalId, firstProject),
         remaining: Math.max(0, session.expires - Date.now()), accountPath };
       const sessionCurrent = () => sessions.get(id) === session && session.expires > Date.now();
+      if (method === "GET" && projectRoute.registry && ["production", "f2-preview"].includes(projectRoute.environmentId) &&
+          projectRoute.organizationId === firstProject.organizationId && projectRoute.projectId === firstProject.projectId &&
+          catalog.registrations(session.principalId, projectRoute)?.environments.some(env => env.id === projectRoute.environmentId)) {
+        const reader = resolveRead(session.principalId, projectRoute);
+        if (reader) {
+          const data = await getStatus(reader).catch(() => null);
+          if (!sessionCurrent()) { send(response, 401, text, "Sign in required"); return; }
+          if (resolveRead(session.principalId, projectRoute) !== reader) { send(response, 404, text, "Not found"); return; }
+          const validStamp = typeof data?.checkedAt === "string" && Number.isFinite(Date.parse(data.checkedAt)) &&
+            Date.parse(data.checkedAt) <= Date.now();
+          const state = data?.state ?? data?.health?.state;
+          params.environmentEvidence = { connected: true, checkedAt: validStamp ? new Date(data.checkedAt).toISOString() : undefined,
+            state: !validStamp ? "unavailable" : Date.now() - Date.parse(data.checkedAt) >= 120_000 ? "stale" :
+              ["healthy", "unhealthy"].includes(state) ? state : "unavailable" };
+        }
+      }
       const result = projectRoute.media ? await mediaPage({ ...params, stream, mediaPilot: !!mediaPilot, sessionCurrent, sessionExpiresAt: session.expires }) : projectPage(params);
       if (projectRoute.media && !sessionCurrent()) {
         send(response, 401, text, "Sign in required");
         return;
       }
       const extra = result.location ? { Location: result.location } : {};
+      if (result.status === 405) extra.Allow = "GET";
       if (result.playerOrigin) extra["Content-Security-Policy"] = headers["Content-Security-Policy"] + "; frame-src " + result.playerOrigin;
       send(response, result.status, result.html ? html : text,
         result.html ?? (result.status === 404 ? "Not found" : ""), extra);

@@ -516,7 +516,13 @@ test("owner can manage two projects and invitations grant only the selected proj
     readStatus: async () => { seen.push(organizationId); return { organizationId }; },
     environments: { preview: async () => ({ organizationId }) },
   }));
-  readers.push({ ...firstProject, readStatus: async () => ({ receipt: "fixture" }), environments: {} });
+  const productionEvidence = [];
+  readers.push({ ...firstProject, readStatus: async () => ({ receipt: "fixture" }), environments: {
+    production: async () => {
+      productionEvidence.push("production");
+      return { state: "healthy", checkedAt: new Date().toISOString(), privateField: "must-not-be-rendered" };
+    },
+  } });
   const access = createProjectAccess(readers, catalog.hasProjectRead);
   let resolutions = 0;
   const { request } = await startServer(t, (...args) => { resolutions++; return access(...args); }, ownerId, accounts, catalog);
@@ -559,6 +565,25 @@ test("owner can manage two projects and invitations grant only the selected proj
   assert.equal((await form(applications, env, ownerCookie, alias)).status, 403);
   assert.equal((await form(applications, app, ownerCookie)).status, 409);
   assert.equal((await form(applications, env, ownerCookie)).status, 303);
+  const dev = await at(applications + "/development", ownerCookie);
+  assert.equal(dev.status, 200);
+  assert.match(await dev.text(), /Registered only — no deployment reader is connected/);
+  assert.equal((await at(applications + "/missing", ownerCookie)).status, 404);
+  assert.equal((await form(applications + "/development", env, ownerCookie)).status, 405);
+  const canonicalRegistry = "/projects/paige/paige-agent-ai/applications";
+  assert.equal((await at(canonicalRegistry + "/production", ownerCookie)).status, 404);
+  assert.equal(productionEvidence.length, 0);
+  for (const path of [applications, canonicalRegistry]) {
+    assert.equal((await form(path, { ...env, id: "production", name: "Production" }, ownerCookie)).status, 303);
+  }
+  assert.match(await (await at(applications + "/production", ownerCookie)).text(), /Registered only/);
+  const productionPage = await at(canonicalRegistry + "/production", ownerCookie);
+  assert.equal(productionPage.status, 200);
+  const productionHtml = await productionPage.text();
+  assert.match(productionHtml, /Healthy/);
+  assert.match(productionHtml, /Open production release comparison/);
+  assert.doesNotMatch(productionHtml, /must-not-be-rendered/);
+  assert.equal(productionEvidence.length, 1);
   assert.equal((await form(applications, env, ownerCookie)).status, 409);
   assert.equal((await form(applications, { ...app, kind: "provider" }, ownerCookie)).status, 400);
   assert.equal((await form(applications, app, ownerCookie)).status, 303);
@@ -671,7 +696,7 @@ test("owner can manage two projects and invitations grant only the selected proj
   assert.equal(reopened.hasProjectRead(ownerId, "paige", "paige-agent-ai"), true);
   assert.equal(reopened.registrations(ownerId, { organizationId: "amber", projectId: "demo" }).applications[0].id, "gateway");
   const scope = { organizationId: "amber", projectId: "demo" };
-  for (let i = 1; i < 50; i++) {
+  for (let i = 2; i < 50; i++) {
     assert.equal(reopened.register(ownerId, scope, { kind: "environment", id: `dev-${i}`, name: "Development" }), "created");
   }
   assert.equal(reopened.register(ownerId, scope, { kind: "environment", id: "extra", name: "Extra" }), "conflict");

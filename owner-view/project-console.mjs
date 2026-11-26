@@ -13,11 +13,13 @@ export function matchProjectPage(path) {
   if (path === "/projects" || path === "/join") return { path };
   const parts = path?.split("/") ?? [];
   const members = parts.length === 5 && parts[4] === "members";
-  const registry = parts.length === 5 && parts[4] === "applications";
+  const registry = parts[4] === "applications" &&
+    (parts.length === 5 || (parts.length === 6 && isProjectSlug(parts[5])));
   const media = parts[4] === "media" && (parts.length === 5 || (parts.length === 6 && /^[a-f0-9]{20}$/.test(parts[5])));
   if ((parts.length !== 4 && !members && !media && !registry) || parts[0] || parts[1] !== "projects" ||
       !parts.slice(2, 4).every(isProjectSlug)) return undefined;
-  return { path, organizationId: parts[2], projectId: parts[3], members, media, registry, streamId: media ? parts[5] : undefined };
+  return { path, organizationId: parts[2], projectId: parts[3], members, media, registry,
+    environmentId: registry ? parts[5] : undefined, streamId: media ? parts[5] : undefined };
 }
 
 export function shell(title, body, showDeployments, remaining, accountPath, active = "projects") {
@@ -87,7 +89,7 @@ function registrationsPanel(project, registrations, manage, accountPath, message
   const { environments, applications } = registrations;
   const field = (id, label, max) => `<label for="${id}">${label}</label><input id="${id}" name="${id.split("-").at(-1)}" maxlength="${max}" required>`;
   const listing = environments.map(env => `<li>
-    <div><strong>${escape(env.name)}</strong> <code class="muted">${escape(env.id)}</code>
+    <div><a href="${path}/${escape(env.id)}"><strong>${escape(env.name)}</strong></a> <code class="muted">${escape(env.id)}</code>
     ${applications.some(app => app.environmentId === env.id) ? `<ul class="registration-items">${applications.filter(app => app.environmentId === env.id).map(app =>
       `<li><strong>${escape(app.name)}</strong> <code>${escape(app.id)}</code> · ${app.kind === "service" ? "Service" : "Application"}</li>`).join("")}</ul>`
       : '<p class="muted">No applications or services registered.</p>'}</div></li>`).join("");
@@ -117,7 +119,7 @@ function invitationPanel(email, code, subject, message, back, backLabel) {
     <p class="muted">Send the draft to deliver the invitation.</p><p><a href="${back}">${backLabel}</a></p></section>`;
 }
 
-export function projectPage({ route, form, method, principal, origin, catalog, accounts, showDeployments, remaining, accountPath = "" }) {
+export function projectPage({ route, form, method, principal, origin, catalog, accounts, showDeployments, remaining, accountPath = "", environmentEvidence }) {
   const manage = principal === ownerId;
   const page = (title, body, status = 200) => ({ status, html: shell(title, body, showDeployments, remaining, accountPath) });
   const redirect = (location) => ({ status: 303, location: accountPath + location });
@@ -183,6 +185,25 @@ export function projectPage({ route, form, method, principal, origin, catalog, a
   if (route.registry) {
     const records = catalog.registrations(principal, route);
     if (!records) return { status: 404 };
+    if (route.environmentId) {
+      if (post) return { status: 405 };
+      const selected = records.environments.find(env => env.id === route.environmentId);
+      if (!selected) return { status: 404 };
+      const linked = environmentEvidence?.connected === true;
+      const active = environmentEvidence?.state;
+      const labels = { healthy: "Healthy", unhealthy: "Unhealthy", unavailable: "Evidence unavailable", stale: "Evidence stale" };
+      const evidencePath = accountPath + (selected.id === "production" ?
+        `/organizations/${organizationId}/projects/${projectId}/environments/production/release-comparison` : "/overview");
+      const apps = records.applications.filter(app => app.environmentId === selected.id);
+      return { status: 200, html: shell(selected.name, `<p class="muted registration-breadcrumb"><a href="${accountPath + url(project)}/applications">Applications</a> / ${escape(organizationId)}/${escape(projectId)} / <code>${escape(selected.id)}</code></p>
+        <section class="project-panel"><h2>Deployment evidence</h2>
+        <p>${linked ? labels[active] ?? labels.unavailable : "Registered only — no deployment reader is connected."}</p>
+        ${environmentEvidence?.checkedAt ? `<p class="muted">Last checked <time datetime="${escape(environmentEvidence.checkedAt)}">${escape(environmentEvidence.checkedAt)}</time></p>` : ""}
+        ${linked ? `<p><a href="${evidencePath}">${selected.id === "production" ? "Open production release comparison" : "Open existing preview evidence"}</a></p>` : ""}</section>
+        <section class="project-panel"><h2>Registered applications and services</h2>
+        ${apps.length ? `<ul class="project-list">${apps.map(app => `<li><span>${escape(app.name)} · <code>${escape(app.id)}</code> · ${escape(app.kind)}</span></li>`).join("")}</ul>` : "<p>No applications or services registered.</p>"}
+        <p class="muted">Registration does not establish that these records are deployed.</p></section>`, showDeployments, remaining, accountPath, "applications") };
+    }
     const render = (message, status = 200) => ({ status, html: shell("Applications", registrationsPanel(project, records, manage, accountPath, message),
       showDeployments, remaining, accountPath, "applications") });
     if (!post) return render();
