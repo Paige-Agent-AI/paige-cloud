@@ -32,11 +32,12 @@ async function readBody(response, limit) {
 
 // One opt-in reader, bound to an independently approved fingerprint and scoped token.
 // Configured state and a provider status are not running-image or rollout proof.
-export function createBoundApplicationReader(token, fingerprint, fetchFrom = fetch) {
+export function createBoundApplicationReader(token, fingerprint, fetchFrom = fetch, reservedTokens = []) {
   if (token === undefined && fingerprint === undefined) return undefined;
   if (!/^[\x21-\x7e]{16,512}$/.test(token ?? "") || !/^[a-f0-9]{64}$/.test(fingerprint ?? "")) {
     throw new Error("Invalid workload evidence reader configuration");
   }
+  if (reservedTokens.includes(token)) throw new Error("Workload reader requires a distinct credential");
   return (target) => {
     if (target?.fingerprint !== fingerprint || target.provider !== "coolify" ||
         !/^[a-z0-9]{20,32}$/.test(target.resourceId ?? "")) return undefined;

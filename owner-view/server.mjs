@@ -508,7 +508,8 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
   const server = createOwnerServer({
     bindingTargets: createBindingTargets(process.env.OWNER_VIEW_BINDING_TARGETS),
     boundApplicationReader: createBoundApplicationReader(process.env.OWNER_VIEW_WORKLOAD_READ_TOKEN,
-      process.env.OWNER_VIEW_WORKLOAD_READ_FINGERPRINT),
+      process.env.OWNER_VIEW_WORKLOAD_READ_FINGERPRINT, fetch,
+      [process.env.OWNER_VIEW_COOLIFY_TOKEN, process.env.OWNER_VIEW_PRODUCTION_COOLIFY_TOKEN]),
     origin: process.env.OWNER_VIEW_ORIGIN,
     aliasOrigin: process.env.OWNER_VIEW_ALIAS_ORIGIN,
     additionalOrigins: (process.env.OWNER_VIEW_ADDITIONAL_ORIGINS ?? "").split(",")

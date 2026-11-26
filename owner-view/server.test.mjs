@@ -697,6 +697,24 @@ test("owner can manage two projects and invitations grant only the selected proj
   assert.equal((await form(bindingPath, { action: "unbind", revision: "4" }, amberCookie)).status, 404);
   assert.equal((await at(bindingPath, violetCookie)).status, 404);
   assert.equal((await form(bindingPath, { ...bind, revision: "4" }, ownerCookie)).status, 303);
+  const beforeForeign = providerReads;
+  assert.equal((await at(bindingPath, violetCookie)).status, 404);
+  assert.equal(providerReads, beforeForeign);
+  const temporaryAmberCookie = await signIn(amberUser);
+  beforeObservation = async () => {
+    assert.equal((await form("/sign-out", {}, temporaryAmberCookie)).status, 303);
+  };
+  const endedWhileReading = await at(bindingPath, temporaryAmberCookie);
+  assert.equal(endedWhileReading.status, 401);
+  assert.doesNotMatch(await endedWhileReading.text(), /Coolify reports/);
+  const grantedAmber = await accounts.verify(amberUser.email, amberUser.password);
+  beforeObservation = async () => {
+    assert.equal(updateProjectMembership(membershipPath, "revoke", grantedAmber, "amber", "demo"), true);
+  };
+  const revokedWhileReading = await at(bindingPath, amberCookie);
+  assert.equal(revokedWhileReading.status, 404);
+  assert.doesNotMatch(await revokedWhileReading.text(), /Coolify reports/);
+  updateProjectMembership(membershipPath, "grant", grantedAmber, "amber", "demo");
   beforeObservation = async () => {
     assert.equal(catalog.changeApplicationBinding(ownerId, targetInput, 5, null), "saved");
   };

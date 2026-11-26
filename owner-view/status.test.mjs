@@ -278,6 +278,10 @@ test("bound workload reader uses one fixed GET and withholds foreign responses",
   const { createBoundApplicationReader } = await import("./status.mjs");
   const id = "a".repeat(24), fingerprint = "b".repeat(64);
   const token = "fixture-read-only-token";
+  for (const existing of [[token, undefined], [undefined, token]]) {
+    assert.throws(() => createBoundApplicationReader(token, fingerprint, undefined, existing),
+      { message: "Workload reader requires a distinct credential" });
+  }
   let responseId = id, calls = 0;
   const reader = createBoundApplicationReader(token, fingerprint, async (url, opts) => {
     calls++;
