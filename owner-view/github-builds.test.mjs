@@ -9,7 +9,7 @@ import { createPreviewDispatch, openGitHubBuilds } from "./github-builds.mjs";
 
 const secret = "a".repeat(64);
 const repo = { full_name: "Paige-Agent-AI/Paige-Agent-AI" };
-const cloud = { full_name: "Paige-Agent-AI/paige-cloud-preview" };
+const cloud = { full_name: "Paige-Agent-AI/paige-cloud" };
 const head = "a".repeat(40);
 const began = "2026-11-22T15:01:00Z";
 const finished = "2026-11-22T15:02:18Z";
@@ -120,7 +120,7 @@ test("requests one isolated build per eligible PR head and does not blindly rese
     await builds.receive(request("pull_request", payload));
     assert.equal(calls.length, 1);
     const [{ url, options }] = calls;
-    assert.equal(url, "https://api.github.com/repos/Paige-Agent-AI/paige-cloud-preview/actions/workflows/cloud-pr-preview.yml/dispatches");
+    assert.equal(url, "https://api.github.com/repos/Paige-Agent-AI/paige-cloud/actions/workflows/cloud-pr-preview.yml/dispatches");
     assert.equal(options.headers.Authorization, "Bearer " + credential);
     assert.equal(options.redirect, "error");
     assert.deepEqual(JSON.parse(options.body), { ref: "main", inputs: { pull_request: "38", head_sha: head } });

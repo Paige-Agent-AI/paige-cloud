@@ -1,7 +1,7 @@
 import { isIPv4 } from "node:net";
 
 const github = "https://api.github.com/repos/Paige-Agent-AI/Paige-Agent-AI";
-const builds = "https://api.github.com/repos/Paige-Agent-AI/paige-cloud-preview/actions/workflows/cloud-pr-preview.yml/runs";
+const builds = "https://api.github.com/repos/Paige-Agent-AI/paige-cloud/actions/workflows/cloud-pr-preview.yml/runs";
 const canonical = "Paige-Agent-AI/Paige-Agent-AI";
 const sha = /^[a-f0-9]{40}$/;
 const statuses = { queued: "queued", requested: "queued", waiting: "queued", pending: "queued", in_progress: "building" };

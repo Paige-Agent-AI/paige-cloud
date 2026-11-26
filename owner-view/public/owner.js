@@ -106,9 +106,9 @@ function setIdentity(kind, release, fallback) {
 
 function buildRunLink(value) {
   if (typeof value !== "string") return null;
-  const canonical = "https://github.com/Paige-Agent-AI/paige-cloud-preview/actions/runs/";
+  const canonical = "https://github.com/Paige-Agent-AI/paige-cloud/actions/runs/";
   const id = value.match(/^\d{1,24}$/)?.[0] ??
-    value.match(/^https:\/\/github\.com\/paige-agent-ai\/paige-cloud-preview\/actions\/runs\/(\d{1,24})$/i)?.[1];
+    value.match(/^https:\/\/github\.com\/paige-agent-ai\/paige-cloud(?:-preview)?\/actions\/runs\/(\d{1,24})$/i)?.[1];
   if (!id) return null;
   const link = element("a", "", "Source build in GitHub");
   link.href = canonical + id;
