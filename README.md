@@ -14,7 +14,7 @@ Run the candidate build and smoke tests from the independently reviewed commit u
 EXPECTED_CLOUD_COMMIT="$(git rev-parse HEAD)" bash scripts/build-preview.sh paige-cloud-preview:local
 ```
 
-The GitHub Actions workflow runs the same script before publishing. To run a published image locally, set `PAIGE_PREVIEW_IMAGE` to the recorded `ghcr.io/Paige-Agent-AI/paige-cloud@sha256:…` digest and run `docker compose up`. Compose binds port 8080 to localhost.
+The GitHub Actions workflow runs the same script before publishing. To run a published image locally, set `PAIGE_PREVIEW_IMAGE` to the recorded `ghcr.io/paige-agent-ai/paige-cloud-preview@sha256:…` digest and run `docker compose up`. Compose binds port 8080 to localhost.
 
 ## Pull request previews
 

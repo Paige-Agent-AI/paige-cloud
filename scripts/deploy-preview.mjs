@@ -24,7 +24,7 @@ function readRelease(path) {
   assert.match(release.frontendCommit ?? "", /^[a-f0-9]{40}$/);
   const digest = release.image?.match(digestRef)?.[1];
   assert.ok(digest, "An immutable digest from the private Cloud package is required.");
-  assert.match(release.run ?? "", /^https:\/\/github\.com\/Paige-Agent-AI\/paige-cloud\/actions\/runs\/\d+$/i);
+  assert.match(release.run ?? "", /^https:\/\/github\.com\/Paige-Agent-AI\/paige-cloud(?:-preview)?\/actions\/runs\/\d+$/i);
   assert.ok(typeof release.review === "string" && release.review.trim(), "An exact-source review reference is required.");
   return { ...release, tag: `sha256-${digest}` };
 }

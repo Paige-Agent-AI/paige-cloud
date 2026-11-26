@@ -917,7 +917,7 @@ function renderGitHubBuilds(rows, offset) {
   const clocks = [];
   const list = recent.map((row) => {
     const title = (labels[row.kind] ?? "Build") + (row.pull ? " · PR #" + row.pull : "");
-    const repo = row.kind === "preview" ? "paige-cloud-preview" : "Paige-Agent-AI";
+    const repo = row.kind === "preview" ? "paige-cloud" : "Paige-Agent-AI";
     const link = element("a", "", title);
     link.href = `https://github.com/Paige-Agent-AI/${repo}/` + (row.run ? "actions/runs/" + row.run : "pull/" + row.pull);
     const stamp = element("span", "small muted");
