@@ -1,6 +1,6 @@
 # PAIGE Cloud nonproduction preview
 
-The private `Paige-Agent-AI/paige-cloud-preview` repository builds the public PAIGE frontend pinned in `upstream.commit`. The governed preview serves static content and blocks authentication and write requests on the existing Hostinger KVM 2 managed by Coolify Cloud.
+The private `Paige-Agent-AI/paige-cloud` repository builds the public PAIGE frontend pinned in `upstream.commit`. The governed preview serves static content and blocks authentication and write requests on the existing Hostinger KVM 2 managed by Coolify Cloud.
 
 - [Existing F1 preview](https://fxfz4l18wzsufmveobxljvce.179.66.154.248.sslip.io)
 - [Release, rollback and recovery](docs/05-rollback-runbook.md)

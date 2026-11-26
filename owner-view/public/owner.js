@@ -106,9 +106,9 @@ function setIdentity(kind, release, fallback) {
 
 function buildRunLink(value) {
   if (typeof value !== "string") return null;
-  const canonical = "https://github.com/Paige-Agent-AI/paige-cloud-preview/actions/runs/";
+  const canonical = "https://github.com/Paige-Agent-AI/paige-cloud/actions/runs/";
   const id = value.match(/^\d{1,24}$/)?.[0] ??
-    value.match(/^https:\/\/github\.com\/paige-agent-ai\/paige-cloud-preview\/actions\/runs\/(\d{1,24})$/i)?.[1];
+    value.match(/^https:\/\/github\.com\/paige-agent-ai\/paige-cloud(?:-preview)?\/actions\/runs\/(\d{1,24})$/i)?.[1];
   if (!id) return null;
   const link = element("a", "", "Source build in GitHub");
   link.href = canonical + id;
@@ -917,7 +917,7 @@ function renderGitHubBuilds(rows, offset) {
   const clocks = [];
   const list = recent.map((row) => {
     const title = (labels[row.kind] ?? "Build") + (row.pull ? " · PR #" + row.pull : "");
-    const repo = row.kind === "preview" ? "paige-cloud-preview" : "Paige-Agent-AI";
+    const repo = row.kind === "preview" ? "paige-cloud" : "Paige-Agent-AI";
     const link = element("a", "", title);
     link.href = `https://github.com/Paige-Agent-AI/${repo}/` + (row.run ? "actions/runs/" + row.run : "pull/" + row.pull);
     const stamp = element("span", "small muted");

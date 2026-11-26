@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
 const appRepo = "Paige-Agent-AI/Paige-Agent-AI";
-const cloudRepo = "Paige-Agent-AI/paige-cloud-preview";
+const cloudRepo = "Paige-Agent-AI/paige-cloud";
 const commitId = /^[a-f0-9]{40}$/;
 const workflowPhases = { requested: 1, in_progress: 2, completed: 3 };
 const conclusions = new Set(["success", "failure", "cancelled", "timed_out", "skipped", "neutral", "action_required", "stale"]);
