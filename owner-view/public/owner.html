@@ -5,17 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Overview · PAIGE Cloud</title>
 <link rel="stylesheet" href="/assets/owner.css">
-<script src="/assets/owner.js" defer></script>
+<script src="/assets/owner.js" type="module"></script>
 </head>
 <body class="workspace">
 <a class="skip-link" href="#main">Skip to main content</a>
 <header><div class="topbar">
   <a class="brand" href="{{ACCOUNT_PATH}}/overview" aria-label="PAIGE Cloud overview"><svg viewBox="0 0 48 48" aria-hidden="true"><polygon points="21,13.6 30.5,13.6 21,34.4 11.5,34.4"/><circle cx="34.5" cy="30.5" r="5.5"/></svg><span>PAIGE <span class="brand-cloud">Cloud</span></span></a>
-  <form action="/sign-out" method="post" class="sign-out-form"><button class="sign-out" type="submit">Sign out</button></form>
+  <div class="shell-actions"><button id="theme-toggle" type="button" hidden>Light theme</button><form action="/sign-out" method="post" class="sign-out-form"><button class="sign-out" type="submit">Sign out</button></form></div>
 </div></header>
 <div class="workspace-layout">
 <nav class="workspace-menu" aria-label="Workspace">
-  <a href="{{ACCOUNT_PATH}}/overview" data-section="overview" aria-current="page">Overview</a>
+  <a href="{{ACCOUNT_PATH}}/overview" data-section="overview" aria-current="page">Mission Control</a>
   <a href="{{ACCOUNT_PATH}}/deployments" data-section="deployments">Deployments</a>
   <a href="{{ACCOUNT_PATH}}/projects">Projects</a>
   <a href="{{ACCOUNT_PATH}}/domains" data-section="domains">Domains</a>
@@ -24,7 +24,7 @@
 </nav>
 <main id="main" tabindex="-1">
   <div class="page-head">
-    <div><h1 id="page-title" tabindex="-1">Overview</h1><p class="muted" id="page-scope">PAIGE Agent AI</p></div>
+    <div class="workspace-heading"><nav id="mission-scope" aria-label="Workspace scope" hidden><ol><li>PAIGE</li><li><a href="{{ACCOUNT_PATH}}/projects/paige/paige-agent-ai">PAIGE Agent AI</a></li><li id="mission-environment" hidden>Production</li></ol></nav><h1 id="page-title" tabindex="-1">Mission Control</h1><p class="muted" id="page-scope">PAIGE Agent AI</p></div>
     <div class="page-actions">
       <button id="refresh" type="button">Refresh status</button>
       <a class="primary" id="pilot-link" href="https://paige-ant178-auth.179.66.154.248.sslip.io/" target="_blank" rel="noreferrer">Open app preview<span class="sr"> (PAIGE sign-in pilot, new tab)</span></a>
@@ -32,9 +32,12 @@
   </div>
   <div id="announcement" class="sr" role="status" aria-live="polite" aria-atomic="true"></div>
   <noscript><p class="notice warn">Enable JavaScript to view deployment status.</p></noscript>
+  <div id="mission-panel" hidden></div>
+  <section id="comparison-panel" aria-label="Scoped release evidence" hidden></section>
   <div id="deployment-view" hidden>
     <div class="notice-list" id="notices" hidden></div>
-    <div id="overview-panel">
+    <details id="overview-panel" class="mission-disclosure">
+      <summary>Production domains and preview rollback evidence</summary>
       <section class="production-panel" aria-labelledby="production-title">
         <div class="history-head"><h2 id="production-title">Production</h2><span class="status" id="production-health">Checking</span></div>
         <p class="small muted" id="production-readback"></p>
@@ -77,12 +80,12 @@
         </tbody>
       </table>
       </div>
-    </div>
+    </details>
     <section class="workspace-page" id="domains-panel" aria-label="Production domains" hidden></section>
     <section class="workspace-page" id="activity-panel" aria-label="Release and build activity" hidden></section>
     <section class="workspace-page" id="detail-panel" aria-label="Deployment detail" hidden></section>
     <section id="deployments-panel" aria-label="Deployment activity" hidden>
-      <details class="production-strip">
+      <details class="production-strip" id="production-evidence">
         <summary>
           <span class="production-strip-name">Production domains</span>
           <span class="status" id="receipt-health">Checking</span>

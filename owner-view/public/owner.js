@@ -1,5 +1,7 @@
 "use strict";
 
+import { releaseEvidence, releaseScope } from "./mission-release.mjs";
+
 const get = (id) => document.getElementById(id);
 const view = get("deployment-view");
 const refresh = get("refresh");
@@ -44,6 +46,7 @@ let sessionTimer;
 let sessionDeadline;
 const sessionEvents = new BroadcastChannel("paige-owner-session");
 let fetchFailed = false;
+let scopeUnavailable = false;
 let deploymentView = "all";
 let lastDeploymentKey;
 let previewRunData;
@@ -569,7 +572,88 @@ function renderActivity(loading, stale, { productionRows, previewRows }) {
   panel.replaceChildren(group);
 }
 
+function renderMission(loading) {
+  const comparison = section === "comparison";
+  const panel = get(comparison ? "comparison-panel" : "mission-panel");
+  const evidence = releaseEvidence(snapshot?.production, { failed: fetchFailed, staleAfter: staleAfterMs });
+  const state = scopeUnavailable ? "scope" : loading ? "loading" : evidence.state;
+  const label = { scope: "Project access is unavailable", loading: "Checking production evidence…", stale: "Production evidence is stale",
+    conflicting: "Production domains disagree on the serving revision", unavailable: "Current serving evidence is unavailable",
+    verified: "Serving revision has a matching receipt", "receipt-unavailable": "Receipt unavailable for the serving revision" };
+  const text = { scope: "No deployment evidence can be shown for this scope.", stale: "Refresh to recheck production; no current conclusion is shown.",
+    conflicting: "No single serving revision can be verified.", unavailable: "No release conclusion can be drawn from the current readback.",
+    verified: "No release receipt exception found for Production.",
+    "receipt-unavailable": evidence.receiptCoverage === "limited" ? "The domains agree on the serving revision. Receipt coverage is limited; this is not a deployment failure."
+      : "The domains agree on the serving revision, but no matching receipt was found. This is not a deployment failure." };
+  const stamp = JSON.stringify([state, evidence, comparison ? null : snapshot?.health?.state]);
+  if (panel.dataset.renderKey === stamp && !panel.hidden) return;
+  panel.dataset.renderKey = stamp;
+  const active = panel.contains(document.activeElement) ? document.activeElement.getAttribute("href") : null;
+  panel.replaceChildren();
+  panel.hidden = false;
+  panel.setAttribute("aria-busy", String(loading));
+  const content = element("section", "mission-card");
+  content.append(element("h2", "", comparison ? "Production release evidence" : "Needs your attention"));
+  const body = element("div", "mission-body");
+  content.append(body);
+  body.append(element("h3", "", label[state]));
+  if (text[state]) body.append(element("p", "muted", text[state]));
+  const evidenceLink = (path, title) => {
+    const a = element("a", "mission-link", title);
+    a.href = accountPath + path;
+    return a;
+  };
+  if (state === "receipt-unavailable" && !comparison) {
+    body.append(element("p", "mission-scope-note", "PAIGE Agent AI / Production"));
+    body.append(evidenceLink(releaseScope + "/release-comparison", "Open release comparison"));
+  }
+  if (comparison && ["verified", "receipt-unavailable"].includes(state)) {
+    const facts = element("dl", "mission-facts");
+    for (const [name, value, identifier] of [
+      ["Verified serving revision", evidence.serving, true],
+      ["GitHub main · reference only", evidence.main ?? "Unavailable", !!evidence.main],
+      ["Production health", healthLabels[evidence.health][0]],
+      ["Release receipt", state === "verified" ? "Verified match" : "Unavailable for this revision"],
+      ["Intended / authorized change", "Not evidenced by this readback"],
+      ["Provider acknowledgment", "Not established by this readback"],
+      ["Recovery eligibility", "Not established for Production"],
+      ["Recovered state", "Not evidenced"],
+    ]) {
+      const fact = element("div"), term = element("dt", "", name), description = element("dd");
+      description.append(identifier ? element("code", "", value) : document.createTextNode(value));
+      fact.append(term, description);
+      facts.append(fact);
+    }
+    const readAt = element("p", "small muted");
+    readAt.append("Production domains · checked ", time(evidence.checkedAt));
+    body.append(facts, readAt);
+  }
+  if (comparison && state !== "scope") body.append(evidenceLink("/deployments#production-evidence", "Open existing deployment evidence"));
+  panel.append(content);
+  if (!comparison && state !== "scope") {
+    const coverage = element("section", "mission-card");
+    coverage.append(element("h2", "", "Environment coverage"));
+    const items = element("div", "mission-body");
+    items.append(element("h3", "", "Production"),
+      element("p", "muted", !loading && evidence.health ? healthLabels[evidence.health][0] + " · domain health" : "Current health not established"),
+      element("h3", "", "F2 preview"),
+      element("p", "muted", !loading && !fetchFailed && !["stale", "conflicting"].includes(state) &&
+        date(snapshot?.checkedAt) && Date.now() - Date.parse(snapshot.checkedAt) < staleAfterMs &&
+        Object.hasOwn(healthLabels, snapshot?.health?.state) ? healthLabels[snapshot.health.state][0] + " · preview health" : "Current health not established"));
+    coverage.append(items);
+    panel.append(coverage);
+  }
+  if (active) ([...panel.querySelectorAll("a")].find((link) => link.getAttribute("href") === active) ?? pageTitle)
+    .focus({ preventScroll: true });
+}
+
 function render({ loading = false, checked = false } = {}) {
+  if (section === "overview" || section === "comparison") renderMission(loading);
+  if (section === "comparison") {
+    refresh.setAttribute("aria-disabled", String(loading));
+    refresh.textContent = loading ? "Checking status…" : "Refresh status";
+    return;
+  }
   const checkedAt = date(snapshot?.checkedAt);
   const stale = Boolean(checkedAt && (fetchFailed || Date.now() - checkedAt.getTime() >= staleAfterMs));
   const health = snapshot?.health;
@@ -591,9 +675,9 @@ function render({ loading = false, checked = false } = {}) {
     messageList.push(["Deployment sources are unavailable. Refresh to try again.", "warn"]);
   }
   if (identity === "unconfirmed") {
-    messageList.push(["The current release identity could not be verified against Coolify and the known deployment evidence.", "warn"]);
+    messageList.push(["The F2 preview release identity could not be verified against Coolify and the known deployment evidence.", "warn"]);
   } else if (identity === "unavailable") {
-    messageList.push(["Release identity could not be checked because a source was unavailable.", "warn"]);
+    messageList.push(["F2 preview release identity could not be checked because a source was unavailable.", "warn"]);
   }
   if (health?.state === "unhealthy") messageList.push([
     stale ? "The last health check reported an unhealthy preview." : "The preview health check reported an unhealthy preview.",
@@ -653,6 +737,8 @@ function clearPrivateView() {
   fetchFailed = false;
   render();
   view.hidden = true;
+  get("mission-panel").hidden = true;
+  get("comparison-panel").hidden = true;
 }
 
 function returnToSignIn() {
@@ -726,7 +812,8 @@ async function refreshStatus({ background = false } = {}) {
     announcement.textContent = "Checking production and preview health and source.";
   }
   try {
-    const response = await fetch(accountPath + "/api/organizations/paige/projects/paige-agent-ai/status",
+    const comparison = section === "comparison";
+    const response = await fetch(accountPath + (comparison ? "/api" + releaseScope + "/status" : "/api/organizations/paige/projects/paige-agent-ai/status"),
       { cache: "no-store", redirect: "error", signal: request.signal });
     if (activeRequest !== request) return;
     if (response.status === 401) {
@@ -739,6 +826,7 @@ async function refreshStatus({ background = false } = {}) {
       pendingMainRefresh = false;
       snapshot = null;
       fetchFailed = false;
+      scopeUnavailable = true;
       clearTimeout(staleTimer);
       clearPrPreviews();
       render();
@@ -749,16 +837,19 @@ async function refreshStatus({ background = false } = {}) {
     if (!response.ok) throw new Error("Status read failed");
     const data = await response.json();
     if (activeRequest !== request) return;
-    if (!date(data?.checkedAt) || !Object.hasOwn(healthLabels, data.health?.state)) {
+    if (!date(data?.checkedAt) || !Object.hasOwn(healthLabels, comparison ? data.state : data.health?.state)) {
       throw new Error("Invalid status response");
     }
     scheduleSessionExpiry(response);
-    snapshot = data;
+    snapshot = comparison ? { checkedAt: data.checkedAt, production: data } : data;
     fetchFailed = false;
+    scopeUnavailable = false;
     render({ checked: true });
     if (!background) void refreshPrPreviews();
     clearTimeout(staleTimer);
-    const staleIn = staleAfterMs - (Date.now() - date(data.checkedAt).getTime());
+    const productionTime = date(snapshot.production?.checkedAt)?.getTime() ?? Infinity;
+    const staleIn = staleAfterMs - (Date.now() - Math.min(date(data.checkedAt).getTime(),
+      ["overview", "comparison"].includes(section) ? productionTime : Infinity));
     if (staleIn > 0) {
       staleTimer = setTimeout(() => {
         if (!activeRequest) render();
@@ -766,14 +857,16 @@ async function refreshStatus({ background = false } = {}) {
       }, staleIn);
     }
     const productionHealth = healthLabels[data.production?.state] ?? healthLabels.unavailable;
-    if (!background) announcement.textContent = "Production " + productionHealth[0].toLowerCase() +
+    if (!background) announcement.textContent = comparison ? get("comparison-panel").querySelector("h3").textContent :
+      "Production " + productionHealth[0].toLowerCase() +
       ". Preview " + healthLabels[data.health.state][0].toLowerCase() +
       ". Release identity " + data.identity + ".";
   } catch {
     if (activeRequest !== request) return;
     fetchFailed = true;
     render();
-    announcement.textContent = snapshot ? "Refresh failed. Showing the last available data." : "Deployment status is unavailable.";
+    announcement.textContent = section === "comparison" ? "Production evidence is unavailable. No current comparison is shown." :
+      snapshot ? "Refresh failed. Showing the last available data." : "Deployment status is unavailable.";
   } finally {
     clearTimeout(timeout);
     if (activeRequest === request) {
@@ -883,10 +976,16 @@ const accountPath = location.pathname.match(/^\/accounts\/[1-9][0-9]{11}(?=\/|$)
 
 function showSection() {
   const deployments = section === "deployments" || section === "detail";
-  const title = { deployments: "Deployments", detail: "Deployment", domains: "Domains", activity: "Activity" }[section] ?? "Overview";
+  const title = { comparison: "Release comparison", deployments: "Deployments", detail: "Deployment", domains: "Domains", activity: "Activity" }[section] ?? "Mission Control";
   pageTitle.textContent = title;
   document.title = title + " · PAIGE Cloud";
   document.body.classList.toggle("workspace-deployments", deployments);
+  const mission = section === "overview" || section === "comparison";
+  document.body.classList.toggle("workspace-mission", mission);
+  get("mission-scope").hidden = !mission;
+  get("mission-environment").hidden = section !== "comparison";
+  get("page-scope").hidden = mission;
+  get("pilot-link").hidden = section === "comparison";
   if (deployments) {
     const pilotLabel = get("pilot-link");
     pilotLabel.textContent = "Sign-in pilot";
@@ -897,7 +996,7 @@ function showSection() {
     get(name + "-panel").hidden = section !== name;
   }
   for (const link of navigation) {
-    if (link.dataset.section === (section === "detail" ? "deployments" : section)) link.setAttribute("aria-current", "page");
+    if (link.dataset.section === (section === "detail" || section === "comparison" ? "deployments" : section)) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   }
 }
@@ -912,9 +1011,27 @@ document.querySelector(".skip-link").addEventListener("click", (event) => {
 });
 const route = location.pathname.slice(accountPath.length);
 const detailId = route.startsWith("/deployments/") ? route.split("/").at(-1) : "";
-const section = detailId ? "detail" : ["/deployments", "/domains", "/activity"].includes(route) ? route.slice(1) : "overview";
+const section = route === releaseScope + "/release-comparison" ? "comparison" :
+  detailId ? "detail" : ["/deployments", "/domains", "/activity"].includes(route) ? route.slice(1) : "overview";
 
 showSection();
+if (section === "deployments" && location.hash === "#production-evidence") {
+  get("production-evidence").open = true;
+  deploymentView = "production";
+  for (const tab of deploymentViews) tab.setAttribute("aria-pressed", String(tab.dataset.deploymentView === deploymentView));
+}
+const themeToggle = get("theme-toggle");
+function setTheme(light) {
+  document.documentElement.dataset.ownerTheme = light ? "light" : "dark";
+  themeToggle.setAttribute("aria-pressed", String(light));
+}
+try { setTheme(localStorage.getItem("paige-owner-theme") === "light"); } catch { setTheme(false); }
+themeToggle.hidden = false;
+themeToggle.addEventListener("click", () => {
+  const light = themeToggle.getAttribute("aria-pressed") !== "true";
+  setTheme(light);
+  try { localStorage.setItem("paige-owner-theme", light ? "light" : "dark"); } catch { /* preference is optional */ }
+});
 for (const button of deploymentViews) {
   button.addEventListener("click", () => {
     deploymentView = button.dataset.deploymentView;
