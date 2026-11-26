@@ -250,6 +250,19 @@ test("F3 comparison binds the exact production scope and withholds an in-flight 
   assert.equal(reads, 1);
 });
 
+test("invalid startup does not reconcile or persist binding invalidation", () => {
+  let reconciliations = 0;
+  const options = { origin: "https://owner.example.test", accounts: { hasOwner: () => true },
+    catalog: { reconcileBindingApprovals: () => { reconciliations++; } }, projectAccess: () => undefined };
+  for (const invalid of [{ origin: "http://owner.example.test" }, { passwordHash: "not-a-hash" },
+    { accounts: { hasOwner: () => false } }, { projectAccess: undefined }, { bindingTargets: {} }]) {
+    assert.throws(() => createOwnerServer({ ...options, ...invalid }));
+    assert.equal(reconciliations, 0);
+  }
+  createOwnerServer(options);
+  assert.equal(reconciliations, 1);
+});
+
 test("streams signed build updates only while the reader's session and project grant are valid", async (t) => {
   const secret = "d".repeat(64);
   const builds = openGitHubBuilds(":memory:", secret);

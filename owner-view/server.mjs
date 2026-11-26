@@ -85,7 +85,6 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
   passwordHash, accounts, catalog, stream, mediaPilot, hlsPlayer, githubBuilds, projectAccess: resolveRead, bindingTargets }) {
   if (bindingTargets !== undefined && typeof bindingTargets !== "function") throw new Error("Invalid provider target resolver");
   const loadTargets = bindingTargets ?? (() => []);
-  catalog?.reconcileBindingApprovals?.(loadTargets);
   const allowedOrigins = new Map();
   for (const value of [origin, ...(aliasOrigin ? [aliasOrigin] : []), ...additionalOrigins]) {
     const url = new URL(value);
@@ -105,6 +104,7 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
   const javascript = readAsset("owner.js");
   const pilotScript = readAsset("pilot-player.js");
   const projectSession = readAsset("project-session.js");
+  catalog?.reconcileBindingApprovals?.(loadTargets);
   const sessions = new Map();
   const limitSignIn = throttle(40, 8, 2);
   const limitOwnerSignIn = throttle(8, 8, 1);
