@@ -4,6 +4,14 @@ import { isProjectSlug } from "./projects.mjs";
 const scopeKeys = ["organizationId", "projectId", "environmentId", "applicationId"];
 const fields = [...scopeKeys, "id", "provider", "resourceId", "version"];
 const key = (scope) => JSON.stringify(scopeKeys.map(field => scope[field]));
+const resourceIds = new WeakMap();
+
+export function bindingReadTarget(binding, targets) {
+  if (bindingState(binding, targets) !== "bound") return undefined;
+  const target = targets.find(x => x.id === binding.targetId);
+  const resourceId = resourceIds.get(target);
+  return resourceId ? { ...target, resourceId } : undefined;
+}
 
 // Server-owned approvals only. No URL, token, or provider calls belong in this registry.
 export function createBindingTargets(raw) {
@@ -23,8 +31,10 @@ export function createBindingTargets(raw) {
     resources.set(resource, scope);
     const targets = scopes.get(scope) ?? [];
     if (targets.some(target => target.id === entry.id)) throw new Error("Duplicate provider target ID");
-    targets.push(Object.freeze({ id: entry.id, provider: entry.provider, version: entry.version,
-      fingerprint: createHash("sha256").update(JSON.stringify(fields.map(f => entry[f]))).digest("hex") }));
+    const target = Object.freeze({ id: entry.id, provider: entry.provider, version: entry.version,
+      fingerprint: createHash("sha256").update(JSON.stringify(fields.map(f => entry[f]))).digest("hex") });
+    resourceIds.set(target, entry.resourceId);
+    targets.push(target);
     scopes.set(scope, targets);
   }
   return scope => Object.freeze([...(scopes.get(key(scope)) ?? [])]);

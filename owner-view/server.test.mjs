@@ -171,7 +171,7 @@ test("backfills account numbers for existing credential records and preserves th
   }
 });
 
-async function startServer(t, projectAccess, principalId = ownerId, realAccounts, catalog, stream, mediaPilot, githubBuilds, bindingTargets) {
+async function startServer(t, projectAccess, principalId = ownerId, realAccounts, catalog, stream, mediaPilot, githubBuilds, bindingTargets, boundApplicationReader) {
   const password = randomBytes(32).toString("base64url");
   const key = randomBytes(32).toString("base64url");
   const server = createOwnerServer({
@@ -183,6 +183,7 @@ async function startServer(t, projectAccess, principalId = ownerId, realAccounts
     mediaPilot,
     githubBuilds,
     bindingTargets,
+    boundApplicationReader,
     accounts: realAccounts ?? {
       hasOwner: () => true,
       isOwnerEmail: (email) => principalId === ownerId && email === ownerEmail,
@@ -543,8 +544,14 @@ test("owner can manage two projects and invitations grant only the selected proj
   const targetInput = { organizationId: "amber", projectId: "demo", environmentId: "development", applicationId: "gateway",
     id: "approved-target", provider: "coolify", version: 1, resourceId: "a".repeat(24) };
   let targets = createBindingTargets(JSON.stringify([targetInput]));
+  let providerReads = 0, beforeObservation;
   const { request } = await startServer(t, (...args) => { resolutions++; return access(...args); }, ownerId, accounts, catalog,
-    undefined, undefined, undefined, scope => targets(scope));
+    undefined, undefined, undefined, scope => targets(scope), target => async () => {
+      assert.equal(target.resourceId, targetInput.resourceId);
+      providerReads++;
+      await beforeObservation?.();
+      return { state: "Running · healthy", checkedAt: "2026-11-26T00:00:00.000Z" };
+    });
   const scopes = new Map();
   const scoped = (path, cookie) => cookie && scopes.has(cookie) && /^\/(projects|join|api)(?:\/|$)/.test(path)
     ? scopes.get(cookie) + path : path;
@@ -611,13 +618,19 @@ test("owner can manage two projects and invitations grant only the selected proj
   const option = `${targetInput.id}:${targets(targetInput)[0].fingerprint}`;
   const bind = { action: "bind", revision: "0", target: option };
   assert.match(await (await at(bindingPath, ownerCookie)).text(), /No provider target selected/);
+  assert.equal(providerReads, 0);
   assert.equal((await form(bindingPath, { ...bind, target: "https://example.test" }, ownerCookie)).status, 400);
   assert.equal((await form(bindingPath, bind, ownerCookie, alias)).status, 403);
   assert.equal((await form(bindingPath, bind, ownerCookie)).status, 303);
   assert.equal((await form(bindingPath, bind, ownerCookie)).status, 409);
-  assert.match(await (await at(bindingPath, ownerCookie)).text(), /Approved target bound/);
+  const observed = await (await at(bindingPath, ownerCookie)).text();
+  assert.match(observed, /Approved target bound/);
+  assert.match(observed, /Coolify reports: Running · healthy/);
+  assert.doesNotMatch(observed, new RegExp(targetInput.resourceId));
+  assert.equal(providerReads, 1);
   targets = createBindingTargets(JSON.stringify([{ ...targetInput, version: 2, resourceId: "b".repeat(24) }]));
   assert.match(await (await at(bindingPath, ownerCookie)).text(), /no longer matches current approval/);
+  assert.equal(providerReads, 1);
   assert.equal((await form(bindingPath, { ...bind, revision: "1" }, ownerCookie)).status, 400);
   const restartedCatalog = openProjectCatalog(membershipPath);
   stores.push(restartedCatalog);
@@ -683,6 +696,32 @@ test("owner can manage two projects and invitations grant only the selected proj
   assert.match(await (await at(bindingPath, amberCookie)).text(), /Binding revision 4/);
   assert.equal((await form(bindingPath, { action: "unbind", revision: "4" }, amberCookie)).status, 404);
   assert.equal((await at(bindingPath, violetCookie)).status, 404);
+  assert.equal((await form(bindingPath, { ...bind, revision: "4" }, ownerCookie)).status, 303);
+  const beforeForeign = providerReads;
+  assert.equal((await at(bindingPath, violetCookie)).status, 404);
+  assert.equal(providerReads, beforeForeign);
+  const temporaryAmberCookie = await signIn(amberUser);
+  beforeObservation = async () => {
+    assert.equal((await form("/sign-out", {}, temporaryAmberCookie)).status, 303);
+  };
+  const endedWhileReading = await at(bindingPath, temporaryAmberCookie);
+  assert.equal(endedWhileReading.status, 401);
+  assert.doesNotMatch(await endedWhileReading.text(), /Coolify reports/);
+  const grantedAmber = await accounts.verify(amberUser.email, amberUser.password);
+  beforeObservation = async () => {
+    assert.equal(updateProjectMembership(membershipPath, "revoke", grantedAmber, "amber", "demo"), true);
+  };
+  const revokedWhileReading = await at(bindingPath, amberCookie);
+  assert.equal(revokedWhileReading.status, 404);
+  assert.doesNotMatch(await revokedWhileReading.text(), /Coolify reports/);
+  updateProjectMembership(membershipPath, "grant", grantedAmber, "amber", "demo");
+  beforeObservation = async () => {
+    assert.equal(catalog.changeApplicationBinding(ownerId, targetInput, 5, null), "saved");
+  };
+  const changedWhileReading = await at(bindingPath, amberCookie);
+  assert.equal(changedWhileReading.status, 409);
+  assert.doesNotMatch(await changedWhileReading.text(), /Coolify reports/);
+  beforeObservation = undefined;
   assert.doesNotMatch(await (await at("/projects", amberCookie)).text(), /Violet/);
   assert.equal((await at(violet, amberCookie)).status, 404);
   assert.equal((await at(amber, violetCookie)).status, 404);
@@ -744,7 +783,7 @@ test("owner can manage two projects and invitations grant only the selected proj
   assert.equal(reopened.hasProjectRead(ownerId, "paige", "paige-agent-ai"), true);
   assert.equal(reopened.registrations(ownerId, { organizationId: "amber", projectId: "demo" }).applications[0].id, "gateway");
   assert.deepEqual({ ...reopened.applicationBinding(ownerId, targetInput).binding }, {
-    revision: 4, targetId: null, targetFingerprint: null, invalidated: 0,
+    revision: 6, targetId: null, targetFingerprint: null, invalidated: 0,
   });
   const scope = { organizationId: "amber", projectId: "demo" };
   for (let i = 2; i < 50; i++) {

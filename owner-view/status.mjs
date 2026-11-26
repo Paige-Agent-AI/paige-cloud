@@ -30,6 +30,39 @@ async function readBody(response, limit) {
   }
 }
 
+// One opt-in reader, bound to an independently approved fingerprint and scoped token.
+// Configured state and a provider status are not running-image or rollout proof.
+export function createBoundApplicationReader(token, fingerprint, fetchFrom = fetch, reservedTokens = []) {
+  if (token === undefined && fingerprint === undefined) return undefined;
+  if (!/^[\x21-\x7e]{16,512}$/.test(token ?? "") || !/^[a-f0-9]{64}$/.test(fingerprint ?? "")) {
+    throw new Error("Invalid workload evidence reader configuration");
+  }
+  if (reservedTokens.includes(token)) throw new Error("Workload reader requires a distinct credential");
+  return (target) => {
+    if (target?.fingerprint !== fingerprint || target.provider !== "coolify" ||
+        !/^[a-z0-9]{20,32}$/.test(target.resourceId ?? "")) return undefined;
+    return async () => {
+      try {
+        const res = await fetchFrom(`${providerOrigin}/applications/${target.resourceId}`, {
+          method: "GET", redirect: "error", cache: "no-store", signal: AbortSignal.timeout(6000),
+          headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+        });
+        if (!res.ok) { await res.body?.cancel(); return null; }
+        const data = JSON.parse(await readBody(res, 256 * 1024));
+        if (data?.uuid !== target.resourceId) return null;
+        const labels = new Map([
+          ["running:healthy", "Running · healthy"], ["running:unhealthy", "Running · unhealthy"],
+          ["running:starting", "Starting"], ["exited", "Exited"],
+        ]);
+        const state = labels.get(data.status);
+        return state ? { state, checkedAt: new Date().toISOString() } : null;
+      } catch {
+        return null;
+      }
+    };
+  };
+}
+
 function isoDate(value) {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T/.test(value)) return null;
   const timestamp = Date.parse(value);
