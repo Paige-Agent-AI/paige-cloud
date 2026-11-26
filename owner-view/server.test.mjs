@@ -210,6 +210,44 @@ async function startServer(t, projectAccess, principalId = ownerId, realAccounts
   return { request, login, password, key, base };
 }
 
+test("F3 comparison binds the exact production scope and withholds an in-flight read on revocation", async (t) => {
+  const basePath = "/organizations/paige/projects/paige-agent-ai/environments/production";
+  const comparison = basePath + "/release-comparison";
+  let grant = true, reads = 0, unblock, started;
+  const entered = new Promise((resolve) => { started = resolve; });
+  const release = new Promise((resolve) => { unblock = resolve; });
+  const reader = createProjectAccess([{ ...firstProject, readStatus: async () => ({}), environments: {
+    production: async () => { reads++; started(); await release; return { value: "fixture-private-evidence" }; },
+  } }], () => grant);
+  const { request, login } = await startServer(t, reader);
+  assert.equal((await request(comparison)).status, 303);
+  assert.equal((await request("/assets/mission-release.mjs")).status, 404);
+  assert.equal((await request("/api" + basePath + "/status")).status, 401);
+  const cookie = (await login()).headers.get("set-cookie").split(";")[0];
+  const headers = { cookie };
+  const page = await request(comparison, { headers });
+  assert.equal(page.status, 200);
+  assert.match(page.headers.get("cache-control"), /no-store/);
+  assert.doesNotMatch(await page.text(), /fixture-private-evidence/);
+  assert.equal((await request(comparison, { method: "POST", headers })).status, 405);
+  assert.equal((await request("/accounts/123456789012" + comparison, { headers })).status, 404);
+  for (const wrong of [comparison.replace("/paige/", "/other/"), comparison.replace("paige-agent-ai", "other"), comparison.replace("/production/", "/preview/")]) {
+    assert.equal((await request(wrong, { headers })).status, 404);
+    assert.equal((await request("/api" + wrong.replace("/release-comparison", "/status"), { headers })).status, 404);
+  }
+  assert.equal(reads, 0);
+  const pending = request("/api" + basePath + "/status", { headers });
+  await entered;
+  grant = false;
+  unblock();
+  const denied = await pending;
+  assert.equal(denied.status, 404);
+  assert.doesNotMatch(await denied.text(), /fixture-private-evidence/);
+  assert.equal((await request(comparison, { headers })).status, 404);
+  assert.equal((await request("/api" + basePath + "/status", { headers })).status, 404);
+  assert.equal(reads, 1);
+});
+
 test("streams signed build updates only while the reader's session and project grant are valid", async (t) => {
   const secret = "d".repeat(64);
   const builds = openGitHubBuilds(":memory:", secret);

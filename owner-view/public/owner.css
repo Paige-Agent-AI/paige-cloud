@@ -16,6 +16,9 @@
   --amber: #ffda9b;
   --red: #ffb8ae;
   --violet: #d4c8f4;
+  --status-good-bg: #25382c;
+  --status-warn-bg: #493b28;
+  --status-bad-bg: #482e2d;
   --radius: 16px;
   --ease: cubic-bezier(.2,.75,.25,1);
   font: 400 16px/1.55 system-ui, sans-serif;
@@ -62,6 +65,57 @@ code { font: 500 .86rem/1.6 ui-monospace, Consolas, monospace; overflow-wrap: an
 .skip-link:focus { transform: translateY(8px); }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
+/* Mission Control uses the accepted ink/mineral palette without changing the sign-in surface. */
+body.workspace {
+  --bg: #10151c; --shell: #131921; --panel: #181f29; --raised: #202a37; --inset: #111922;
+  --line: #354251; --line-hover: #788e9d; --fg: #f1f5f9; --muted: #aab9c9;
+  --gold: #f0c579; --gold-deep: #e0ae60; --gold-ink: #251907;
+  --green: #8ddabf; --amber: #f1ca84; --red: #ffadb1; --violet: #b7b6e4;
+}
+:root[data-owner-theme="light"] body.workspace {
+  color-scheme: light;
+  --bg: #eef2f5; --shell: #e6ecf1; --panel: #fbfcfd; --raised: #eaf0f5; --inset: #e8eef3;
+  --line: #aebdca; --line-hover: #597282; --fg: #182632; --muted: #455c6e;
+  --gold: #875705; --gold-deep: #744705; --gold-ink: #fff;
+  --green: #17634c; --amber: #76500d; --red: #9a2644; --violet: #594e92;
+  --status-good-bg: #dcefe6; --status-warn-bg: #fff0cf; --status-bad-bg: #fbe4ea;
+}
+.workspace button:not(.primary):hover, .workspace select:hover { background: var(--panel); }
+.workspace button:not(.primary):active { background: var(--inset); }
+:root[data-owner-theme="light"] .workspace .primary:hover { background: var(--gold-deep); }
+.workspace :focus-visible { outline-color: var(--gold); }
+.shell-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem; }
+.shell-actions #theme-toggle { font-size: .82rem; padding-inline: .6rem; }
+.workspace .page-head #page-title { font-size: 1rem; line-height: 1.35; letter-spacing: -.01em; }
+.workspace-heading { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem .65rem; }
+#mission-scope ol { display: flex; flex-wrap: wrap; gap: .2rem .5rem; list-style: none; margin: 0; padding: 0; font-size: .8rem; color: var(--muted); }
+#mission-scope li + li::before { content: "/"; margin-inline-end: .5rem; }
+.workspace-mission #pilot-link { color: var(--fg); background: var(--panel); border-color: var(--line); }
+.workspace-mission .page-head { margin-bottom: .65rem; }
+#mission-panel { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); align-items: start; gap: .8rem; margin-block-end: .8rem; }
+.mission-card { border: 1px solid var(--line); border-radius: 11px; background: var(--panel); }
+.mission-card h2 { padding: .8rem .9rem; border-bottom: 1px solid var(--line); font-size: 1rem; letter-spacing: -.01em; }
+.mission-body { padding: .9rem; overflow-wrap: anywhere; }
+.mission-body h3 { font-size: .92rem; line-height: 1.3; margin: 0 0 .22rem; }
+.mission-body h3:not(:first-child) { margin-top: .65rem; }
+.mission-body p { font-size: .85rem; }
+.mission-scope-note { margin-top: .7rem; color: var(--muted); }
+.mission-link { display: inline-flex; min-height: 44px; align-items: center; margin-top: .65rem; padding: .3rem .7rem; border: 1px solid var(--gold); border-radius: 7px; color: var(--gold); font-size: .86rem; font-weight: 650; }
+.mission-link:hover { text-decoration-thickness: 2px; }
+#mission-panel .mission-link { background: var(--gold); color: var(--gold-ink); text-decoration: none; }
+#mission-panel .mission-link:hover { text-decoration: underline; }
+.mission-disclosure { border-top: 1px solid var(--line); }
+.mission-disclosure > summary { width: fit-content; padding: .65rem 0; cursor: pointer; color: var(--muted); font-size: .87rem; }
+.mission-disclosure[open] > summary { margin-bottom: .5rem; }
+.mission-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem 1rem; margin-block: .75rem; }
+.mission-facts > div { min-width: 0; border-top: 1px solid var(--line); padding-top: .4rem; }
+.mission-facts dd { font-size: .86rem; }
+@media (max-width: 620px) {
+  #mission-panel, .mission-facts { grid-template-columns: minmax(0, 1fr); }
+  .workspace-heading { margin-bottom: .4rem; }
+  .shell-actions #theme-toggle { padding-inline: .45rem; }
+}
+
 header { background: var(--shell); border-bottom: 1px solid var(--line); }
 .topbar { display: flex; align-items: center; justify-content: space-between; min-height: 68px; gap: .75rem; padding-inline: clamp(1rem, 3vw, 2.5rem); max-width: 1600px; margin: auto; }
 .brand { display: inline-flex; align-items: center; gap: .6rem; font-size: .97rem; font-weight: 750; letter-spacing: .055em; text-decoration: none; }
@@ -99,9 +153,9 @@ main { min-width: 0; padding: clamp(1.5rem, 3vw, 2.5rem) clamp(1rem, 4vw, 3.25re
 .good { color: var(--green); }
 .warn { color: var(--amber); }
 .bad { color: var(--red); }
-.status.good { background: #25382c; }
-.status.warn { background: #493b28; }
-.status.bad { background: #482e2d; }
+.status.good { background: var(--status-good-bg); }
+.status.warn { background: var(--status-warn-bg); }
+.status.bad { background: var(--status-bad-bg); }
 
 .production-panel {
   margin-bottom: 1rem;
@@ -272,6 +326,7 @@ details[open] > summary .chevron { transform: rotate(45deg); }
   border-radius: 5px; font-size: .72rem; line-height: 1.5; color: var(--violet);
 }
 .deployment-environment.production { color: var(--gold); border-color: #735b45; background: #2c2233; }
+:root[data-owner-theme="light"] .workspace .deployment-environment.production { border-color: #a18452; background: #fff0d6; }
 .deployment-commit code, .deployment-branch { font: 500 .76rem/1.4 ui-monospace, Consolas, monospace; color: var(--violet); }
 .deployment-time { white-space: nowrap; font-size: .73rem; }
 .deployment-action { justify-self: end; }

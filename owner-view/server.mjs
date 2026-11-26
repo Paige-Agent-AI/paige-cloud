@@ -21,7 +21,9 @@ const accountNumberPattern = /^[1-9][0-9]{11}$/;
 const accountRoutePattern = /^\/accounts\/([1-9][0-9]{11})(\/[^\r\n]*)?$/;
 const dashboardPages = new Set(["/", "/overview", "/deployments", "/domains", "/activity"]);
 const deploymentPage = /^\/deployments\/(?:release-[1-9]\d{0,19}-[1-9]\d{0,19}|history-[a-z0-9]{1,64}|pr-[1-9]\d{0,9}-[a-f0-9]{40}|live-[a-f0-9]{40})$/;
-const isDashboardPage = (path) => dashboardPages.has(path) || deploymentPage.test(path);
+const releaseComparison = "/organizations/paige/projects/paige-agent-ai/environments/production/release-comparison";
+const comparisonScope = { ...firstProject, environmentId: "production" };
+const isDashboardPage = (path) => dashboardPages.has(path) || deploymentPage.test(path) || path === releaseComparison;
 const buildEventsPath = "/api/organizations/paige/projects/paige-agent-ai/deployment-events";
 const headers = {
   "Cache-Control": "no-store, max-age=0",
@@ -94,6 +96,7 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
   const signInPage = readAsset("login.html").toString("utf8");
   const noProjects = readAsset("no-projects.html").toString("utf8");
   const owner = readAsset("owner.html").toString("utf8");
+  const missionRelease = readAsset("mission-release.mjs");
   const css = readAsset("owner.css");
   const javascript = readAsset("owner.js");
   const pilotScript = readAsset("pilot-player.js");
@@ -380,6 +383,11 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
     }
     const scope = parseProjectStatusPath(path);
     if (isDashboardPage(path)) {
+      if (path === releaseComparison && (!authorized || !resolveRead(session.principalId, comparisonScope))) {
+        send(response, authorized ? 404 : 303, text, authorized ? "Not found" : "",
+          authorized ? {} : { Location: "/sign-in" });
+        return;
+      }
       if (authorized && catalog && !resolveRead(session.principalId, firstProject)) {
         send(response, 303, text, "", { Location: accountPath + "/projects" });
         return;
@@ -431,8 +439,8 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
       send(response, 200, json, JSON.stringify(snapshot), {
         "X-Owner-Session-Expires-At": new Date(session.expires).toISOString(),
       });
-    } else if (path === "/assets/owner.js" && authorized && resolveRead(session.principalId, firstProject)) {
-      send(response, 200, "text/javascript; charset=utf-8", javascript);
+    } else if ((path === "/assets/owner.js" || path === "/assets/mission-release.mjs") && authorized && resolveRead(session.principalId, firstProject)) {
+      send(response, 200, "text/javascript; charset=utf-8", path === "/assets/owner.js" ? javascript : missionRelease);
     } else {
       send(response, 404, text, "Not found");
     }
