@@ -551,6 +551,18 @@ test("owner can manage two projects and invitations grant only the selected proj
   assert.equal((await form("/projects", { name: "Violet", organization: "violet", project: "demo" }, ownerCookie)).headers.get("location"), scopes.get(ownerCookie) + violet);
   assert.equal((await form("/projects", { name: "Duplicate", organization: "violet", project: "demo" }, ownerCookie)).status, 409);
   assert.match(await (await at(amber, ownerCookie)).text(), /Amber &amp; &lt;workspace&gt;/);
+  const applications = amber + "/applications";
+  const env = { action: "environment", id: "development", name: "Development" };
+  const app = { action: "register", environment: "development", kind: "service", id: "gateway", name: "Gateway <fixture>" };
+  assert.equal((await request(applications)).status, 303);
+  assert.match(await (await at(applications, ownerCookie)).text(), /No environments registered/);
+  assert.equal((await form(applications, env, ownerCookie, alias)).status, 403);
+  assert.equal((await form(applications, app, ownerCookie)).status, 409);
+  assert.equal((await form(applications, env, ownerCookie)).status, 303);
+  assert.equal((await form(applications, env, ownerCookie)).status, 409);
+  assert.equal((await form(applications, { ...app, kind: "provider" }, ownerCookie)).status, 400);
+  assert.equal((await form(applications, app, ownerCookie)).status, 303);
+  assert.equal((await form(applications, app, ownerCookie)).status, 409);
   assert.equal((await form(amber, { action: "rename", name: "Amber Studio" }, ownerCookie)).status, 303);
   assert.equal((await form("/projects/paige/paige-agent-ai", { action: "archive" }, ownerCookie)).status, 400);
   assert.equal((await form("/projects/paige/paige-agent-ai", { action: "rename", name: "Rename canonical" }, ownerCookie)).status, 400);
@@ -594,6 +606,10 @@ test("owner can manage two projects and invitations grant only the selected proj
   assert.equal((await form("/join", { invite: violetCode }, violetCookie)).headers.get("location"), scopes.get(violetCookie) + violet);
   assert.equal((await form("/join", { invite: amberCode }, amberCookie)).status, 400);
   assert.match(await (await at("/projects", amberCookie)).text(), /Amber Studio/);
+  assert.match(await (await at(applications, amberCookie)).text(), /Gateway &lt;fixture&gt;/);
+  assert.doesNotMatch(await (await at(applications, amberCookie)).text(), /Register an environment/);
+  assert.equal((await form(applications, { ...app, id: "forbidden" }, amberCookie)).status, 404);
+  assert.equal((await at(applications, violetCookie)).status, 404);
   assert.doesNotMatch(await (await at("/projects", amberCookie)).text(), /Violet/);
   assert.equal((await at(violet, amberCookie)).status, 404);
   assert.equal((await at(amber, violetCookie)).status, 404);
@@ -631,6 +647,7 @@ test("owner can manage two projects and invitations grant only the selected proj
   assert.equal((await form(amberMembers, { action: "revoke", member: amberId }, ownerCookie)).headers.get("location"), ownerPath + amberMembers);
   assert.equal((await at(amberApi + "/status", amberCookie)).status, 404);
   assert.equal((await at(amber, amberCookie)).status, 404);
+  assert.equal((await at(applications, amberCookie)).status, 404);
   assert.equal((await form("/join", { invite: waiting }, amberCookie)).status, 400);
   assert.equal((await at(violetApi + "/status", violetCookie)).status, 200);
   const pending = await issue(violet, "cancelled@example.test");
@@ -652,6 +669,24 @@ test("owner can manage two projects and invitations grant only the selected proj
   assert.equal(reopened.get({ organizationId: "amber", projectId: "demo" }).name, "Amber Studio");
   assert.equal(reopened.hasProjectRead(amberId, "amber", "demo"), false);
   assert.equal(reopened.hasProjectRead(ownerId, "paige", "paige-agent-ai"), true);
+  assert.equal(reopened.registrations(ownerId, { organizationId: "amber", projectId: "demo" }).applications[0].id, "gateway");
+  const scope = { organizationId: "amber", projectId: "demo" };
+  for (let i = 1; i < 50; i++) {
+    assert.equal(reopened.register(ownerId, scope, { kind: "environment", id: `dev-${i}`, name: "Development" }), "created");
+  }
+  assert.equal(reopened.register(ownerId, scope, { kind: "environment", id: "extra", name: "Extra" }), "conflict");
+  for (let i = 1; i < 100; i++) {
+    assert.equal(reopened.register(ownerId, scope, { kind: "application", environmentId: "development", id: `app-${i}`, name: "Application" }), "created");
+  }
+  assert.equal(reopened.register(ownerId, scope, { kind: "service", environmentId: "development", id: "extra", name: "Extra" }), "conflict");
+  assert.deepEqual(reopened.registrations(ownerId, { organizationId: "violet", projectId: "demo" }), { environments: [], applications: [] });
+  assert.equal(reopened.archive("amber", "demo", true), true);
+  assert.equal(reopened.registrations(ownerId, scope), undefined);
+  assert.equal(reopened.register(ownerId, scope, { kind: "environment", id: "archived", name: "Archived" }), "unavailable");
+  assert.equal(reopened.archive("amber", "demo", false), true);
+  const restored = reopened.registrations(ownerId, scope);
+  assert.equal(restored.environments.length, 50);
+  assert.equal(restored.applications.length, 100);
 });
 
 test("project status checks organization and project grants before reading environment data", async (t) => {

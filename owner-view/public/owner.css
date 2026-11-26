@@ -64,6 +64,11 @@ code { font: 500 .86rem/1.6 ui-monospace, Consolas, monospace; overflow-wrap: an
 .skip-link { position: absolute; z-index: 2; transform: translateY(-150%); padding: .5rem 1rem; background: var(--bg); }
 .skip-link:focus { transform: translateY(8px); }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.registration-main h1, .registration-main h2 { font-size: 1rem; line-height: 1.35; letter-spacing: -.01em; }
+.registration-main .project-list, .registration-items, .registration-breadcrumb { overflow-wrap: anywhere; }
+.registration-items { margin: .4rem 0; padding-inline-start: 1.2rem; }
+.registration-main .registration-items li { display: list-item; padding-block: .15rem; border: 0; }
+.registration-main .project-form select { max-width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: .5rem; }
 
 /* Mission Control uses the accepted ink/mineral palette without changing the sign-in surface. */
 body.workspace {

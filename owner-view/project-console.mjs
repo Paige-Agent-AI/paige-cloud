@@ -13,10 +13,11 @@ export function matchProjectPage(path) {
   if (path === "/projects" || path === "/join") return { path };
   const parts = path?.split("/") ?? [];
   const members = parts.length === 5 && parts[4] === "members";
+  const registry = parts.length === 5 && parts[4] === "applications";
   const media = parts[4] === "media" && (parts.length === 5 || (parts.length === 6 && /^[a-f0-9]{20}$/.test(parts[5])));
-  if ((parts.length !== 4 && !members && !media) || parts[0] || parts[1] !== "projects" ||
+  if ((parts.length !== 4 && !members && !media && !registry) || parts[0] || parts[1] !== "projects" ||
       !parts.slice(2, 4).every(isProjectSlug)) return undefined;
-  return { path, organizationId: parts[2], projectId: parts[3], members, media, streamId: media ? parts[5] : undefined };
+  return { path, organizationId: parts[2], projectId: parts[3], members, media, registry, streamId: media ? parts[5] : undefined };
 }
 
 export function shell(title, body, showDeployments, remaining, accountPath, active = "projects") {
@@ -34,7 +35,7 @@ ${showDeployments ? `<a href="${accountPath}/overview">Overview</a><a href="${ac
 <a href="${accountPath}/projects"${active === "projects" ? ' aria-current="page"' : ""}>Projects</a>
 ${showDeployments ? `<a href="${accountPath}/domains">Domains</a><a href="${accountPath}/activity">Activity</a>
 <a href="${accountPath}/projects/paige/paige-agent-ai/media"${active === "media" ? ' aria-current="page"' : ""}>Media</a>` : ""}</nav>
-<main id="main" class="project-main" tabindex="-1" data-session-remaining="${remaining}" data-project-home="${accountPath}/projects" hidden><h1>${escape(title)}</h1>${body}</main>
+<main id="main" class="project-main${active === "applications" ? " registration-main" : ""}" tabindex="-1" data-session-remaining="${remaining}" data-project-home="${accountPath}/projects" hidden><h1>${escape(title)}</h1>${body}</main>
 <noscript><p>Enable JavaScript to open your projects.</p></noscript></div></body></html>`;
 }
 
@@ -79,6 +80,33 @@ function customerPanel(catalog, path) {
     <p class="muted">PAIGE Cloud assigns the organization and project IDs when the customer signs up.</p>
     ${button("Prepare customer invitation", true)}</form>
     ${invitations.length ? `<h3>Pending customer invitations</h3><ul class="project-list">${invitations.join("")}</ul>` : ""}</section>`;
+}
+
+function registrationsPanel(project, registrations, manage, accountPath, message) {
+  const base = accountPath + url(project), path = base + "/applications";
+  const { environments, applications } = registrations;
+  const field = (id, label, max) => `<label for="${id}">${label}</label><input id="${id}" name="${id.split("-").at(-1)}" maxlength="${max}" required>`;
+  const listing = environments.map(env => `<li>
+    <div><strong>${escape(env.name)}</strong> <code class="muted">${escape(env.id)}</code>
+    ${applications.some(app => app.environmentId === env.id) ? `<ul class="registration-items">${applications.filter(app => app.environmentId === env.id).map(app =>
+      `<li><strong>${escape(app.name)}</strong> <code>${escape(app.id)}</code> · ${app.kind === "service" ? "Service" : "Application"}</li>`).join("")}</ul>`
+      : '<p class="muted">No applications or services registered.</p>'}</div></li>`).join("");
+  return `<p class="muted registration-breadcrumb"><a href="${accountPath}/projects">Projects</a> / <a href="${base}">${escape(project.name)}</a> / ${escape(project.organizationId)}/${escape(project.projectId)}</p>
+    ${message ? `<p class="notice bad" role="alert">${message}</p>` : ""}
+    <section class="project-panel" aria-labelledby="environments"><h2 id="environments">Environments</h2>
+    <p class="muted">Registration saves a Cloud record only. It does not deploy an app or connect a provider.</p>
+    ${listing ? `<ul class="project-list">${listing}</ul>` : '<p>No environments registered.</p>'}</section>
+    ${manage ? `<section class="project-panel"><h2>Register an environment</h2>
+      <form class="project-form" method="post" action="${path}">${action("environment")}
+      ${field("environment-id", "Environment ID", 63)}${field("environment-name", "Environment name", 80)}
+      <p class="muted">Use lowercase letters, numbers, and hyphens for IDs.</p>${button("Register environment", true)}</form></section>` : ""}
+    ${manage && environments.length ? `<section class="project-panel"><h2>Register an application or service</h2>
+      <form class="project-form" method="post" action="${path}">${action("register")}
+      <label for="registration-environment">Environment</label><select name="environment" id="registration-environment" required>
+      ${environments.map(env => `<option value="${escape(env.id)}">${escape(env.name)} (${escape(env.id)})</option>`).join("")}</select>
+      <label for="registration-kind">Kind</label><select name="kind" id="registration-kind"><option value="application">Application</option><option value="service">Service</option></select>
+      ${field("application-id", "Application or service ID", 63)}${field("application-name", "Display name", 80)}
+      ${button("Register application or service", true)}</form></section>` : ""}`;
 }
 
 function invitationPanel(email, code, subject, message, back, backLabel) {
@@ -152,9 +180,28 @@ export function projectPage({ route, form, method, principal, origin, catalog, a
   const { organizationId, projectId } = route;
   const project = catalog.get(route);
   if (!project || (!manage && (route.members || !catalog.hasProjectRead(principal, organizationId, projectId)))) return { status: 404 };
+  if (route.registry) {
+    const records = catalog.registrations(principal, route);
+    if (!records) return { status: 404 };
+    const render = (message, status = 200) => ({ status, html: shell("Applications", registrationsPanel(project, records, manage, accountPath, message),
+      showDeployments, remaining, accountPath, "applications") });
+    if (!post) return render();
+    const operation = form?.get("action"), id = form?.get("id"), name = form?.get("name")?.trim();
+    const kind = operation === "environment" ? "environment" : form?.get("kind");
+    const environmentId = form?.get("environment");
+    if (!isProjectSlug(id) || !validName(name) ||
+        !(operation === "environment" && form.size === 3 ||
+          operation === "register" && form.size === 5 && ["application", "service"].includes(kind) && isProjectSlug(environmentId))) {
+      return render("Enter a valid ID and display name, and choose an environment for an application or service.", 400);
+    }
+    const result = catalog.register(principal, route, { id, name, kind, environmentId });
+    if (result === "unavailable") return { status: 404 };
+    return result === "created" ? redirect(route.path) : render("Registration unavailable. Check for a duplicate ID, a missing environment, or the project registration limit.", 409);
+  }
   if (!post && route.members) return page("Members", `<p class="muted"><a href="${accountPath}/projects">All projects</a> /
     <a href="${accountPath + url(project)}">${escape(project.name)}</a> / Members</p>` + membersPanel(project, catalog, accounts, accountPath));
   const detail = `<p class="muted"><a href="${accountPath}/projects">All projects</a> / ${escape(organizationId)}/${escape(projectId)}${project.archived ? ' · Archived' : ''}</p>
+    ${!project.archived ? `<p><a href="${accountPath + url(project)}/applications">Applications and environments</a></p>` : ""}
     ${canonical(project) && catalog.hasProjectRead(principal, organizationId, projectId) ? `<p><a href="${accountPath}/deployments">View deployments</a></p>` : !project.archived ? '<p class="muted">No deployment source is connected.</p>' : ""}
     ${!project.archived && catalog.hasProjectRead(principal, organizationId, projectId) ? `<p><a href="${accountPath + url(project)}/media">Project media</a></p>` : ""}
     ${manage ? `<p><a href="${accountPath + url(project)}/members">Manage members</a></p>` : ""}`;

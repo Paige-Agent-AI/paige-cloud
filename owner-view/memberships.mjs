@@ -179,6 +179,18 @@ export function openProjectCatalog(path) {
         PRIMARY KEY (organization_id, project_id),
         FOREIGN KEY (organization_id, project_id) REFERENCES projects (organization_id, project_id)
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS project_environments (
+        organization_id TEXT NOT NULL, project_id TEXT NOT NULL, environment_id TEXT NOT NULL, name TEXT NOT NULL,
+        PRIMARY KEY (organization_id, project_id, environment_id),
+        FOREIGN KEY (organization_id, project_id) REFERENCES projects (organization_id, project_id)
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS project_applications (
+        organization_id TEXT NOT NULL, project_id TEXT NOT NULL, environment_id TEXT NOT NULL,
+        application_id TEXT NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('application', 'service')),
+        PRIMARY KEY (organization_id, project_id, environment_id, application_id),
+        FOREIGN KEY (organization_id, project_id, environment_id)
+          REFERENCES project_environments (organization_id, project_id, environment_id)
+      ) STRICT;
       CREATE TABLE IF NOT EXISTS project_invitations (
         organization_id TEXT NOT NULL,
         project_id TEXT NOT NULL,
@@ -225,6 +237,18 @@ export function openProjectCatalog(path) {
       COALESCE(d.name, p.project_id) AS name, COALESCE(d.archived, 0) AS archived`;
     const rows = `FROM projects p LEFT JOIN project_details d USING (organization_id, project_id)`;
     const byProject = db.prepare(`SELECT ${fields} ${rows} WHERE p.organization_id = ? AND p.project_id = ?`);
+    const environments = db.prepare(`SELECT environment_id AS id, name FROM project_environments
+      WHERE organization_id = ? AND project_id = ? ORDER BY environment_id`);
+    const applications = db.prepare(`SELECT environment_id AS environmentId, application_id AS id, name, kind
+      FROM project_applications WHERE organization_id = ? AND project_id = ? ORDER BY environment_id, application_id`);
+    const addEnvironment = db.prepare(`INSERT INTO project_environments
+      SELECT ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM project_environments
+        WHERE organization_id = ? AND project_id = ?) < 50 ON CONFLICT DO NOTHING`);
+    const addApplication = db.prepare(`INSERT INTO project_applications
+      SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM project_environments
+        WHERE organization_id = ? AND project_id = ? AND environment_id = ?)
+      AND (SELECT COUNT(*) FROM project_applications WHERE organization_id = ? AND project_id = ?) < 100
+      ON CONFLICT DO NOTHING`);
     const allProjects = db.prepare(`SELECT ${fields} ${rows} ORDER BY archived, name, organizationId, projectId`);
     const memberProjects = db.prepare(`SELECT ${fields} ${rows}
       JOIN project_memberships m USING (organization_id, project_id)
@@ -263,6 +287,24 @@ export function openProjectCatalog(path) {
     const find = (email, code) => invite.get(email, hashCode(code), Date.now());
     return {
       get: (scope) => byProject.get(scope.organizationId, scope.projectId),
+      registrations(principal, { organizationId: org, projectId: id }) {
+        return transaction(db, () => {
+          const project = byProject.get(org, id);
+          if (!project || project.archived || (principal !== ownerId && !access.get(principal, org, id))) return undefined;
+          return { environments: environments.all(org, id), applications: applications.all(org, id) };
+        });
+      },
+      register(principal, { organizationId: org, projectId: id }, entry) {
+        if (principal !== ownerId) return "unavailable";
+        return transaction(db, () => {
+          const project = byProject.get(org, id);
+          if (!project || project.archived) return "unavailable";
+          if (entry.kind === "environment") return addEnvironment.run(org, id, entry.id, entry.name, org, id).changes ? "created" : "conflict";
+          if (!["application", "service"].includes(entry.kind)) return "unavailable";
+          return addApplication.run(org, id, entry.environmentId, entry.id, entry.name, entry.kind,
+            org, id, entry.environmentId, org, id).changes ? "created" : "conflict";
+        });
+      },
       streams: (scope) => projectStreams.all(scope.organizationId, scope.projectId),
       stream: (scope, id) => projectStream.get(scope.organizationId, scope.projectId, id),
       pinStreamVideo(scope, id, video) {
