@@ -606,8 +606,20 @@ test("owner can manage two projects and invitations grant only the selected proj
   targets = createBindingTargets(JSON.stringify([{ ...targetInput, version: 2, resourceId: "b".repeat(24) }]));
   assert.match(await (await at(bindingPath, ownerCookie)).text(), /no longer matches current approval/);
   assert.equal((await form(bindingPath, { ...bind, revision: "1" }, ownerCookie)).status, 400);
-  assert.equal((await form(bindingPath, { action: "unbind", revision: "1" }, ownerCookie)).status, 303);
-  assert.match(await (await at(bindingPath, ownerCookie)).text(), /Binding revision 2/);
+  const restartedCatalog = openProjectCatalog(membershipPath);
+  stores.push(restartedCatalog);
+  // The startup path sees a revoked approval. Restoring exact approval bytes on
+  // another startup must not reactivate the old record or accept an old form.
+  await startServer(t, access, ownerId, accounts, restartedCatalog);
+  targets = createBindingTargets(JSON.stringify([targetInput]));
+  await startServer(t, access, ownerId, accounts, restartedCatalog,
+    undefined, undefined, undefined, targets);
+  assert.match(await (await at(bindingPath, ownerCookie)).text(), /no longer matches current approval/);
+  assert.equal((await form(bindingPath, { ...bind, revision: "1" }, ownerCookie)).status, 409);
+  assert.equal((await form(bindingPath, { ...bind, revision: "2" }, ownerCookie)).status, 303);
+  assert.match(await (await at(bindingPath, ownerCookie)).text(), /Approved target bound/);
+  assert.equal((await form(bindingPath, { action: "unbind", revision: "3" }, ownerCookie)).status, 303);
+  assert.match(await (await at(bindingPath, ownerCookie)).text(), /Binding revision 4/);
   assert.equal((await form(amber, { action: "rename", name: "Amber Studio" }, ownerCookie)).status, 303);
   assert.equal((await form("/projects/paige/paige-agent-ai", { action: "archive" }, ownerCookie)).status, 400);
   assert.equal((await form("/projects/paige/paige-agent-ai", { action: "rename", name: "Rename canonical" }, ownerCookie)).status, 400);
@@ -655,8 +667,8 @@ test("owner can manage two projects and invitations grant only the selected proj
   assert.doesNotMatch(await (await at(applications, amberCookie)).text(), /Register an environment/);
   assert.equal((await form(applications, { ...app, id: "forbidden" }, amberCookie)).status, 404);
   assert.equal((await at(applications, violetCookie)).status, 404);
-  assert.match(await (await at(bindingPath, amberCookie)).text(), /Binding revision 2/);
-  assert.equal((await form(bindingPath, { action: "unbind", revision: "2" }, amberCookie)).status, 404);
+  assert.match(await (await at(bindingPath, amberCookie)).text(), /Binding revision 4/);
+  assert.equal((await form(bindingPath, { action: "unbind", revision: "4" }, amberCookie)).status, 404);
   assert.equal((await at(bindingPath, violetCookie)).status, 404);
   assert.doesNotMatch(await (await at("/projects", amberCookie)).text(), /Violet/);
   assert.equal((await at(violet, amberCookie)).status, 404);
@@ -719,7 +731,7 @@ test("owner can manage two projects and invitations grant only the selected proj
   assert.equal(reopened.hasProjectRead(ownerId, "paige", "paige-agent-ai"), true);
   assert.equal(reopened.registrations(ownerId, { organizationId: "amber", projectId: "demo" }).applications[0].id, "gateway");
   assert.deepEqual({ ...reopened.applicationBinding(ownerId, targetInput).binding }, {
-    revision: 2, targetId: null, targetFingerprint: null,
+    revision: 4, targetId: null, targetFingerprint: null, invalidated: 0,
   });
   const scope = { organizationId: "amber", projectId: "demo" };
   for (let i = 2; i < 50; i++) {

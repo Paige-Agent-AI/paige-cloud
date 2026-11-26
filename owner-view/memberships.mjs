@@ -194,7 +194,7 @@ export function openProjectCatalog(path) {
       CREATE TABLE IF NOT EXISTS application_provider_bindings (
         organization_id TEXT NOT NULL, project_id TEXT NOT NULL, environment_id TEXT NOT NULL, application_id TEXT NOT NULL,
         revision INTEGER NOT NULL CHECK (revision BETWEEN 1 AND 2147483647),
-        target_id TEXT, target_fingerprint TEXT,
+        target_id TEXT, target_fingerprint TEXT, invalidated INTEGER NOT NULL DEFAULT 0 CHECK (invalidated IN (0, 1)),
         CHECK ((target_id IS NULL AND target_fingerprint IS NULL) OR
           (target_id IS NOT NULL AND target_fingerprint IS NOT NULL AND length(target_fingerprint) = 64)),
         PRIMARY KEY (organization_id, project_id, environment_id, application_id),
@@ -253,11 +253,16 @@ export function openProjectCatalog(path) {
       FROM project_applications WHERE organization_id = ? AND project_id = ? ORDER BY environment_id, application_id`);
     const targetApp = db.prepare(`SELECT application_id AS id, name, kind FROM project_applications
       WHERE organization_id = ? AND project_id = ? AND environment_id = ? AND application_id = ?`);
-    const readBinding = db.prepare(`SELECT revision, target_id AS targetId, target_fingerprint AS targetFingerprint
+    const readBinding = db.prepare(`SELECT revision, target_id AS targetId, target_fingerprint AS targetFingerprint, invalidated
       FROM application_provider_bindings WHERE organization_id = ? AND project_id = ? AND environment_id = ? AND application_id = ?`);
-    const saveBinding = db.prepare(`INSERT INTO application_provider_bindings VALUES (?, ?, ?, ?, ?, ?, ?)
+    const saveBinding = db.prepare(`INSERT INTO application_provider_bindings VALUES (?, ?, ?, ?, ?, ?, ?, 0)
       ON CONFLICT (organization_id, project_id, environment_id, application_id) DO UPDATE SET
-        revision=excluded.revision, target_id=excluded.target_id, target_fingerprint=excluded.target_fingerprint`);
+        revision=excluded.revision, target_id=excluded.target_id, target_fingerprint=excluded.target_fingerprint, invalidated=0`);
+    const bindingBatch = db.prepare(`SELECT rowid, organization_id AS organizationId, project_id AS projectId,
+      environment_id AS environmentId, application_id AS applicationId, target_id AS targetId, target_fingerprint AS targetFingerprint
+      FROM application_provider_bindings WHERE rowid > ? AND target_id IS NOT NULL AND invalidated = 0 ORDER BY rowid LIMIT 100`);
+    const invalidateBinding = db.prepare(`UPDATE application_provider_bindings SET invalidated=1,
+      revision=MIN(revision + 1, 2147483647) WHERE rowid=?`);
     const addEnvironment = db.prepare(`INSERT INTO project_environments
       SELECT ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM project_environments
         WHERE organization_id = ? AND project_id = ?) < 50 ON CONFLICT DO NOTHING`);
@@ -304,6 +309,21 @@ export function openProjectCatalog(path) {
     const find = (email, code) => invite.get(email, hashCode(code), Date.now());
     return {
       get: (scope) => byProject.get(scope.organizationId, scope.projectId),
+      reconcileBindingApprovals(targets) {
+        return transaction(db, () => {
+          let cursor = 0;
+          for (;;) {
+            const batch = bindingBatch.all(cursor);
+            if (!batch.length) break;
+            for (const row of batch) {
+              if (!targets(row).some(target => target.id === row.targetId && target.fingerprint === row.targetFingerprint)) {
+                invalidateBinding.run(row.rowid);
+              }
+              cursor = row.rowid;
+            }
+          }
+        });
+      },
       applicationBinding(principal, { organizationId: org, projectId: id, environmentId, applicationId }) {
         return transaction(db, () => {
           const project = byProject.get(org, id);

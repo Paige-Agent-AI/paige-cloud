@@ -33,5 +33,5 @@ export function createBindingTargets(raw) {
 export function bindingState(binding, targets) {
   if (!binding?.targetId) return "unbound";
   const target = targets.find(x => x.id === binding.targetId);
-  return target && target.fingerprint === binding.targetFingerprint ? "bound" : "approval-unavailable";
+  return !binding.invalidated && target && target.fingerprint === binding.targetFingerprint ? "bound" : "approval-unavailable";
 }

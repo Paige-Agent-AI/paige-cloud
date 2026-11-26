@@ -83,6 +83,9 @@ function throttle(maxAttempts, maxPerEmail, maxConcurrent) {
 
 export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
   passwordHash, accounts, catalog, stream, mediaPilot, hlsPlayer, githubBuilds, projectAccess: resolveRead, bindingTargets }) {
+  if (bindingTargets !== undefined && typeof bindingTargets !== "function") throw new Error("Invalid provider target resolver");
+  const loadTargets = bindingTargets ?? (() => []);
+  catalog?.reconcileBindingApprovals?.(loadTargets);
   const allowedOrigins = new Map();
   for (const value of [origin, ...(aliasOrigin ? [aliasOrigin] : []), ...additionalOrigins]) {
     const url = new URL(value);
@@ -297,7 +300,7 @@ export function createOwnerServer({ origin, aliasOrigin, additionalOrigins = [],
       }
       const params = { route: projectRoute, form, method, principal: session.principalId,
         origin, catalog, accounts, showDeployments: !!resolveRead(session.principalId, firstProject),
-        remaining: Math.max(0, session.expires - Date.now()), accountPath, bindingTargets };
+        remaining: Math.max(0, session.expires - Date.now()), accountPath, bindingTargets: loadTargets };
       const sessionCurrent = () => sessions.get(id) === session && session.expires > Date.now();
       if (method === "GET" && projectRoute.registry && !projectRoute.applicationId && ["production", "f2-preview"].includes(projectRoute.environmentId) &&
           projectRoute.organizationId === firstProject.organizationId && projectRoute.projectId === firstProject.projectId &&
