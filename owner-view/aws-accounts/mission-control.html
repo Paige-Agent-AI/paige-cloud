@@ -18,17 +18,21 @@
   </header>
   <div class="account-shell">
     <nav class="account-rail" aria-label="Mission Control">
-      <a href="/mission-control" aria-current="page">Mission Control</a>
-      <a href="/mission-control#projects" data-project-link hidden>Projects</a>
+      <a href="/mission-control" data-mission-route="overview" aria-current="page">Mission Control</a>
+      <a href="/mission-control#projects" data-project-link data-mission-route="projects" hidden>Projects</a>
+      <a href="/mission-control#infrastructure" data-mission-route="infrastructure" hidden>Infrastructure</a>
+      <a href="/mission-control#deployments" data-mission-route="deployments" hidden>Deployments</a>
+      <a href="/mission-control#configuration" data-mission-route="configuration" hidden>Configuration</a>
       <a href="/account">Account settings</a>
     </nav>
     <main class="account-workspace" id="account-main" tabindex="-1" data-workspace>
       <div class="mission-context">
         <span data-mission-scope hidden></span>
-        <h1>Mission Control</h1>
+        <h1 data-mission-heading tabindex="-1">Mission Control</h1>
       </div>
       <p role="status" data-account-status>Checking your account…</p>
       <div data-account-content hidden>
+        <p class="mission-description" data-mission-description hidden></p>
         <div class="mission-overview" data-mission-overview hidden>
           <section class="mission-panel" aria-labelledby="attention-heading">
             <h2 id="attention-heading">Needs your attention</h2>
@@ -71,7 +75,7 @@
         </section>
         <section class="account-section" id="projects" aria-labelledby="projects-heading" hidden>
           <h2 id="projects-heading">Projects</h2>
-          <details class="registry-editor" data-create-project hidden>
+          <details class="registry-editor" data-create-project data-mission-feature="registry" hidden>
             <summary>New project</summary>
             <form method="post">
               <p data-project-scope></p>
@@ -96,6 +100,26 @@
       </div>
     </main>
   </div>
+  <template id="workload-configuration-editor">
+    <form class="mission-settings-form" hidden>
+      <div class="mission-settings-fields">
+        <label>Log level
+          <select name="logLevel" required>
+            <option value="" disabled>Select a level</option>
+            <option value="error">Error</option>
+            <option value="warn">Warning</option>
+            <option value="info">Information</option>
+          </select>
+        </label>
+        <label>Request timeout (ms)
+          <input name="requestTimeoutMs" type="number" min="100" max="30000" step="1" required>
+        </label>
+      </div>
+      <p>Saving creates a revision. The workload uses it after a deployment pins that revision.</p>
+      <button type="submit" class="button button-dark">Save revision</button>
+      <p role="alert" hidden></p>
+    </form>
+  </template>
   <template id="application-editor">
     <details class="registry-editor">
       <summary>Register application</summary>

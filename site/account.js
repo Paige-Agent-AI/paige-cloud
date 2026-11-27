@@ -211,6 +211,33 @@ const organizationEditor = find("[data-rename-organization]");
 let organizations = [];
 let projectRevision = 0;
 let workspaceClosed = false;
+const missionHeading = find("[data-mission-heading]");
+const missionViews = {
+  overview: ["Mission Control", ""],
+  projects: ["Projects", ""],
+  infrastructure: ["Infrastructure", "Open a project to inspect a registered workload. Health is checked on demand for its bound environment."],
+  deployments: ["Deployments", "Check the serving version and source for a bound workload. Release history is awaiting a qualified source."],
+  configuration: ["Configuration", "Open an application environment to view its saved non-secret settings and check what the workload consumed."]
+};
+
+function renderMissionRoute(moveFocus = false) {
+  if (!missionHeading || workspaceClosed) return;
+  const requested = location.hash.slice(1);
+  const view = Object.hasOwn(missionViews, requested) ? requested : "overview";
+  const [label, description] = missionViews[view];
+  workspace.dataset.missionView = view;
+  missionHeading.textContent = label;
+  document.title = `${label} · PAIGE Cloud`;
+  const intro = find("[data-mission-description]");
+  intro.textContent = description;
+  intro.hidden = !description;
+  find("#projects-heading").textContent = view === "overview" ? "Projects" : "Project scope";
+  for (const link of document.querySelectorAll("[data-mission-route]")) {
+    if (view === link.dataset.missionRoute) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  }
+  if (moveFocus && view !== "projects") missionHeading.focus();
+}
 
 function clearWorkspace() {
   if (!workspace) return;
@@ -228,6 +255,7 @@ function clearWorkspace() {
 }
 
 if (workspace) {
+  window.addEventListener("hashchange", () => renderMissionRoute(true));
   const refreshWorkspace = () => {
     clearWorkspace();
     location.reload();
@@ -326,13 +354,14 @@ if (organizationEditor) wireEditor(organizationEditor, async ({ name }, current)
   status.textContent = "Organization name saved.";
 });
 
-function workloadInspection(app, applicationsPath, revision) {
+function workloadInspection(app, applicationsPath, revision, report = () => {}) {
   const container = document.createElement("div");
   const trigger = document.createElement("button");
   const observation = document.createElement("p");
   const incident = document.createElement("p");
   const path = `${applicationsPath}/${encodeURIComponent(app.id)}/environments/${encodeURIComponent(app.inspectionEnvironment)}/inspection`;
   container.className = "workload-inspection";
+  container.dataset.missionFeature = "observation";
   trigger.className = "plain-button";
   trigger.type = "button";
   trigger.textContent = `Check ${app.inspectionEnvironment} health`;
@@ -343,6 +372,7 @@ function workloadInspection(app, applicationsPath, revision) {
 
   trigger.addEventListener("click", async () => {
     if (!isCurrent()) return;
+    report(null, "Checking the running workload…");
     trigger.setAttribute("aria-disabled", "true");
     trigger.disabled = true;
     observation.textContent = "Checking the running workload…";
@@ -350,6 +380,7 @@ function workloadInspection(app, applicationsPath, revision) {
     try {
       const result = await requestJson(`/api/cloud/v1${path}`, "POST");
       if (!isCurrent()) return;
+      report(result);
       const time = document.createElement("time");
       time.dateTime = result.observedAt;
       time.textContent = new Intl.DateTimeFormat(undefined, {
@@ -378,11 +409,14 @@ function workloadInspection(app, applicationsPath, revision) {
         clearWorkspace();
         location.replace("/sign-in");
       } else if (error.status === 404 || error.status === 403) {
+        report(null, "Inspection is unavailable in your current scope.");
         observation.textContent = "This workload is no longer available to inspect.";
         trigger.hidden = true;
       } else if (error.status === 429) {
+        report(null, "Inspection limit reached. No new observation was recorded.");
         observation.textContent = "Inspection limit reached. Try again in 30 seconds. Daily capacity resets at 00:00 UTC.";
       } else {
+        report(null, "Consumption could not be verified.");
         observation.textContent = "Health could not be verified. Try again in 30 seconds.";
       }
     } finally {
@@ -393,39 +427,147 @@ function workloadInspection(app, applicationsPath, revision) {
   return container;
 }
 
-function environmentConfiguration(app, environment, applicationsPath, revision) {
+function environmentConfiguration(app, environment, applicationsPath, projectGeneration, canWrite) {
   const details = document.createElement("details");
   const title = document.createElement("summary");
   const evidence = document.createElement("p");
-  const path = `${applicationsPath}/${encodeURIComponent(app.id)}/environments/${encodeURIComponent(environment)}/configuration`;
+  const runtime = document.createElement("p");
+  const path = `/api/cloud/v1${applicationsPath}/${encodeURIComponent(app.id)}/environments/${encodeURIComponent(environment)}/configuration`;
+  const bound = app.inspectionEnvironment === environment;
+  const editor = canWrite ? find("#workload-configuration-editor")?.content.firstElementChild.cloneNode(true) : null;
+  const submit = editor && editor.querySelector("button[type='submit']");
+  const errorMessage = editor && editor.querySelector("[role='alert']");
+  let saved = null;
+  let observed = null;
+  let runtimeMessage = bound ? "Run the environment health check to verify consumption." : "No inspection is bound to this environment.";
+  let generation = 0;
+
   title.textContent = `Configuration · ${environment}`;
   evidence.setAttribute("role", "status");
-  details.append(title, evidence);
-  let requestNumber = 0;
+  runtime.setAttribute("role", "status");
+  details.append(title, evidence, runtime);
+  if (editor) details.append(editor);
+
+  const scopeCurrent = () => projectGeneration === projectRevision && details.isConnected;
+  const isCurrent = request => scopeCurrent() && request === generation && details.open;
+  function renderRuntime() {
+    const consumed = observed?.consumedConfiguration;
+    if (!consumed) {
+      runtime.textContent = runtimeMessage;
+      return;
+    }
+    const observationTime = new Date(observed.observedAt).toLocaleString();
+    let comparison = "";
+    if (saved) {
+      comparison = consumed.revision === saved.revision
+        ? " Matches the saved revision."
+        : " Differs from the saved revision.";
+    }
+    runtime.textContent = `Consumed revision ${consumed.revision} at ${observationTime}.${comparison}`;
+  }
+
+  function report(result, message) {
+    if (!scopeCurrent()) return;
+    observed = result;
+    runtimeMessage = message ?? (result?.state === "healthy"
+      ? "The running release reported no consumed configuration revision."
+      : "This inspection could not verify a consumed revision.");
+    renderRuntime();
+  }
+
+  function showSaved(result) {
+    if (editor) {
+      editor.elements.logLevel.value = result.configuration?.logLevel ?? "";
+      editor.elements.requestTimeoutMs.value = result.configuration?.requestTimeoutMs ?? "";
+      editor.hidden = false;
+    }
+    saved = result;
+    evidence.textContent = result.configuration
+      ? `Saved revision ${result.revision} · Log level ${result.configuration.logLevel} · Request timeout ${result.configuration.requestTimeoutMs} ms.`
+      : "No configuration has been saved for this environment.";
+    renderRuntime();
+  }
+
+  function signInAgain(error) {
+    if (error.status !== 401) return false;
+    clearWorkspace();
+    location.replace("/sign-in");
+    return true;
+  }
+
   details.addEventListener("toggle", async () => {
-    const read = ++requestNumber;
+    const request = ++generation;
+    saved = null;
+    if (editor) {
+      editor.hidden = true;
+      errorMessage.hidden = true;
+    }
     if (!details.open) return;
-    const current = () => read === requestNumber && revision === projectRevision && details.isConnected;
     evidence.textContent = "Reading saved configuration…";
+    renderRuntime();
     try {
-      const saved = await requestJson(`/api/cloud/v1${path}`);
-      if (!current()) return;
-      evidence.textContent = saved.configuration
-        ? `Saved revision ${saved.revision} · Log level ${saved.configuration.logLevel} · Request timeout ${saved.configuration.requestTimeoutMs} ms.`
-        : "No configuration has been saved for this environment.";
+      const result = await requestJson(path, "GET");
+      if (isCurrent(request)) showSaved(result);
     } catch (error) {
-      if (!current()) return;
-      if (error.status === 401) {
-        clearWorkspace();
-        location.replace("/sign-in");
-        return;
+      if (!isCurrent(request) || signInAgain(error)) return;
+      if (error.status === 404 || error.status === 403) {
+        evidence.textContent = "Configuration is unavailable in your current scope.";
+        report(null, "No configuration evidence is available in your current scope.");
+      } else {
+        evidence.textContent = "Could not read configuration. Reopen this environment to retry.";
       }
-      evidence.textContent = error.status === 404 || error.status === 403
-        ? "Configuration is unavailable in your current scope."
-        : "Could not read configuration. Reopen this environment to retry.";
     }
   });
-  return details;
+
+  editor?.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (!saved || submit.disabled || !scopeCurrent()) return;
+    const request = generation;
+    const values = {
+      expectedRevision: saved.revision,
+      logLevel: editor.elements.logLevel.value,
+      requestTimeoutMs: editor.elements.requestTimeoutMs.valueAsNumber
+    };
+    submit.disabled = true;
+    editor.elements.logLevel.disabled = editor.elements.requestTimeoutMs.disabled = true;
+    errorMessage.hidden = true;
+    submit.textContent = "Saving…";
+    try {
+      const result = await requestJson(path, "PUT", values);
+      if (isCurrent(request)) showSaved(result);
+    } catch (error) {
+      if (!isCurrent(request) || signInAgain(error)) return;
+      if (error.status === 403 || error.status === 404 || error.code === "configuration_changed") {
+        editor.hidden = true;
+        saved = null;
+        if (error.code === "configuration_changed") {
+          renderRuntime();
+          evidence.textContent = "The saved revision changed. Reopen the environment to review it before saving again.";
+        } else {
+          report(null, "No configuration evidence is available in your current scope.");
+          evidence.textContent = "Configuration is unavailable in your current scope.";
+        }
+        title.focus();
+        return;
+      }
+      errorMessage.textContent = error.code === "configuration_rate_limited"
+        ? "Wait one minute before saving another revision."
+        : error.code === "configuration_limit"
+          ? "This configuration has reached its revision limit."
+          : "The save could not be confirmed. Reopen this environment to check the saved revision.";
+      errorMessage.hidden = false;
+    } finally {
+      submit.disabled = false;
+      editor.elements.logLevel.disabled = editor.elements.requestTimeoutMs.disabled = false;
+      submit.textContent = "Save revision";
+      if (scopeCurrent() && details.open && !isCurrent(request)) {
+        details.open = false;
+        title.focus();
+      }
+    }
+  });
+  renderRuntime();
+  return { details, report };
 }
 
 function renderProject(project, registryPath, revision) {
@@ -452,12 +594,24 @@ function renderProject(project, registryPath, revision) {
     item.append(label, targets);
     const configuration = document.createElement("div");
     configuration.className = "environment-settings";
-    configuration.append(...app.environments.map(environment => environmentConfiguration(app, environment, applicationsPath, revision)));
+    configuration.dataset.missionFeature = "configuration";
+    const settings = new Map(app.environments.map(environment => [
+      environment, environmentConfiguration(app, environment, applicationsPath, revision, project.role === "owner")
+    ]));
+    configuration.append(...Array.from(settings.values(), result => result.details));
     item.append(configuration);
-    if (app.inspectionEnvironment) item.append(workloadInspection(app, applicationsPath, revision));
+    if (app.inspectionEnvironment) {
+      item.append(workloadInspection(app, applicationsPath, revision, settings.get(app.inspectionEnvironment)?.report));
+    } else if (missionHeading) {
+      const unavailable = document.createElement("p");
+      unavailable.dataset.missionFeature = "observation";
+      unavailable.textContent = "No workload inspection is bound to this application.";
+      item.append(unavailable);
+    }
     const template = find("#environment-editor");
     if (template && project.role === "owner") {
       const editor = template.content.firstElementChild.cloneNode(true);
+      editor.dataset.missionFeature = "registry";
       editor.querySelector("[data-application-label]").textContent = `for ${app.name}`;
       wireEditor(editor, async ({ environment }, current) => {
         const { id, name, kind, sourceRepository } = app;
@@ -479,6 +633,7 @@ function renderProject(project, registryPath, revision) {
     ? template.content.firstElementChild.cloneNode(true) : null;
   if (applicationEditor) {
     applicationEditor.hidden = true;
+    applicationEditor.dataset.missionFeature = "registry";
     wireEditor(applicationEditor, saveApplication);
     details.append(applicationEditor);
   }
@@ -644,6 +799,10 @@ async function showWorkspace() {
   find("[data-account-number]").textContent = account.number;
   find("[data-account-email]").textContent = account.email;
   renderOrganizations(account.organizations);
+  renderMissionRoute();
+  if (missionHeading) {
+    for (const link of document.querySelectorAll("[data-mission-route]:not([data-project-link])")) link.hidden = false;
+  }
   find("[data-account-content]").hidden = false;
   status.textContent = "";
 }
