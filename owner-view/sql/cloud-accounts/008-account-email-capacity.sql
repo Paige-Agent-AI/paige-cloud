@@ -32,6 +32,8 @@ DECLARE
   daily_limit integer;
   network_limit integer;
   recipient_limit integer;
+  enrollment_used bigint;
+  recovery_used bigint;
   checked_at timestamptz;
   hour_window timestamptz;
   day_window timestamptz;
@@ -40,8 +42,8 @@ BEGIN
      network_key IS NULL OR network_key !~ '^[a-f0-9]{64}$' OR
      recipient_key IS NULL OR recipient_key !~ '^[a-f0-9]{64}$' THEN RETURN false; END IF;
 
-  -- Serialize within a lane while allowing enrollment and recovery to proceed independently.
-  PERFORM pg_advisory_xact_lock(hashtextextended('paige-cloud-account-email:' || lane_name, 0));
+  -- Reallocations must account for today's admissions under every earlier policy.
+  PERFORM pg_advisory_xact_lock(hashtextextended('paige-cloud-account-email:capacity', 0));
   SELECT * INTO capacity FROM cloud_accounts.account_email_capacity WHERE singleton FOR SHARE;
   IF NOT FOUND THEN RETURN false; END IF;
   IF lane_name = 'enrollment' THEN
@@ -58,6 +60,18 @@ BEGIN
   hour_window := date_trunc('hour', checked_at, 'UTC');
   -- This window matches Cognito default delivery. SES requires rolling-window qualification.
   day_window := date_trunc('day', checked_at - interval '9 hours', 'UTC') + interval '9 hours';
+  SELECT coalesce(sum(attempts) FILTER (WHERE lane = 'enrollment'), 0),
+         coalesce(sum(attempts) FILTER (WHERE lane = 'recovery'), 0)
+    INTO enrollment_used, recovery_used
+    FROM cloud_accounts.account_email_admission
+    WHERE counter = 'global' AND window_start = day_window AND fingerprint = '-';
+  IF enrollment_used + recovery_used >= capacity.provider_daily_capacity - capacity.provider_headroom THEN
+    RETURN false;
+  END IF;
+  IF lane_name = 'enrollment' AND
+    enrollment_used + greatest(recovery_used, capacity.recovery_daily) >=
+      capacity.provider_daily_capacity - capacity.provider_headroom THEN RETURN false; END IF;
+
   DELETE FROM cloud_accounts.account_email_admission
     WHERE lane = lane_name AND window_start < checked_at - interval '2 days';
   IF EXISTS (

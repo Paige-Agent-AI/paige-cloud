@@ -44,6 +44,41 @@ ROLLBACK;
 
 BEGIN;
 
+SET ROLE paige_cloud_account_runtime;
+DO $$
+DECLARE
+  i integer;
+BEGIN
+  FOR i IN 1..20 LOOP
+    IF NOT cloud_accounts.reserve_account_email('enrollment', lpad(i::text, 64, 'a'), lpad(i::text, 64, 'b')) THEN
+      RAISE EXCEPTION 'default enrollment capacity was unavailable before reallocation';
+    END IF;
+  END LOOP;
+END
+$$;
+RESET ROLE;
+UPDATE cloud_accounts.account_email_capacity SET enrollment_daily = 10, recovery_daily = 30;
+SET ROLE paige_cloud_account_runtime;
+DO $$
+DECLARE
+  i integer;
+BEGIN
+  FOR i IN 1..20 LOOP
+    IF NOT cloud_accounts.reserve_account_email('recovery', lpad(i::text, 64, 'a'), lpad(i::text, 64, 'b')) THEN
+      RAISE EXCEPTION 'protected unspent recovery capacity was unavailable after reallocation';
+    END IF;
+  END LOOP;
+  IF cloud_accounts.reserve_account_email('recovery', repeat('a', 64), repeat('b', 64)) THEN
+    RAISE EXCEPTION 'midday reallocation reused already reserved capacity';
+  END IF;
+END
+$$;
+RESET ROLE;
+
+ROLLBACK;
+
+BEGIN;
+
 DO $$
 BEGIN
   BEGIN
