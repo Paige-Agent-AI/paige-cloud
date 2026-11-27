@@ -1,0 +1,119 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Private registered Lambda workload with versioned backend data and immutable releases.
+
+Parameters:
+  Organization:
+    Type: String
+    AllowedPattern: '[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}'
+  Project:
+    Type: String
+    AllowedPattern: '[a-z0-9][a-z0-9-]{0,47}'
+  Application:
+    Type: String
+    AllowedPattern: '[a-z0-9][a-z0-9-]{0,47}'
+  Environment:
+    Type: String
+    AllowedPattern: 'development|preview'
+  ArtifactBucket:
+    Type: String
+    AllowedPattern: 'paige-cloud-customer-zero-artifacts-[a-z0-9-]+'
+  ArtifactKey:
+    Type: String
+    AllowedPattern: 'workload-releases/[0-9a-f]{40}/(a|b)\.zip'
+  ArtifactVersion:
+    Type: String
+    AllowedPattern: '(?!null$)[A-Za-z0-9._~+/-]{1,1024}'
+  ArtifactDigest:
+    Type: String
+    AllowedPattern: '[A-Za-z0-9+/]{43}='
+  DataVersion:
+    Type: String
+    AllowedPattern: '(?!null$)[A-Za-z0-9._~+/-]{1,226}'
+  RollbackVersion:
+    Type: String
+    Default: ''
+    AllowedPattern: '([1-9][0-9]*)?'
+
+Conditions:
+  UseNewRelease: !Equals [!Ref RollbackVersion, '']
+
+Resources:
+  WorkloadLog:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}'
+      RetentionInDays: 7
+
+  WorkloadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ReadRegisteredObjectVersion
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObjectVersion
+                Resource: !Sub 'arn:${AWS::Partition}:s3:::${ArtifactBucket}/workloads/${Organization}/${Project}/${Application}/${Environment}/config.json'
+                Condition:
+                  StringEquals:
+                    s3:VersionId: !Ref DataVersion
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt WorkloadLog.Arn
+
+  Workload:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref AWS::StackName
+      Runtime: nodejs24.x
+      Architectures: [arm64]
+      Handler: application.handler
+      Role: !GetAtt WorkloadRole.Arn
+      MemorySize: 128
+      Timeout: 8
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref ArtifactKey
+        S3ObjectVersion: !Ref ArtifactVersion
+      Environment:
+        Variables:
+          CLOUD_WORKLOAD_BUCKET: !Ref ArtifactBucket
+          CLOUD_WORKLOAD_VERSION: !Ref DataVersion
+          CLOUD_WORKLOAD_ORGANIZATION: !Ref Organization
+          CLOUD_WORKLOAD_PROJECT: !Ref Project
+          CLOUD_WORKLOAD_APPLICATION: !Ref Application
+          CLOUD_WORKLOAD_ENVIRONMENT: !Ref Environment
+
+  Release:
+    Type: AWS::Lambda::Version
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      FunctionName: !Ref Workload
+      CodeSha256: !Ref ArtifactDigest
+      Description: !Sub 'Pinned backend object version ${DataVersion}'
+
+  Live:
+    Type: AWS::Lambda::Alias
+    Properties:
+      Name: live
+      FunctionName: !Ref Workload
+      FunctionVersion: !If [UseNewRelease, !GetAtt Release.Version, !Ref RollbackVersion]
+
+Outputs:
+  Function:
+    Value: !Ref Workload
+  RuntimeRole:
+    Value: !GetAtt WorkloadRole.Arn
+  ReleaseVersion:
+    Value: !GetAtt Release.Version
+  LiveAlias:
+    Value: !Ref Live
