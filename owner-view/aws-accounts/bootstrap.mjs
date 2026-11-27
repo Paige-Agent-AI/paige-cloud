@@ -67,6 +67,7 @@ async function bootstrap() {
   const raw = await readFile(new URL("../sql/cloud-accounts/001-accounts.sql", import.meta.url), "utf8");
   const registry = await readFile(new URL("../sql/cloud-accounts/002-registry.sql", import.meta.url), "utf8");
   const observation = await readFile(new URL("../sql/cloud-accounts/003-workload-observation.sql", import.meta.url), "utf8");
+  const organizationName = await readFile(new URL("../sql/cloud-accounts/004-organization-name.sql", import.meta.url), "utf8");
   const connection = { resourceArn, secretArn, database: "paige_cloud" };
   const data = new RDSDataClient({});
   const { transactionId } = await data.send(new BeginTransactionCommand(connection));
@@ -88,6 +89,7 @@ async function bootstrap() {
     });
     applied = (await applyAdditiveMigration("002", registry, execute)) || applied;
     applied = (await applyAdditiveMigration("003", observation, execute)) || applied;
+    applied = (await applyAdditiveMigration("004", organizationName, execute)) || applied;
     await data.send(new CommitTransactionCommand(transaction));
   } catch (error) {
     try {
@@ -102,9 +104,11 @@ async function bootstrap() {
     ...connection, secretArn: runtimeSecretArn,
     sql: `SELECT current_user = 'paige_cloud_app'
       AND has_function_privilege(current_user, 'cloud_accounts.account_details(uuid)', 'EXECUTE')
+      AND has_function_privilege(current_user, 'cloud_accounts.rename_organization(uuid, uuid, text, text)', 'EXECUTE')
       AND has_function_privilege(current_user, 'cloud_accounts.registry_list_projects(uuid, uuid)', 'EXECUTE')
       AND has_function_privilege(current_user, 'cloud_accounts.reserve_workload_observation(uuid, uuid, text, text, text)', 'EXECUTE')
       AND NOT has_table_privilege(current_user, 'cloud_accounts.accounts', 'SELECT, INSERT, UPDATE, DELETE')
+      AND NOT has_table_privilege(current_user, 'cloud_accounts.organizations', 'SELECT, INSERT, UPDATE, DELETE')
       AND NOT has_table_privilege(current_user, 'cloud_accounts.registry_applications', 'SELECT, INSERT, UPDATE, DELETE')
       AND NOT has_table_privilege(current_user, 'cloud_accounts.workload_observation_budget', 'SELECT, INSERT, UPDATE, DELETE')`
   }));

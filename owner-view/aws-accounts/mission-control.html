@@ -38,9 +38,34 @@
             <label>Organization name <input name="name" maxlength="120" required autocomplete="organization"></label>
             <button class="button button-dark" type="submit">Create organization</button>
           </form>
+          <details class="registry-editor" data-rename-organization hidden>
+            <summary>Edit organization name</summary>
+            <form method="post">
+              <label>Organization name <input name="name" maxlength="120" required autocomplete="organization"></label>
+              <div class="registry-actions">
+                <button class="button button-dark" type="submit">Save name</button>
+                <button class="plain-button" type="button" data-registry-cancel>Cancel</button>
+              </div>
+              <p role="alert" hidden></p>
+            </form>
+          </details>
         </section>
         <section class="account-section" id="projects" aria-labelledby="projects-heading" hidden>
           <h2 id="projects-heading">Projects</h2>
+          <details class="registry-editor" data-create-project hidden>
+            <summary>New project</summary>
+            <form method="post">
+              <p data-project-scope></p>
+              <label>Project name <input name="name" maxlength="120" required></label>
+              <label>Project ID <input name="id" maxlength="48" pattern="[a-z0-9][a-z0-9\-]{0,47}" required autocapitalize="none" spellcheck="false" aria-describedby="project-id-hint"></label>
+              <p class="account-note" id="project-id-hint">Use lowercase letters, numbers, and hyphens. Start with a letter or number. The ID stays with the project.</p>
+              <div class="registry-actions">
+                <button class="button button-dark" type="submit">Create project</button>
+                <button class="plain-button" type="button" data-registry-cancel>Cancel</button>
+              </div>
+              <p role="alert" hidden></p>
+            </form>
+          </details>
           <p role="status" data-project-status></p>
           <button class="plain-button" type="button" data-project-retry hidden>Retry projects</button>
           <ul class="project-list" data-projects></ul>
@@ -52,5 +77,37 @@
       </div>
     </main>
   </div>
+  <template id="application-editor">
+    <details class="registry-editor">
+      <summary>Register application</summary>
+      <form method="post">
+        <label>Application name <input name="name" maxlength="120" required></label>
+        <label>Application ID <input name="id" maxlength="48" pattern="[a-z0-9][a-z0-9\-]{0,47}" required autocapitalize="none" spellcheck="false"></label>
+        <label>Type <select name="kind"><option value="application">Application</option><option value="service">Service</option></select></label>
+        <label>Source repository (optional) <input name="sourceRepository" maxlength="140" placeholder="owner/repository" autocapitalize="none" spellcheck="false"></label>
+        <label>First environment ID <input name="environment" maxlength="48" pattern="[a-z0-9][a-z0-9\-]{0,47}" required autocapitalize="none" spellcheck="false"></label>
+        <p class="account-note">Use lowercase letters, numbers, and hyphens for IDs. Registration saves metadata for this project.</p>
+        <div class="registry-actions">
+          <button class="button button-dark" type="submit">Register application</button>
+          <button class="plain-button" type="button" data-registry-cancel>Cancel</button>
+        </div>
+        <p role="alert" hidden></p>
+      </form>
+    </details>
+  </template>
+  <template id="environment-editor">
+    <details class="registry-editor">
+      <summary>Add environment <span data-application-label></span></summary>
+      <form method="post">
+        <label>Environment ID <input name="environment" maxlength="48" pattern="[a-z0-9][a-z0-9\-]{0,47}" required autocapitalize="none" spellcheck="false"></label>
+        <p class="account-note">Use lowercase letters, numbers, and hyphens. Start with a letter or number.</p>
+        <div class="registry-actions">
+          <button class="button button-dark" type="submit">Add environment</button>
+          <button class="plain-button" type="button" data-registry-cancel>Cancel</button>
+        </div>
+        <p role="alert" hidden></p>
+      </form>
+    </details>
+  </template>
 </body>
 </html>

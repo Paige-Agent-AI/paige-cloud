@@ -8,7 +8,7 @@
 .account-entry h1 + p:not(:empty), [data-account-status]:not(:empty) { margin-top: 0.6rem; }
 .account-surface form { display: grid; gap: 0.95rem; margin-top: 1.25rem; }
 .account-surface form label { display: grid; gap: 0.38rem; font-weight: 650; font-size: 0.94rem; }
-.account-surface input { width: 100%; min-height: 2.85rem; border: 1px solid #8292a3; border-radius: 0.38rem; padding: 0.55rem 0.65rem; font: inherit; color: var(--midnight); background: var(--white); }
+.account-surface input, .registry-editor select { width: 100%; min-height: 2.85rem; border: 1px solid #8292a3; border-radius: 0.38rem; padding: 0.55rem 0.65rem; font: inherit; font-size: 1rem; color: var(--midnight); background: var(--white); }
 .account-surface button:disabled { opacity: 0.65; cursor: wait; }
 .account-surface [role="alert"] { margin-top: 0.7rem; color: #86231b; }
 .account-note { font-size: 0.88rem; }
@@ -28,6 +28,14 @@
 .account-section h2 { font-size: 1.14rem; }
 .account-section form { max-width: 28rem; }
 .account-section form button { justify-self: start; }
+.registry-editor { margin-block: 0.35rem; max-width: 28rem; min-width: 0; }
+.registry-editor summary { width: fit-content; min-height: 2.75rem; padding: 0.65rem 0.3rem; cursor: pointer; font-weight: 650; overflow-wrap: anywhere; }
+.registry-editor summary:hover { text-decoration: underline; text-underline-offset: 0.18em; }
+.account-surface .registry-editor form { margin: 0 0 1rem; padding: 0.85rem 1rem; border: 1px solid var(--line); border-radius: 0.4rem; background: var(--white); }
+.account-surface .registry-editor p { padding: 0; margin: 0; overflow-wrap: anywhere; }
+.registry-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 1rem; }
+.registry-actions button { min-height: 2.75rem; }
+.project-list .registry-editor { flex: 1 0 100%; }
 .organization-list { padding: 0; list-style: none; }
 .organization-list li { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; border-bottom: 1px solid var(--line); padding: 0.7rem 0; overflow-wrap: anywhere; }
 .organization-list li span { color: var(--ink-muted); }

@@ -89,6 +89,33 @@ function fixture(overrides = {}) {
   return { handle, request, register, calls, recordLookups };
 }
 
+test("organization name updates derive the actor and enforce same-origin, scope and stale writes", async () => {
+  const changes = [];
+  const { request, register } = fixture({ records: {
+    async renameOrganization(...args) {
+      changes.push(args);
+      const [actor, organization, expectedName, name] = args;
+      if (actor !== "actor-0" || organization !== ids[0]) return null;
+      if (expectedName !== "Original") return { error: "organization_changed" };
+      return { id: organization, name, role: "owner" };
+    }
+  } });
+  for (const email of allowedEmails) await register(email);
+  const route = "/organizations/" + ids[0];
+  const body = { name: "Updated", expectedName: "Original" };
+  assert.equal((await request("PATCH", route, { body })).statusCode, 401);
+  assert.equal((await request("PATCH", route, { token: tokens[0], body, from: "https://different.example.test" })).statusCode, 403);
+  assert.equal((await request("PATCH", route, { token: tokens[0], body: { ...body, actor: "actor-1" } })).statusCode, 400);
+  assert.equal(changes.length, 0);
+  assert.equal((await request("PATCH", route, { token: tokens[1], body })).statusCode, 404);
+  const stale = await request("PATCH", route, { token: tokens[0], body: { ...body, expectedName: "Stale" } });
+  assert.equal(stale.statusCode, 409);
+  const result = await request("PATCH", route, { token: tokens[0], body });
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(JSON.parse(result.body), { id: ids[0], name: "Updated", role: "owner" });
+  assert.deepEqual(changes.at(-1), ["actor-0", ids[0], "Original", "Updated"]);
+});
+
 test("evaluator registration requires confirmation and keeps provider tokens out of the response body", async () => {
   const { request, register, calls } = fixture();
   const stranger = await request("POST", "/sign-up", { body: { email: "unlisted@example.test", password } });

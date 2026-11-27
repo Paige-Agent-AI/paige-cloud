@@ -1,4 +1,4 @@
--- Run against a new disposable database after 001-accounts.sql.
+-- Run against a new disposable database after the account migrations.
 CREATE ROLE untrusted_account_test NOLOGIN;
 GRANT USAGE ON SCHEMA cloud_accounts TO untrusted_account_test;
 SET ROLE untrusted_account_test;
@@ -88,6 +88,19 @@ BEGIN
   IF cloud_accounts.organization_details(first_account, first_org)->>'role' IS DISTINCT FROM 'owner' THEN
     RAISE EXCEPTION 'account owner could not access its organization';
   END IF;
+  IF cloud_accounts.rename_organization(second_account, first_org, 'Alpha', 'Wrong scope') IS NOT NULL
+     OR cloud_accounts.rename_organization(first_account, second_org, 'Beta', 'Wrong scope') IS NOT NULL THEN
+    RAISE EXCEPTION 'organization rename crossed scope';
+  END IF;
+  IF (cloud_accounts.rename_organization(first_account, first_org, 'Alpha', ' Alpha Holdings ')->>'id')::uuid
+       IS DISTINCT FROM first_org
+     OR cloud_accounts.rename_organization(first_account, first_org, 'Alpha', 'Alpha Holdings')->>'name'
+       IS DISTINCT FROM 'Alpha Holdings'
+     OR cloud_accounts.rename_organization(first_account, first_org, 'Alpha', 'Stale')->>'error'
+       IS DISTINCT FROM 'organization_changed'
+     OR cloud_accounts.account_details(first_account)->'organizations'->0->>'name' IS DISTINCT FROM 'Alpha Holdings' THEN
+    RAISE EXCEPTION 'organization rename, readback, retry or stale-write protection failed';
+  END IF;
 
   IF cloud_accounts.update_display_name(first_account, ' Alpha Owner ')->>'displayName' IS DISTINCT FROM 'Alpha Owner'
      OR cloud_accounts.account_details(second_account)->>'displayName' IS NOT NULL THEN
@@ -97,9 +110,14 @@ BEGIN
      cloud_accounts.account_details(first_account)->>'number' IS DISTINCT FROM first_number THEN
     RAISE EXCEPTION 'later sign-in changed the account identity';
   END IF;
+  PERFORM set_config('paige_test.first_organization', first_org::text, false);
 END
 $$;
 RESET ROLE;
+
+INSERT INTO cloud_accounts.memberships (organization_id, account_id, role)
+SELECT current_setting('paige_test.first_organization')::uuid, id, 'member'
+FROM cloud_accounts.accounts WHERE identity_issuer = 'test-issuer' AND identity_subject = 'b';
 
 UPDATE cloud_accounts.memberships
 SET revoked_at = now()
@@ -109,10 +127,17 @@ SET ROLE paige_cloud_account_runtime;
 DO $$
 DECLARE
   actor uuid := cloud_accounts.record_verified_identity('test-issuer', 'a', 'a-new@example.test');
+  member uuid := cloud_accounts.find_verified_identity('test-issuer', 'b');
+  organization uuid := current_setting('paige_test.first_organization')::uuid;
 BEGIN
   IF cloud_accounts.account_details(actor)->'organizations' IS DISTINCT FROM '[]'::jsonb OR
-     cloud_accounts.onboard_organization(actor, 'Alpha') IS NOT NULL THEN
+     cloud_accounts.onboard_organization(actor, 'Alpha Holdings') IS NOT NULL OR
+     cloud_accounts.rename_organization(actor, organization, 'Alpha Holdings', 'Revoked') IS NOT NULL THEN
     RAISE EXCEPTION 'revoked membership remained visible or was reinstated';
+  END IF;
+  IF cloud_accounts.organization_details(member, organization)->>'role' IS DISTINCT FROM 'member'
+     OR cloud_accounts.rename_organization(member, organization, 'Alpha Holdings', 'Member') IS NOT NULL THEN
+    RAISE EXCEPTION 'read-only member could rename the organization';
   END IF;
 END
 $$;
