@@ -71,6 +71,7 @@
 .mission-surface .account-rail { color: inherit; border-inline-end: 1px solid var(--line); }
 .mission-surface .account-rail a { display: flex; align-items: center; min-height: 2.75rem; font-size: 0.88rem; }
 .mission-surface .account-rail a[aria-current] { font-weight: 700; }
+.mission-surface .skip { color: inherit; }
 .mission-surface .account-workspace { width: 100%; max-width: 90rem; padding: clamp(0.875rem, 2.4vw, 2rem); }
 .mission-context { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem 0.75rem; margin-block-end: 1rem; }
 .mission-context [data-mission-scope] { max-width: 100%; color: var(--ink-muted); font-size: 0.85rem; overflow-wrap: anywhere; }

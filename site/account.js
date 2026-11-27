@@ -87,7 +87,10 @@ async function run(button, operation, isCurrent = () => true) {
     if (isCurrent() && status.textContent === "Working…") status.textContent = "";
   } catch (error) {
     if (isCurrent()) {
-      if (error.status === 401 && (workspace || (profile && !profile.hidden))) location.replace("/sign-in");
+      if (error.status === 401 && (workspace || (profile && !profile.hidden))) {
+        clearWorkspace();
+        location.replace("/sign-in");
+      }
       else {
         if (failure !== status) status.textContent = "";
         showError(error);
@@ -214,6 +217,11 @@ function clearWorkspace() {
   workspaceClosed = true;
   projectRevision++;
   projectList?.replaceChildren();
+  const scope = find("[data-mission-scope]");
+  if (scope) {
+    scope.hidden = true;
+    scope.textContent = "";
+  }
   const projectLink = find("[data-project-link]");
   if (projectLink) projectLink.hidden = true;
   find("[data-account-content]").hidden = true;
@@ -513,6 +521,7 @@ function renderProject(project, registryPath, revision) {
 }
 
 function showMissionScope(organization, message, action = "") {
+  const overview = find("[data-mission-overview]");
   const scope = find("[data-mission-scope]");
   const attention = find("[data-mission-attention]");
   if (!scope || !attention) return;
@@ -530,6 +539,7 @@ function showMissionScope(organization, message, action = "") {
   find("[data-mission-coverage]").textContent = organization
     ? "Select a project to view its registered environments and available workload checks."
     : "An organization is required to register projects and environments.";
+  if (overview) overview.hidden = false;
 }
 
 async function loadProjects(openProject, announcement = "") {
@@ -578,8 +588,10 @@ async function loadProjects(openProject, announcement = "") {
     }
   } catch (error) {
     if (revision !== projectRevision) return;
-    if (error.status === 401) location.replace("/sign-in");
-    else {
+    if (error.status === 401) {
+      clearWorkspace();
+      location.replace("/sign-in");
+    } else {
       projectStatus.textContent = error.status === 404 ? "This organization is no longer available to you."
         : `${announcement ? announcement + " " : ""}Projects are temporarily unavailable.`;
       projectRetry.hidden = error.status === 404;
