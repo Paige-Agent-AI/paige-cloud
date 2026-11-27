@@ -100,7 +100,7 @@ test("public enrollment and recovery use email ownership and scoped accounts reg
   let active = false;
   let confirmationCalls = 0;
   const { request, handle } = fixture({
-    config: { enrollmentMode: "public", consoleHtml: "<main>Mission Control</main>" },
+    config: { enrollmentMode: "public", evaluatorEmails: [], consoleHtml: "<main>Mission Control</main>" },
     identity: {
       async signUp(address, proposedPassword) {
         assert.equal(address, email);
@@ -206,9 +206,20 @@ test("pausing enrollment keeps verification and recovery available to existing a
     records: { async reserveAccountEmail() { return true; } } });
   const recipient = { email: "already-enrolled@example.test" };
   assert.equal((await request("POST", "/sign-up", { body: { ...recipient, password } })).statusCode, 403);
+  assert.equal((await request("POST", "/sign-up", { body: { email: allowedEmails[0], password } })).statusCode, 403);
   assert.equal((await request("POST", "/resend-code", { body: recipient })).statusCode, 202);
   assert.equal((await request("POST", "/recover", { body: recipient })).statusCode, 202);
   assert.deepEqual(calls, [["resendCode", recipient.email], ["startRecovery", recipient.email]]);
+});
+
+test("ordinary account requests do not depend on the recipient domain or a configured pilot list", async () => {
+  const { request, calls } = fixture({ config: { enrollmentMode: "public", evaluatorEmails: [] } });
+  const recipients = ["member+cloud@gmail.com", "admin@nonprofit.org", "engineer@team.example.co.uk"];
+  for (const email of recipients) {
+    assert.equal((await request("POST", "/sign-up", { body: { email } })).statusCode, 202);
+    assert.equal((await request("POST", "/recover", { body: { email } })).statusCode, 202);
+  }
+  assert.deepEqual(calls, recipients.flatMap(email => [["signUp", email], ["startRecovery", email]]));
 });
 
 test("organization name updates derive the actor and enforce same-origin, scope and stale writes", async () => {
