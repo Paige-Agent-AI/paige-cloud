@@ -1,6 +1,8 @@
-import { createHmac } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
+  AdminSetUserPasswordCommand,
+  AdminUserGlobalSignOutCommand,
   CognitoIdentityProviderClient,
   ConfirmForgotPasswordCommand,
   ConfirmSignUpCommand,
@@ -47,14 +49,26 @@ function createCognitoIdentity({ userPoolId, clientId }) {
   return {
     async signUp(email, password) {
       return cognito.send(new SignUpCommand({
-        ClientId: clientId, SecretHash: await secretHash(email), Username: email, Password: password,
+        ClientId: clientId, SecretHash: await secretHash(email), Username: email,
+        // Public callers cannot choose or know a password before ownership of the email is established.
+        Password: password ?? randomBytes(32).toString("base64url"),
         UserAttributes: [{ Name: "email", Value: email }]
       }));
     },
-    async confirmSignUp(email, code) {
-      return cognito.send(new ConfirmSignUpCommand({
+    async confirmSignUp(email, code, password) {
+      await cognito.send(new ConfirmSignUpCommand({
         ClientId: clientId, SecretHash: await secretHash(email), Username: email, ConfirmationCode: code
       }));
+      if (password === undefined) return;
+      try {
+        await cognito.send(new AdminSetUserPasswordCommand({
+          UserPoolId: userPoolId, Username: email, Password: password, Permanent: true
+        }));
+      } catch (error) {
+        const unverified = new Error("Verified account password could not be confirmed", { cause: error });
+        unverified.name = "EnrollmentPasswordUnconfirmed";
+        throw unverified;
+      }
     },
     async resendCode(email) {
       return cognito.send(new ResendConfirmationCodeCommand({
@@ -101,10 +115,17 @@ function createCognitoIdentity({ userPoolId, clientId }) {
       }));
     },
     async finishRecovery(email, code, password) {
-      return cognito.send(new ConfirmForgotPasswordCommand({
+      await cognito.send(new ConfirmForgotPasswordCommand({
         ClientId: clientId, SecretHash: await secretHash(email), Username: email,
         ConfirmationCode: code, Password: password
       }));
+      try {
+        await cognito.send(new AdminUserGlobalSignOutCommand({ UserPoolId: userPoolId, Username: email }));
+      } catch (error) {
+        const unverified = new Error("Password reset session revocation could not be confirmed", { cause: error });
+        unverified.name = "RecoveryRevocationUnconfirmed";
+        throw unverified;
+      }
     }
   };
 }
@@ -129,6 +150,10 @@ function createAccountRecords({ resourceArn, secretArn, database }) {
   }
 
   return {
+    reserveAccountEmail(lane, network, recipient) {
+      return call("SELECT CAST(cloud_accounts.reserve_account_email(:lane, :network, :recipient) AS text)",
+        { lane, network, recipient }, value => value === "true");
+    },
     recordIdentity({ issuer, subject, email }) {
       return call("SELECT CAST(cloud_accounts.record_verified_identity(:issuer, :subject, :email) AS text)",
         { issuer, subject, email });
@@ -199,7 +224,7 @@ function createAccountRecords({ resourceArn, secretArn, database }) {
 }
 
 const {
-  CLOUD_SITE_ORIGIN, CLOUD_EVALUATORS, CLOUD_EDGE_KEY, COGNITO_USER_POOL_ID, COGNITO_CLIENT_ID,
+  CLOUD_SITE_ORIGIN, CLOUD_EVALUATORS, CLOUD_ENROLLMENT_MODE, CLOUD_EDGE_KEY, COGNITO_USER_POOL_ID, COGNITO_CLIENT_ID,
   CLOUD_DB_CLUSTER_ARN, CLOUD_DB_RUNTIME_SECRET_ARN, CLOUD_DB_NAME,
   CLOUD_INSPECTION_SCOPE, CLOUD_INSPECTION_ALIAS, CLOUD_INSPECTION_RECOVERY_POINT
 } = process.env;
@@ -232,6 +257,7 @@ export const handler = createAccountHandler({
   edgeKey: CLOUD_EDGE_KEY,
   consoleHtml: readFileSync(new URL("./mission-control.html", import.meta.url), "utf8"),
   evaluatorEmails: (CLOUD_EVALUATORS ?? "").split(",").filter(Boolean),
+  enrollmentMode: CLOUD_ENROLLMENT_MODE,
   identity: createCognitoIdentity({
     userPoolId: COGNITO_USER_POOL_ID, clientId: COGNITO_CLIENT_ID
   }),

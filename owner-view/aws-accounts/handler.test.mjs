@@ -11,11 +11,12 @@ const authError = name => Object.assign(new Error("private provider diagnostic")
 const password = "synthetic passphrase for tests";
 const defaultEdgeKey = "test-only-default-edge-key-with-thirty-two-characters";
 
-function event(method, route, { token, body, from = origin } = {}) {
+function event(method, route, { token, body, from = origin, network = "192.0.2.8" } = {}) {
   return {
     rawPath: "/api/cloud/auth" + route,
     requestContext: { http: { method } },
-    headers: { origin: from, "content-type": "application/json", "x-paige-cloud-edge": defaultEdgeKey },
+    headers: { origin: from, "content-type": "application/json", "x-paige-cloud-edge": defaultEdgeKey,
+      "x-paige-viewer-ip": network },
     cookies: token ? [cookie(token)] : [],
     body: body === undefined ? undefined : JSON.stringify(body)
   };
@@ -88,6 +89,93 @@ function fixture(overrides = {}) {
   }
   return { handle, request, register, calls, recordLookups };
 }
+
+test("public enrollment and recovery use email ownership and scoped accounts regardless of network", async () => {
+  const email = "new-owner@example.test";
+  const token = "public.owner.token";
+  const reservations = [];
+  let created = false;
+  let verified = false;
+  let active = false;
+  const { request, handle } = fixture({
+    config: { enrollmentMode: "public", consoleHtml: "<main>Mission Control</main>" },
+    identity: {
+      async signUp(address, proposedPassword) {
+        assert.equal(address, email);
+        assert.equal(proposedPassword, undefined);
+        if (created) throw authError("UsernameExistsException");
+        created = true;
+      },
+      async confirmSignUp(address, code, chosenPassword) {
+        if (address !== email) throw authError("UserNotFoundException");
+        if (verified) throw authError("NotAuthorizedException");
+        if (code !== "123456") throw authError("CodeMismatchException");
+        assert.equal(chosenPassword, password);
+        verified = true;
+      },
+      async signIn() {
+        if (!verified) throw authError("UserNotConfirmedException");
+        active = true;
+        return { token, lifetimeSeconds: 1800 };
+      },
+      async verify(value) {
+        return active && value === token ? { issuer: "test-issuer", subject: "0", email } : null;
+      },
+      async startRecovery(address) {
+        if (address !== email) throw authError("UserNotFoundException");
+      },
+      async finishRecovery(address, code) {
+        if (address !== email || code !== "654321") throw authError("CodeMismatchException");
+        active = false;
+      }
+    },
+    records: { async reserveAccountEmail(...args) { reservations.push(args); return true; } }
+  });
+  const enroll = network => request("POST", "/sign-up", { body: { email, password }, network });
+  const first = await enroll("203.0.113.9");
+  assert.equal(first.statusCode, 202);
+  assert.deepEqual(first, await enroll("2001:db8::9"));
+  assert.equal((await request("POST", "/sign-in", { body: { email, password } })).statusCode, 403);
+  const confirm = (address, code) => request("POST", "/verify-email", { body: { email: address, code, password } });
+  assert.deepEqual(await confirm("unknown@example.test", "123456"), await confirm(email, "111111"));
+  assert.equal((await confirm(email, "123456")).statusCode, 204);
+  assert.equal((await confirm(email, "123456")).statusCode, 400);
+  assert.equal((await request("POST", "/sign-in", { body: { email, password }, network: "2001:db8::11" })).statusCode, 204);
+  const mission = value => handle({ ...event("GET", "", { token: value }), rawPath: "/mission-control" });
+  assert.equal((await mission(token)).statusCode, 200);
+  assert.equal((await request("GET", "/organizations/" + ids[1], { token })).statusCode, 404);
+  const recover = address => request("POST", "/recover", { body: { email: address }, network: "2001:db8::11" });
+  assert.deepEqual(await recover(email), await recover("unknown@example.test"));
+  const reset = await request("POST", "/reset-password", { body: { email, code: "654321", password } });
+  assert.equal(reset.statusCode, 204);
+  assert.match(reset.cookies[0], /Max-Age=0/);
+  assert.equal((await mission(token)).statusCode, 303);
+  assert.notEqual(reservations[0][1], reservations[1][1]);
+  assert.equal(reservations[0][2], reservations[1][2]);
+  assert.ok(reservations.every(([, network, recipient]) => /^[a-f0-9]{64}$/.test(network) && /^[a-f0-9]{64}$/.test(recipient)));
+});
+
+test("email admission and same-origin controls run before contacting the provider", async () => {
+  const { request, calls } = fixture({ config: { enrollmentMode: "public" },
+    records: { async reserveAccountEmail() { return false; } } });
+  const recipient = { email: "someone@example.test" };
+  const body = { ...recipient, password };
+  assert.equal((await request("POST", "/sign-up", { body, from: "https://different.example.test" })).statusCode, 403);
+  assert.equal((await request("POST", "/sign-up", { body, network: "invalid" })).statusCode, 403);
+  assert.equal((await request("POST", "/sign-up", { body })).statusCode, 429);
+  assert.equal((await request("POST", "/recover", { body: recipient })).statusCode, 429);
+  assert.equal(calls.length, 0);
+});
+
+test("pausing enrollment keeps verification and recovery available to existing accounts", async () => {
+  const { request, calls } = fixture({ config: { enrollmentMode: "members" },
+    records: { async reserveAccountEmail() { return true; } } });
+  const recipient = { email: "already-enrolled@example.test" };
+  assert.equal((await request("POST", "/sign-up", { body: { ...recipient, password } })).statusCode, 403);
+  assert.equal((await request("POST", "/resend-code", { body: recipient })).statusCode, 202);
+  assert.equal((await request("POST", "/recover", { body: recipient })).statusCode, 202);
+  assert.deepEqual(calls, [["resendCode", recipient.email], ["startRecovery", recipient.email]]);
+});
 
 test("organization name updates derive the actor and enforce same-origin, scope and stale writes", async () => {
   const changes = [];

@@ -28,9 +28,11 @@ verify_db < "$dir/003-workload-observation.sql"
 verify_db < "$dir/004-organization-name.sql"
 verify_db < "$dir/005-workload-configuration.sql"
 verify_db < "$dir/006-configuration-history.sql"
+verify_db < "$dir/007-account-email-admission.sql"
 verify_db < "$dir/account-records.test.sql"
 verify_db < "$dir/registry.test.sql"
 verify_db < "$dir/workload-configuration.test.sql"
+verify_db < "$dir/account-email-admission.test.sql"
 
 verify_db -c "SET ROLE paige_cloud_account_runtime;
   SELECT cloud_accounts.record_verified_identity('test-issuer', 'concurrent', 'parallel@example.test');"
