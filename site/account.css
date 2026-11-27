@@ -54,6 +54,47 @@
 .workload-inspection time { white-space: normal; }
 [data-project-retry]:not([hidden]) { margin-top: 0.5rem; min-height: 2.75rem; }
 
+.mission-surface {
+  --paper: #10151c;
+  --white: #181f29;
+  --line: #364453;
+  --ink-muted: #aab9c9;
+  --dark-panel: #352d23;
+  --orb-gold: #f0c579;
+  color: #f1f5f9;
+  color-scheme: dark;
+}
+.mission-surface .account-header,
+.mission-surface .account-rail { background: #131921; }
+.mission-surface .account-header { min-height: 4rem; padding-inline: clamp(0.875rem, 2.4vw, 1.75rem); }
+.mission-surface .account-header .brand img { width: 2.6rem; padding: 0.18rem; border-radius: 0.25rem; background: #f1f5f9; }
+.mission-surface .account-rail { color: inherit; border-inline-end: 1px solid var(--line); }
+.mission-surface .account-rail a { display: flex; align-items: center; min-height: 2.75rem; font-size: 0.88rem; }
+.mission-surface .account-rail a[aria-current] { font-weight: 700; }
+.mission-surface .account-workspace { width: 100%; max-width: 90rem; padding: clamp(0.875rem, 2.4vw, 2rem); }
+.mission-context { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem 0.75rem; margin-block-end: 1rem; }
+.mission-context [data-mission-scope] { max-width: 100%; color: var(--ink-muted); font-size: 0.85rem; overflow-wrap: anywhere; }
+.mission-context [data-mission-scope]:not([hidden]) { padding-inline-end: 0.75rem; border-inline-end: 1px solid var(--line); }
+.mission-context h1 { font-size: 0.98rem; line-height: 1.4; letter-spacing: normal; }
+.mission-overview { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); align-items: start; gap: 1rem; }
+.mission-panel { min-width: 0; border: 1px solid var(--line); border-radius: 0.75rem; background: var(--white); }
+.mission-panel h2 { padding: 0.85rem 1rem; border-block-end: 1px solid var(--line); font-size: 0.95rem; line-height: 1.35; }
+.mission-panel-body { padding: 0.85rem 1rem; }
+.mission-state { font-size: 0.9rem; overflow-wrap: anywhere; }
+.mission-link { display: inline-flex; align-items: center; min-height: 2.75rem; margin-block-start: 0.35rem; color: var(--orb-gold); font-size: 0.87rem; }
+.mission-surface .account-section { margin-block-start: 1.5rem; }
+.mission-surface .account-section h2 { font-size: 0.98rem; }
+.mission-surface input, .mission-surface select { color: inherit; }
+.mission-surface input::placeholder { color: var(--ink-muted); opacity: 1; }
+.mission-surface .button-dark { color: #131921; background: var(--orb-gold); }
+.mission-surface .button-dark:hover { background: #f6d696; }
+.mission-surface [role="alert"] { color: #ffb8ba; }
+.mission-surface :focus-visible { outline-color: #acd7ff; }
+.environment-settings { flex-basis: 100%; min-width: 0; }
+.environment-settings p { color: var(--ink-muted); font-size: 0.88rem; }
+
+@media (max-width: 880px) { .mission-overview { grid-template-columns: minmax(0, 1fr); } }
+
 @media (max-width: 590px) {
   .account-shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
   .account-rail { flex-direction: row; flex-wrap: wrap; padding: 0.35rem 0.5rem; }

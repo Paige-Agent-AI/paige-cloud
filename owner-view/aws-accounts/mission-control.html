@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="/account.css">
   <script src="/account.js" defer></script>
 </head>
-<body class="account-surface">
+<body class="account-surface mission-surface">
   <a class="skip" href="#account-main">Skip to workspace</a>
   <header class="account-header">
     <a class="brand" href="/" aria-label="PAIGE Cloud home"><img src="/cloud-bracket.svg" alt=""><strong>PAIGE Cloud</strong></a>
@@ -18,15 +18,34 @@
   </header>
   <div class="account-shell">
     <nav class="account-rail" aria-label="Mission Control">
-      <a href="/mission-control" aria-current="page">Overview</a>
+      <a href="/mission-control" aria-current="page">Mission Control</a>
       <a href="/mission-control#projects" data-project-link hidden>Projects</a>
       <a href="/account">Account settings</a>
     </nav>
     <main class="account-workspace" id="account-main" tabindex="-1" data-workspace>
-      <h1>Mission Control</h1>
+      <div class="mission-context">
+        <span data-mission-scope hidden></span>
+        <h1>Mission Control</h1>
+      </div>
       <p role="status" data-account-status>Checking your account…</p>
       <div data-account-content hidden>
-        <section class="account-section" aria-labelledby="organizations-heading">
+        <div class="mission-overview">
+          <section class="mission-panel" aria-labelledby="attention-heading">
+            <h2 id="attention-heading">Needs your attention</h2>
+            <div class="mission-panel-body">
+              <p class="mission-state" data-mission-attention role="status">Checking organization scope…</p>
+              <a class="mission-link" href="#organization" data-mission-action hidden>Open organization</a>
+            </div>
+          </section>
+          <section class="mission-panel" aria-labelledby="coverage-heading">
+            <h2 id="coverage-heading">Environment coverage</h2>
+            <div class="mission-panel-body">
+              <p class="mission-state" data-mission-coverage>Environment details are available within registered projects.</p>
+              <a class="mission-link" href="#projects" data-mission-projects hidden>Browse projects</a>
+            </div>
+          </section>
+        </div>
+        <section class="account-section mission-organization" id="organization" aria-labelledby="organizations-heading">
           <h2 id="organizations-heading">Organization</h2>
           <ul class="organization-list" data-organizations></ul>
           <label class="organization-picker" data-organization-picker hidden>
