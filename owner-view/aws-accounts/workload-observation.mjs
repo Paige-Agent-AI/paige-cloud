@@ -20,6 +20,47 @@ export function parseInspectionRecoveryPoint(value) {
   return Object.freeze({ version: match[1], commit: match[2] });
 }
 
+// Projects one trusted Lambda invocation into the existing Cloud observation contract.
+export function readRuntimeWorkloadObservation(result, scope, now) {
+  if (result?.StatusCode !== 200 || result.FunctionError ||
+      typeof result.ExecutedVersion !== "string" || !/^[1-9]\d*$/.test(result.ExecutedVersion) ||
+      (typeof result.Payload !== "string" && !(result.Payload instanceof Uint8Array)) ||
+      !result.Payload.length || result.Payload.length > 4096) return null;
+  const bytes = Buffer.from(result.Payload);
+  if (bytes.length > 4096) return null;
+  let observed;
+  try {
+    observed = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    return null;
+  }
+  if (observed?.schema !== inspectionCapability) return null;
+  const observationTime = Date.parse(observed.observedAt);
+  const elapsed = now - observationTime;
+  if (observed.check !== "scoped_object" ||
+      !["healthy", "unavailable"].includes(observed.state) ||
+      !Object.entries(scope).every(([key, value]) => observed.scope?.[key] === value) ||
+      typeof observed.release?.commit !== "string" || !/^[a-f0-9]{40}$/.test(observed.release.commit) ||
+      !["a", "b", "drill"].includes(observed.release.candidate) ||
+      !Number.isFinite(elapsed) || elapsed < -3000 || elapsed > 30000 ||
+      (observed.state === "healthy" && (typeof observed.objectVersion !== "string" ||
+      !observed.objectVersion || observed.objectVersion === "null"))) return null;
+  const observation = {
+    schema: inspectionCapability,
+    scope,
+    state: observed.state,
+    observedAt: new Date(observationTime).toISOString(),
+    release: { commit: observed.release.commit, candidate: observed.release.candidate, version: result.ExecutedVersion },
+    evidence: { source: "runtime_backend_read", sha256: createHash("sha256").update(bytes).digest("hex") }
+  };
+  if (observation.state === "unavailable") {
+    observation.incident = {
+      reason: unavailableReasons.has(observed.reason) ? observed.reason : "backend_read_unverified"
+    };
+  }
+  return observation;
+}
+
 export function createWorkloadObservation({ scope, decide, reserve, invoke, recoveryPoint, now = Date.now }) {
   const { organization, project, application, environment } = scope;
   function targetFor(organizationId, projectId, record) {
@@ -53,42 +94,18 @@ export function createWorkloadObservation({ scope, decide, reserve, invoke, reco
 
       try {
         const result = await invoke(decision.args);
-        if (result.StatusCode !== 200 || result.FunctionError ||
-            typeof result.ExecutedVersion !== "string" || !/^[1-9]\d*$/.test(result.ExecutedVersion) ||
-            !result.Payload?.length || result.Payload.length > 4096) return { status: 503 };
-        const bytes = Buffer.from(result.Payload);
-        const observed = JSON.parse(bytes.toString("utf8"));
-        const observationTime = Date.parse(observed.observedAt);
-        const elapsed = now() - observationTime;
-        if (observed.schema !== inspectionCapability || observed.check !== "scoped_object" ||
-            !["healthy", "unavailable"].includes(observed.state) ||
-            !Object.entries(scope).every(([key, value]) => observed.scope?.[key] === value) ||
-            typeof observed.release?.commit !== "string" || !/^[a-f0-9]{40}$/.test(observed.release.commit) ||
-            !["a", "b", "drill"].includes(observed.release.candidate) ||
-            !Number.isFinite(elapsed) || elapsed < -3000 || elapsed > 30000 ||
-            (observed.state === "healthy" && (typeof observed.objectVersion !== "string" ||
-              !observed.objectVersion || observed.objectVersion === "null"))) return { status: 503 };
-        const observation = {
-          schema: inspectionCapability,
-          scope,
-          state: observed.state,
-          observedAt: new Date(observationTime).toISOString(),
-          release: { commit: observed.release.commit, candidate: observed.release.candidate, version: result.ExecutedVersion },
-          evidence: { source: "runtime_backend_read", sha256: createHash("sha256").update(bytes).digest("hex") }
-        };
-        if (observed.state === "unavailable") {
-          const reason = unavailableReasons.has(observed.reason) ? observed.reason : "backend_read_unverified";
-          observation.incident = { reason };
-          if (reason === "backend_access_denied" && recoveryPoint && observation.release.version !== recoveryPoint.version) {
-            observation.incident.plan = {
-              operation: "restore_verified_alias",
-              status: "review_required",
-              scope,
-              fromVersion: observation.release.version,
-              target: recoveryPoint,
-              evidenceSha256: observation.evidence.sha256
-            };
-          }
+        const observation = readRuntimeWorkloadObservation(result, scope, now());
+        if (!observation) return { status: 503 };
+        if (observation.incident?.reason === "backend_access_denied" && recoveryPoint &&
+            observation.release.version !== recoveryPoint.version) {
+          observation.incident.plan = {
+            operation: "restore_verified_alias",
+            status: "review_required",
+            scope,
+            fromVersion: observation.release.version,
+            target: recoveryPoint,
+            evidenceSha256: observation.evidence.sha256
+          };
         }
         return { status: 200, observation };
       } catch {
