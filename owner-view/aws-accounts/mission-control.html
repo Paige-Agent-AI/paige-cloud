@@ -19,7 +19,7 @@
   <div class="account-shell">
     <nav class="account-rail" aria-label="Mission Control">
       <a href="/mission-control" aria-current="page">Overview</a>
-      <a href="/mission-control#projects">Projects</a>
+      <a href="/mission-control#projects" data-project-link hidden>Projects</a>
       <a href="/account">Account settings</a>
     </nav>
     <main class="account-workspace" id="account-main" tabindex="-1" data-workspace>
@@ -28,6 +28,7 @@
       <div data-account-content hidden>
         <section class="account-section" aria-labelledby="organizations-heading">
           <h2 id="organizations-heading">Organization</h2>
+          <ul class="organization-list" data-organizations></ul>
           <label class="organization-picker" data-organization-picker hidden>
             <span>Active organization</span>
             <select data-active-organization></select>

@@ -6,6 +6,7 @@ const credentials = find('[data-account-form="credentials"]');
 const profile = find('[data-account-form="profile"]');
 const workspace = find("[data-workspace]");
 const links = find("[data-account-links]");
+const sessionUpdates = typeof BroadcastChannel === "function" ? new BroadcastChannel("paige-cloud-session") : null;
 
 const screens = {
   "/sign-in": {
@@ -156,8 +157,14 @@ credentials?.addEventListener("submit", event => {
       case "/sign-up": advance("/verify-email", values.email); break;
       case "/verify-email": advance("/sign-in", values.email, "Email verified. You can sign in now."); break;
       case "/recover": advance("/reset-password", values.email, "If this account is eligible, a code will arrive by email."); break;
-      case "/reset-password": advance("/sign-in", values.email, "Password reset. Sign in with your new password."); break;
-      case "/sign-in": location.replace("/mission-control"); break;
+      case "/reset-password":
+        sessionUpdates?.postMessage("changed");
+        advance("/sign-in", values.email, "Password reset. Sign in with your new password.");
+        break;
+      case "/sign-in":
+        sessionUpdates?.postMessage("changed");
+        location.replace("/mission-control");
+        break;
     }
   }, isCurrent);
 });
@@ -188,6 +195,30 @@ const projectStatus = find("[data-project-status]");
 const projectRetry = find("[data-project-retry]");
 const projectList = find("[data-projects]");
 let projectRevision = 0;
+let workspaceClosed = false;
+
+function clearWorkspace() {
+  if (!workspace) return;
+  workspaceClosed = true;
+  projectRevision++;
+  projectList?.replaceChildren();
+  const projectLink = find("[data-project-link]");
+  if (projectLink) projectLink.hidden = true;
+  find("[data-account-content]").hidden = true;
+}
+
+if (workspace) {
+  const refreshWorkspace = () => {
+    clearWorkspace();
+    location.reload();
+  };
+  sessionUpdates?.addEventListener("message", event => {
+    if (event.data === "changed" && !workspaceClosed) refreshWorkspace();
+  });
+  window.addEventListener("pageshow", event => {
+    if (event.persisted) refreshWorkspace();
+  });
+}
 
 async function readRegistryList(path) {
   const result = await requestJson(`/api/cloud/v1${path}`, "GET");
@@ -210,10 +241,10 @@ function renderProject(project, registryPath, revision) {
   details.append(summary, message, apps);
   row.append(details);
   let loading = false;
-  let loaded = false;
   details.addEventListener("toggle", async () => {
-    if (!details.open || loading || loaded) return;
+    if (!details.open || loading || revision !== projectRevision) return;
     loading = true;
+    apps.replaceChildren();
     message.textContent = "Loading applications…";
     try {
       const records = await readRegistryList(`${registryPath}/${encodeURIComponent(project.id)}/applications`);
@@ -228,7 +259,6 @@ function renderProject(project, registryPath, revision) {
         return item;
       }));
       message.textContent = records.length ? "" : "No applications registered.";
-      loaded = true;
     } catch (error) {
       if (revision !== projectRevision) return;
       if (error.status === 401) location.replace("/sign-in");
@@ -247,6 +277,7 @@ async function loadProjects() {
   projectList.replaceChildren();
   projectRetry.hidden = true;
   find("#projects").hidden = !organization;
+  find("[data-project-link]").hidden = !organization;
   if (!organization) return;
   const path = `/organizations/${encodeURIComponent(organization)}/projects`;
   projectStatus.textContent = "Loading projects…";
@@ -267,10 +298,25 @@ async function loadProjects() {
 }
 
 function renderOrganizations(organizations) {
+  const organizationList = find("[data-organizations]");
+  find('[data-account-form="organization"]').hidden = organizations.length > 0;
+  // The authenticated HTML and static script can be cached and rolled back independently.
+  organizationList.hidden = Boolean(organizationControl);
+  if (!organizationControl) {
+    organizationList.replaceChildren(...organizations.map(organization => {
+      const item = document.createElement("li");
+      const label = document.createElement("strong");
+      const role = document.createElement("span");
+      label.textContent = organization.name;
+      role.textContent = organization.role;
+      item.append(label, role);
+      return item;
+    }));
+    return;
+  }
   organizationControl.replaceChildren(...organizations.map(organization =>
     new Option(organization.name, organization.id)));
   find("[data-organization-picker]").hidden = !organizations.length;
-  find('[data-account-form="organization"]').hidden = organizations.length > 0;
   void loadProjects();
 }
 
@@ -284,7 +330,7 @@ projectRetry?.addEventListener("click", () => {
 
 async function showWorkspace() {
   const account = await readAccount();
-  if (!account) return;
+  if (!account || workspaceClosed) return;
   find("[data-account-number]").textContent = account.number;
   find("[data-account-email]").textContent = account.email;
   renderOrganizations(account.organizations);
@@ -329,6 +375,8 @@ profile?.addEventListener("submit", event => {
 for (const button of document.querySelectorAll("[data-sign-out]")) {
   button.addEventListener("click", () => run(button, async () => {
     await request("/sign-out", "POST");
+    clearWorkspace();
+    sessionUpdates?.postMessage("changed");
     location.replace("/sign-in");
   }));
 }

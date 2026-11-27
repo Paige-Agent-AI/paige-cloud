@@ -20,6 +20,7 @@
 .account-rail a[aria-current], .account-rail a:hover { background: var(--dark-panel); color: var(--orb-gold); }
 .account-rail :focus-visible { outline-color: var(--orb-gold); }
 .account-workspace { max-width: 54rem; padding: clamp(1rem, 4vw, 2.5rem); }
+.account-context { margin-bottom: 0.4rem; font-size: 0.87rem; }
 .account-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem 1.5rem; margin-top: 1.2rem; padding: 1rem 0; border-block: 1px solid var(--line); }
 .account-facts dt { color: var(--ink-muted); font-size: 0.87rem; }
 .account-facts dd, [data-profile-email] { margin-top: 0.28rem; overflow-wrap: anywhere; }
@@ -27,6 +28,9 @@
 .account-section h2 { font-size: 1.14rem; }
 .account-section form { max-width: 28rem; }
 .account-section form button { justify-self: start; }
+.organization-list { padding: 0; list-style: none; }
+.organization-list li { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; border-bottom: 1px solid var(--line); padding: 0.7rem 0; overflow-wrap: anywhere; }
+.organization-list li span { color: var(--ink-muted); }
 .organization-picker { display: grid; gap: 0.35rem; width: min(100%, 25rem); margin-top: 0.55rem; font-size: 0.88rem; }
 .organization-picker select { min-width: 0; min-height: 2.75rem; padding: 0.45rem 0.65rem; border: 1px solid #8292a3; border-radius: 0.38rem; color: var(--midnight); background: var(--white); font: inherit; }
 .project-list, .project-list ul { padding: 0; list-style: none; }
