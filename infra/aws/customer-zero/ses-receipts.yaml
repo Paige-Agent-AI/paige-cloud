@@ -18,6 +18,32 @@ Resources:
       SuppressionOptions:
         SuppressedReasons: [BOUNCE, COMPLAINT]
 
+  ReceiptKey:
+    Type: AWS::KMS::Key
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: EventBridge requires a customer-managed key when writing to an encrypted SQS target.
+        must: Use a separate key scoped to this receipt queue and grant no email sending permissions.
+    Properties:
+      Description: Encryption key for the PAIGE Cloud transactional delivery receipts
+      EnableKeyRotation: true
+      PendingWindowInDays: 7
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnableAccountIAM
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: EncryptFromEventBridge
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: [kms:Decrypt, kms:GenerateDataKey]
+            Resource: '*'
+
   ReceiptQueue:
     Type: AWS::SQS::Queue
     Metadata:
@@ -25,7 +51,7 @@ Resources:
         why: Keep short-lived delivery evidence for reconciliation by authorized operators.
         must: Exclude message contents and recipient addresses from the queued receipt.
     Properties:
-      SqsManagedSseEnabled: true
+      KmsMasterKeyId: !GetAtt ReceiptKey.Arn
       MessageRetentionPeriod: 86400
       VisibilityTimeout: 30
 
