@@ -43,7 +43,7 @@ jobs:
               mkdir /tmp/accounts && cd /tmp/accounts
               cp /candidate/*.mjs /candidate/package*.json /candidate/mission-control.html .
               npm ci --omit=dev --ignore-scripts --no-audit --no-fund
-              node --test handler.test.mjs
+              node --test *.test.mjs
               node --check bootstrap.mjs
               export CLOUD_SITE_ORIGIN=https://cloud.example.test CLOUD_EVALUATORS=developer@example.test
               export CLOUD_EDGE_KEY=synthetic-edge-key-for-package-check-only

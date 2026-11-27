@@ -48,6 +48,26 @@ BEGIN
      OR cloud_accounts.registry_register_application(other_actor, org, 'workspace', 'app', 'Foreign', 'service', NULL, 'preview') IS NOT NULL THEN
     RAISE EXCEPTION 'application collision or project membership isolation failed';
   END IF;
+  IF cloud_accounts.reserve_workload_observation(other_actor, org, 'workspace', 'independent', 'development') IS NOT NULL
+     OR cloud_accounts.reserve_workload_observation(actor, org, 'workspace', 'independent', 'missing') IS NOT NULL
+     OR cloud_accounts.reserve_workload_observation(actor, org, 'workspace', 'independent', 'development') IS DISTINCT FROM 'reserved'
+     OR cloud_accounts.reserve_workload_observation(actor, org, 'workspace', 'independent', 'development') IS DISTINCT FROM 'limited'
+     OR has_table_privilege(current_user, 'cloud_accounts.workload_observation_budget', 'SELECT, INSERT, UPDATE, DELETE') THEN
+    RAISE EXCEPTION 'inspection scope, pacing or metering access failed';
+  END IF;
+END
+$$;
+RESET ROLE;
+
+UPDATE cloud_accounts.workload_observation_budget SET attempts = 24, reserved_at = clock_timestamp() - interval '31 seconds'
+WHERE organization_id = current_setting('paige.registry.org')::uuid;
+SET LOCAL ROLE paige_cloud_account_runtime;
+DO $$
+BEGIN
+  IF cloud_accounts.reserve_workload_observation(current_setting('paige.registry.owner')::uuid,
+    current_setting('paige.registry.org')::uuid, 'workspace', 'independent', 'development') IS DISTINCT FROM 'limited' THEN
+    RAISE EXCEPTION 'daily inspection limit did not hold';
+  END IF;
 END
 $$;
 RESET ROLE;
@@ -74,7 +94,9 @@ SET LOCAL ROLE paige_cloud_account_runtime;
 DO $$
 BEGIN
   IF (SELECT * FROM cloud_accounts.registry_list_applications(current_setting('paige.registry.member')::uuid,
-     current_setting('paige.registry.org')::uuid, 'workspace')) IS NOT NULL THEN
+     current_setting('paige.registry.org')::uuid, 'workspace')) IS NOT NULL
+     OR cloud_accounts.reserve_workload_observation(current_setting('paige.registry.member')::uuid,
+     current_setting('paige.registry.org')::uuid, 'workspace', 'independent', 'development') IS NOT NULL THEN
     RAISE EXCEPTION 'revoked organization membership left a project read active';
   END IF;
 END

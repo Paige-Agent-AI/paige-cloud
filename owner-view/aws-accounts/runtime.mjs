@@ -16,6 +16,7 @@ import { ExecuteStatementCommand, RDSDataClient } from "@aws-sdk/client-rds-data
 import { CognitoJwtVerifier } from "aws-jwt-verify";
 import { FetchError, JwksValidationError, JwtBaseError } from "aws-jwt-verify/error";
 import { createAccountHandler } from "./handler.mjs";
+import { createWorkloadObservation, parseInspectionScope } from "./workload-observation.mjs";
 
 function createCognitoIdentity({ userPoolId, clientId }) {
   const cognito = new CognitoIdentityProviderClient({});
@@ -166,6 +167,11 @@ function createAccountRecords({ resourceArn, secretArn, database }) {
       if (!rows.length) throw new Error("Invalid registry response");
       return rows.map(([field]) => JSON.parse(field.stringValue));
     },
+    reserveInspection(actor, { organization, project, application, environment }) {
+      return call(`SELECT cloud_accounts.reserve_workload_observation(CAST(:actor AS uuid),
+        CAST(:organization AS uuid), :project, :application, :environment)`,
+        { actor, organization, project, application, environment });
+    },
     registryRegisterApplication(actor, organization, project, { id, name, kind, repository, environment }) {
       return call(`SELECT CAST(cloud_accounts.registry_register_application(CAST(:actor AS uuid), CAST(:organization AS uuid),
         :project, :id, :name, :kind, NULLIF(:repository, ''), :environment) AS text)`,
@@ -176,9 +182,31 @@ function createAccountRecords({ resourceArn, secretArn, database }) {
 
 const {
   CLOUD_SITE_ORIGIN, CLOUD_EVALUATORS, CLOUD_EDGE_KEY, COGNITO_USER_POOL_ID, COGNITO_CLIENT_ID,
-  CLOUD_DB_CLUSTER_ARN, CLOUD_DB_RUNTIME_SECRET_ARN, CLOUD_DB_NAME
+  CLOUD_DB_CLUSTER_ARN, CLOUD_DB_RUNTIME_SECRET_ARN, CLOUD_DB_NAME,
+  CLOUD_INSPECTION_SCOPE, CLOUD_INSPECTION_ALIAS
 } = process.env;
 if (!CLOUD_EDGE_KEY) throw new Error("The Cloud edge key is required");
+
+const records = createAccountRecords({
+  resourceArn: CLOUD_DB_CLUSTER_ARN, secretArn: CLOUD_DB_RUNTIME_SECRET_ARN, database: CLOUD_DB_NAME
+});
+let workloadObservation;
+if (CLOUD_INSPECTION_ALIAS) {
+  const scope = parseInspectionScope(CLOUD_INSPECTION_SCOPE);
+  const { decideGovernedExecution } = await import("./canonical-spine/governedExecution.mjs");
+  const { InvokeCommand, LambdaClient } = await import("@aws-sdk/client-lambda");
+  const lambda = new LambdaClient({ maxAttempts: 1 });
+  workloadObservation = createWorkloadObservation({
+    scope,
+    decide: decideGovernedExecution,
+    reserve: records.reserveInspection,
+    invoke: args => lambda.send(new InvokeCommand({
+      FunctionName: CLOUD_INSPECTION_ALIAS,
+      InvocationType: "RequestResponse",
+      Payload: Buffer.from(JSON.stringify(args))
+    }), { abortSignal: AbortSignal.timeout(4500) })
+  });
+}
 
 export const handler = createAccountHandler({
   origin: CLOUD_SITE_ORIGIN,
@@ -188,7 +216,6 @@ export const handler = createAccountHandler({
   identity: createCognitoIdentity({
     userPoolId: COGNITO_USER_POOL_ID, clientId: COGNITO_CLIENT_ID
   }),
-  records: createAccountRecords({
-    resourceArn: CLOUD_DB_CLUSTER_ARN, secretArn: CLOUD_DB_RUNTIME_SECRET_ARN, database: CLOUD_DB_NAME
-  })
+  records,
+  workloadObservation
 });
