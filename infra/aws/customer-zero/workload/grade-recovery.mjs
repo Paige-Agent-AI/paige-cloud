@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 // PAIGE Agent AI 79e2f303, supabase/functions/_shared/eval/trajectory-registry.ts.
-const evaluatorDigest = "bb84db8c0c04aace17618fcdfb98a76ff99b00d22f4e9ec9ad7f59a3202c398";
+const evaluatorDigest = "bb84db8c0c04aace17618fcddfb98a76ff99b00d22f4e9ec9ad7f59a3202c398";
 
 function sameScope(first, second) {
   return first && second && ["organization", "project", "application", "environment"]
