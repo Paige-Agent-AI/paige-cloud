@@ -11,12 +11,21 @@ Parameters:
   EvaluatorEmails:
     Type: String
     NoEcho: true
-    MinLength: 3
+    Default: ''
     MaxLength: 2048
   EnrollmentMode:
     Type: String
     Default: evaluator-only
     AllowedValues: [evaluator-only, members, public]
+  VerifiedEmailSenderDomain:
+    Type: String
+    Default: ''
+    MaxLength: 190
+    AllowedPattern: '(|[a-z0-9][a-z0-9.-]+\.[a-z]{2,63})'
+  AccountEmailConfigurationSet:
+    Type: String
+    Default: ''
+    AllowedPattern: '(|[A-Za-z0-9_-]{1,64})'
   EdgeSecretArn:
     Type: String
     AllowedPattern: 'arn:[a-z0-9-]+:secretsmanager:us-east-2:[0-9]{12}:secret:[a-zA-Z0-9/_+=.@-]+'
@@ -46,6 +55,16 @@ Parameters:
     AllowedPattern: '(|[1-9][0-9]*/[a-f0-9]{40})'
 
 Rules:
+  SesDeliveryRequiresReceipts:
+    RuleCondition: !Not [!Equals [!Ref VerifiedEmailSenderDomain, '']]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref AccountEmailConfigurationSet, '']]
+        AssertDescription: SES delivery requires an existing configuration set for delivery outcomes.
+  EvaluatorModeRequiresTestIdentities:
+    RuleCondition: !Equals [!Ref EnrollmentMode, evaluator-only]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref EvaluatorEmails, '']]
+        AssertDescription: Only the private evaluator mode requires approved test email addresses.
   InspectionRequiresEvaluatorBinding:
     RuleCondition: !Not [!Equals [!Ref InspectionAliasArn, '']]
     Assertions:
@@ -53,6 +72,7 @@ Rules:
         AssertDescription: Workload inspection requires a registered scope and the private evaluator routes.
 
 Conditions:
+  UseVerifiedSesSender: !Not [!Equals [!Ref VerifiedEmailSenderDomain, '']]
   PublishEvaluatorRoutes: !Equals [!Ref EvaluatorApiEnabled, 'true']
   EnableInspection: !Not [!Equals [!Ref InspectionAliasArn, '']]
 
@@ -64,6 +84,13 @@ Resources:
     Properties:
       UserPoolTier: ESSENTIALS
       DeletionProtection: ACTIVE
+      EmailConfiguration: !If
+        - UseVerifiedSesSender
+        - EmailSendingAccount: DEVELOPER
+          SourceArn: !Sub 'arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${VerifiedEmailSenderDomain}'
+          From: !Sub 'PAIGE Cloud <no-reply@${VerifiedEmailSenderDomain}>'
+          ConfigurationSet: !Ref AccountEmailConfigurationSet
+        - !Ref AWS::NoValue
       UsernameAttributes: [email]
       UsernameConfiguration:
         CaseSensitive: false

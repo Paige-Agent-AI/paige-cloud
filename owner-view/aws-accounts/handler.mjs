@@ -119,12 +119,12 @@ export function createAccountHandler({ origin, evaluatorEmails, identity, record
   enrollmentMode = "evaluator-only" }) {
   const site = new URL(origin);
   if (site.protocol !== "https:" || site.origin !== origin) throw new Error("An HTTPS site origin is required");
-  const eligible = new Set(evaluatorEmails.map(requireEmail));
-  if (!eligible.size) throw new Error("An evaluator allowlist is required");
   if (typeof edgeKey !== "string" || Buffer.byteLength(edgeKey) < 32) throw new Error("A private edge key is required");
   const expectedKey = Buffer.from(edgeKey);
   if (!["evaluator-only", "members", "public"].includes(enrollmentMode)) throw new Error("Invalid account enrollment mode");
   const publicAccounts = enrollmentMode !== "evaluator-only";
+  const eligible = new Set(publicAccounts ? [] : evaluatorEmails.map(requireEmail));
+  if (!publicAccounts && !eligible.size) throw new Error("An evaluator allowlist is required for the private pilot");
   if (typeof records.reserveAccountEmail !== "function") throw new Error("Account email admission is required");
   const allowsAccount = email => publicAccounts || eligible.has(email);
 
@@ -281,7 +281,7 @@ export function createAccountHandler({ origin, evaluatorEmails, identity, record
       case "POST /sign-up": {
         const body = readJson(event, ["email", "password"]);
         const email = requireEmail(body.email);
-        if (enrollmentMode !== "public" && !eligible.has(email)) throw new RequestError(403, "registration_unavailable");
+        if (enrollmentMode === "members" || !allowsAccount(email)) throw new RequestError(403, "registration_unavailable");
         await reserveEmail(event, "enrollment", email);
         try {
           await identity.signUp(email);
