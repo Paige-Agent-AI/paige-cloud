@@ -12,7 +12,7 @@ def build(commit, target, include_drill=False):
     stem = "infra/aws/customer-zero/workload"
     files = {
         name: subprocess.check_output(["git", "show", f"{commit}:{stem}/{name}"])
-        for name in ("application.mjs", "service.mjs")
+        for name in ("application.mjs", "service.mjs", "settings.mjs")
     }
     target.mkdir(parents=True, exist_ok=True)
     candidates = ("a", "b", "drill") if include_drill else ("a", "b")

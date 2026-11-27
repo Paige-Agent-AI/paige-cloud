@@ -10,7 +10,7 @@ SELECT cloud_accounts.registry_create_project(current_setting('test.config_owner
 SELECT cloud_accounts.registry_create_project(current_setting('test.config_other')::uuid, current_setting('test.config_other_org')::uuid, 'platform', 'Platform');
 SELECT cloud_accounts.registry_register_application(current_setting('test.config_owner')::uuid,
   current_setting('test.config_org')::uuid, 'platform', 'app', 'App', 'application', NULL, environment)
-FROM (VALUES ('development'), ('preview')) targets(environment);
+FROM (VALUES ('development'), ('preview'), ('frontier')) targets(environment);
 SELECT cloud_accounts.registry_register_application(current_setting('test.config_other')::uuid,
   current_setting('test.config_other_org')::uuid, 'platform', 'app', 'App', 'application', NULL, 'development');
 RESET ROLE;
@@ -19,6 +19,13 @@ INSERT INTO cloud_accounts.memberships (organization_id, account_id, role)
 VALUES (current_setting('test.config_org')::uuid, current_setting('test.config_reader')::uuid, 'member');
 INSERT INTO cloud_accounts.registry_grants (organization_id, project_id, account_id, role)
 VALUES (current_setting('test.config_org')::uuid, 'platform', current_setting('test.config_reader')::uuid, 'member');
+
+-- A historical environment already at the old ceiling, seeded only in the disposable test database.
+INSERT INTO cloud_accounts.workload_configuration_revisions
+  (organization_id, project_id, application_id, environment_id, revision, log_level, request_timeout_ms, saved_by, saved_at)
+SELECT current_setting('test.config_org')::uuid, 'platform', 'app', 'frontier', revision, 'info', 1000 + revision,
+  current_setting('test.config_owner')::uuid, clock_timestamp() - (33 - revision) * interval '2 minutes'
+FROM generate_series(1, 32) AS revisions(revision);
 
 SET ROLE paige_cloud_account_runtime;
 DO $$
@@ -58,8 +65,9 @@ BEGIN
     RAISE EXCEPTION 'stale or invalid write was admitted';
   END IF;
   IF cloud_accounts.save_workload_configuration(owner_id, org_id, 'platform', 'app', 'development', 1, 'info', 2700)->>'revision'
-       IS DISTINCT FROM '2' THEN
-    RAISE EXCEPTION 'second revision did not persist';
+       IS NOT NULL OR cloud_accounts.save_workload_configuration(owner_id, org_id, 'platform', 'app', 'development', 1, 'info', 2700)->>'error'
+       IS DISTINCT FROM 'configuration_rate_limited' THEN
+    RAISE EXCEPTION 'rapid changes bypassed the environment write budget';
   END IF;
   IF cloud_accounts.read_workload_configuration(owner_id, org_id, 'platform', 'app', 'development', 1) IS DISTINCT FROM saved
      OR cloud_accounts.read_workload_configuration(owner_id, org_id, 'platform', 'app', 'development', 3) IS NOT NULL
@@ -67,15 +75,13 @@ BEGIN
      OR cloud_accounts.read_workload_configuration(other_id, other_org_id, 'platform', 'app', 'development', NULL)->>'revision' IS DISTINCT FROM '0' THEN
     RAISE EXCEPTION 'revision or environment isolation failed';
   END IF;
-  FOR revision IN 2..31 LOOP
-    IF cloud_accounts.save_workload_configuration(owner_id, org_id, 'platform', 'app', 'development', revision, 'info', 2700 + revision)->>'revision'
-         IS DISTINCT FROM (revision + 1)::text THEN
-      RAISE EXCEPTION 'configuration revision fell below its bound';
-    END IF;
-  END LOOP;
-  IF cloud_accounts.save_workload_configuration(owner_id, org_id, 'platform', 'app', 'development', 32, 'info', 8000)->>'error'
-       IS DISTINCT FROM 'configuration_limit' THEN
-    RAISE EXCEPTION 'revision ceiling was not enforced';
+  IF cloud_accounts.save_workload_configuration(owner_id, org_id, 'platform', 'app', 'frontier', 32, 'warn', 8000)->>'revision'
+       IS DISTINCT FROM '33'
+     OR cloud_accounts.read_workload_configuration(owner_id, org_id, 'platform', 'app', 'frontier', 1)->'configuration'
+       IS DISTINCT FROM '{"logLevel":"info","requestTimeoutMs":1001}'::jsonb
+     OR cloud_accounts.read_workload_configuration(owner_id, org_id, 'platform', 'app', 'frontier', 32)->>'revision'
+       IS DISTINCT FROM '32' THEN
+    RAISE EXCEPTION 'a write beyond the old revision ceiling failed or damaged history';
   END IF;
 END
 $$;

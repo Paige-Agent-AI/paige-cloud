@@ -1,5 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: Private registered Lambda workload with versioned backend data and immutable releases.
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
 
 Parameters:
   Organization:
@@ -29,13 +32,51 @@ Parameters:
   DataVersion:
     Type: String
     AllowedPattern: '(?!null$)[A-Za-z0-9._~+/-]{1,226}'
+  SettingsObjectVersion:
+    Type: String
+    Default: ''
+    AllowedPattern: '((?!null$)[A-Za-z0-9._~+/-]{1,128})?'
+  SettingsRecoveryVersion:
+    Type: String
+    Default: ''
+    AllowedPattern: '((?!null$)[A-Za-z0-9._~+/-]{1,128})?'
+  SettingsDigest:
+    Type: String
+    Default: ''
+    AllowedPattern: '([a-f0-9]{64})?'
+  SettingsRevision:
+    Type: String
+    Default: ''
+    AllowedPattern: '([1-9][0-9]{0,9})?'
+  SettingsAccess:
+    Type: String
+    Default: enabled
+    AllowedValues: [enabled, revoked]
   RollbackVersion:
     Type: String
     Default: ''
     AllowedPattern: '([1-9][0-9]*)?'
 
+Rules:
+  SettingsPinIsComplete:
+    Assertions:
+      - Assert: !Or
+          - !And
+            - !Equals [!Ref SettingsObjectVersion, '']
+            - !Equals [!Ref SettingsRecoveryVersion, '']
+            - !Equals [!Ref SettingsDigest, '']
+            - !Equals [!Ref SettingsRevision, '']
+          - !And
+            - !Not [!Equals [!Ref SettingsObjectVersion, '']]
+            - !Not [!Equals [!Ref SettingsDigest, '']]
+            - !Not [!Equals [!Ref SettingsRevision, '']]
+        AssertDescription: Supply all three settings pin fields or leave all settings versions and fields empty.
+
 Conditions:
   UseNewRelease: !Equals [!Ref RollbackVersion, '']
+  HasSettings: !Not [!Equals [!Ref SettingsObjectVersion, '']]
+  HasRecoverySettings: !Not [!Equals [!Ref SettingsRecoveryVersion, '']]
+  CanReadSettings: !Equals [!Ref SettingsAccess, enabled]
 
 Resources:
   WorkloadLog:
@@ -69,6 +110,51 @@ Resources:
                 Action: [logs:CreateLogStream, logs:PutLogEvents]
                 Resource: !GetAtt WorkloadLog.Arn
 
+  SettingsWorkloadRole:
+    Type: AWS::IAM::Role
+    Condition: HasSettings
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Supports independently authenticated settings reads and revocation for the registered workload.
+        must: Keep the legacy WorkloadRole unchanged and retain this role while its published versions are recoverable.
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ReadRegisteredObjectVersion
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObjectVersion
+                Resource: !Sub 'arn:${AWS::Partition}:s3:::${ArtifactBucket}/workloads/${Organization}/${Project}/${Application}/${Environment}/config.json'
+                Condition:
+                  StringEquals:
+                    s3:VersionId: !Ref DataVersion
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt WorkloadLog.Arn
+        - !If
+          - CanReadSettings
+          - PolicyName: ReadPinnedSettingsVersions
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action: s3:GetObjectVersion
+                  Resource: !Sub 'arn:${AWS::Partition}:s3:::${ArtifactBucket}/workloads/${Organization}/${Project}/${Application}/${Environment}/settings.json'
+                  Condition:
+                    StringEquals:
+                      s3:VersionId:
+                        - !Ref SettingsObjectVersion
+                        - !If [HasRecoverySettings, !Ref SettingsRecoveryVersion, !Ref 'AWS::NoValue']
+          - !Ref 'AWS::NoValue'
+
   Workload:
     Type: AWS::Lambda::Function
     Properties:
@@ -76,9 +162,9 @@ Resources:
       Runtime: nodejs24.x
       Architectures: [arm64]
       Handler: application.handler
-      Role: !GetAtt WorkloadRole.Arn
+      Role: !If [HasSettings, !GetAtt SettingsWorkloadRole.Arn, !GetAtt WorkloadRole.Arn]
       MemorySize: 128
-      Timeout: 8
+      Timeout: !If [HasSettings, 35, 8]
       Code:
         S3Bucket: !Ref ArtifactBucket
         S3Key: !Ref ArtifactKey
@@ -91,6 +177,9 @@ Resources:
           CLOUD_WORKLOAD_PROJECT: !Ref Project
           CLOUD_WORKLOAD_APPLICATION: !Ref Application
           CLOUD_WORKLOAD_ENVIRONMENT: !Ref Environment
+          CLOUD_SETTINGS_VERSION: !If [HasSettings, !Ref SettingsObjectVersion, !Ref 'AWS::NoValue']
+          CLOUD_SETTINGS_DIGEST: !If [HasSettings, !Ref SettingsDigest, !Ref 'AWS::NoValue']
+          CLOUD_SETTINGS_REVISION: !If [HasSettings, !Ref SettingsRevision, !Ref 'AWS::NoValue']
 
   Release:
     Type: AWS::Lambda::Version
@@ -99,7 +188,10 @@ Resources:
     Properties:
       FunctionName: !Ref Workload
       CodeSha256: !Ref ArtifactDigest
-      Description: !Sub 'Pinned backend object version ${DataVersion}'
+      Description: !If
+        - HasSettings
+        - !Sub 'Settings revision ${SettingsRevision} ${SettingsDigest} ${SettingsObjectVersion}'
+        - !Sub 'Pinned backend object version ${DataVersion}'
 
   Live:
     Type: AWS::Lambda::Alias
@@ -112,7 +204,7 @@ Outputs:
   Function:
     Value: !Ref Workload
   RuntimeRole:
-    Value: !GetAtt WorkloadRole.Arn
+    Value: !If [HasSettings, !GetAtt SettingsWorkloadRole.Arn, !GetAtt WorkloadRole.Arn]
   ReleaseVersion:
     Value: !GetAtt Release.Version
   LiveAlias:

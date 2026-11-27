@@ -54,6 +54,18 @@ test("foreign scope, unbound environment, revoked grant, denied decision and exh
   }
 });
 
+test("reports the consumed revision and digest without exposing storage metadata", async () => {
+  const configuration = { revision: 33, digest: "b".repeat(64), version: "private-settings-version" };
+  const verify = revision => fixture({ compute: result => ({
+    ...result,
+    Payload: Buffer.from(JSON.stringify({ ...JSON.parse(result.Payload), configuration: { ...configuration, revision } }))
+  }) }).inspection.inspect("verified-actor", scope, records);
+  const reply = await verify(33);
+  assert.deepEqual(reply.observation.consumedConfiguration, { revision: 33, digest: configuration.digest });
+  assert.ok(!JSON.stringify(reply).includes(configuration.version));
+  assert.deepEqual(await verify(0), { status: 503 });
+});
+
 test("provider errors, wrong scope, and stale response never become a verified health observation", async () => {
   for (const compute of [
     () => { throw new Error("sensitive provider error"); },

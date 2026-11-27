@@ -4,7 +4,8 @@ import { setTimeout as delay } from "node:timers/promises";
 
 const prefix = "/api/cloud/auth";
 const registryPath = /^\/api\/cloud\/v1\/organizations\/([a-fA-F0-9-]{36})\/projects(?:\/([a-z0-9][a-z0-9-]{0,47})\/applications)?$/;
-const workloadPath = /^\/api\/cloud\/v1\/organizations\/([a-f0-9-]{36})\/projects\/([a-z0-9][a-z0-9-]{0,47})\/applications\/([a-z0-9][a-z0-9-]{0,47})\/environments\/([a-z0-9][a-z0-9-]{0,47})\/(inspection|configuration)(?:\/revisions\/([1-9][0-9]?))?$/;
+const workloadPath = /^\/api\/cloud\/v1\/organizations\/([a-f0-9-]{36})\/projects\/([a-z0-9][a-z0-9-]{0,47})\/applications\/([a-z0-9][a-z0-9-]{0,47})\/environments\/([a-z0-9][a-z0-9-]{0,47})\/(inspection|configuration)(?:\/revisions\/([1-9][0-9]{0,9}))?$/;
+const maxConfigurationRevision = 2147483647;
 const resourceId = /^[a-z0-9][a-z0-9-]{0,47}$/;
 const repositoryName = /^[a-zA-Z0-9][a-zA-Z0-9-]{0,38}\/[a-zA-Z0-9_.-]{1,100}$/;
 const cookieName = "__Host-paige_cloud_session";
@@ -190,7 +191,8 @@ export function createAccountHandler({ origin, evaluatorEmails, identity, record
   }
 
   async function handleConfiguration(event, method, [, organization, project, application, environment, , revision]) {
-    if (!uuid.test(organization) || !["GET", "PUT"].includes(method) || (revision && (method !== "GET" || Number(revision) > 32))) {
+    if (!uuid.test(organization) || !["GET", "PUT"].includes(method) ||
+        (revision && (method !== "GET" || Number(revision) > maxConfigurationRevision))) {
       throw new RequestError(404, "not_found");
     }
     if (method === "PUT" && event.headers?.origin !== origin) throw new RequestError(403, "origin_denied");
@@ -201,7 +203,7 @@ export function createAccountHandler({ origin, evaluatorEmails, identity, record
       result = await records.readWorkloadConfiguration(actor, scope, revision);
     } else {
       const { expectedRevision, logLevel, requestTimeoutMs } = readJson(event, ["expectedRevision", "logLevel", "requestTimeoutMs"]);
-      if (!Number.isInteger(expectedRevision) || expectedRevision < 0 || expectedRevision > 32 ||
+      if (!Number.isInteger(expectedRevision) || expectedRevision < 0 || expectedRevision > maxConfigurationRevision ||
           !["error", "warn", "info"].includes(logLevel) ||
           !Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 100 || requestTimeoutMs > 30000) {
         throw new RequestError(400, "invalid_configuration");
@@ -211,6 +213,7 @@ export function createAccountHandler({ origin, evaluatorEmails, identity, record
     if (result == null) throw new RequestError(404, "not_found");
     if (result.error === "invalid_configuration") throw new RequestError(400, result.error);
     if (["configuration_changed", "configuration_limit"].includes(result.error)) throw new RequestError(409, result.error);
+    if (result.error === "configuration_rate_limited") throw new RequestError(429, result.error);
     return reply(200, result);
   }
 
