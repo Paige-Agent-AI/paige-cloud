@@ -1,5 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: AWS-native PAIGE Cloud accounts for an isolated evaluator environment.
+Description: AWS-native PAIGE Cloud account service with explicit enrollment modes and scoped recovery.
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
 
 Parameters:
   SiteOrigin:
@@ -10,6 +13,10 @@ Parameters:
     NoEcho: true
     MinLength: 3
     MaxLength: 2048
+  EnrollmentMode:
+    Type: String
+    Default: evaluator-only
+    AllowedValues: [evaluator-only, members, public]
   EdgeSecretArn:
     Type: String
     AllowedPattern: 'arn:[a-z0-9-]+:secretsmanager:us-east-2:[0-9]{12}:secret:[a-zA-Z0-9/_+=.@-]+'
@@ -184,6 +191,7 @@ Resources:
         Variables:
           CLOUD_SITE_ORIGIN: !Ref SiteOrigin
           CLOUD_EVALUATORS: !Ref EvaluatorEmails
+          CLOUD_ENROLLMENT_MODE: !Ref EnrollmentMode
           CLOUD_EDGE_KEY: !Sub '{{resolve:secretsmanager:${EdgeSecretArn}:SecretString}}'
           COGNITO_USER_POOL_ID: !Ref IdentityPool
           COGNITO_CLIENT_ID: !Ref IdentityClient
@@ -202,6 +210,12 @@ Resources:
 
   AccountsRole:
     Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Complete verified email enrollment and recovery through the existing account service.
+        must:
+          - Scope Cognito permissions to this identity pool.
+          - Assign the permanent signup password only after successful provider code confirmation.
     Properties:
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
@@ -216,7 +230,7 @@ Resources:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
-                Action: cognito-idp:DescribeUserPoolClient
+                Action: [cognito-idp:DescribeUserPoolClient, cognito-idp:AdminSetUserPassword, cognito-idp:AdminUserGlobalSignOut]
                 Resource: !GetAtt IdentityPool.Arn
               - Effect: Allow
                 Action: rds-data:ExecuteStatement

@@ -1,5 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Customer Zero site and same-origin accounts API over trusted HTTPS.
+Description: Customer Zero site and same-origin accounts API with reversible viewer access policy over trusted HTTPS.
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
 
 Parameters:
   AccountsApiHostname:
@@ -11,6 +14,13 @@ Parameters:
   EvaluatorIp:
     Type: String
     AllowedPattern: '[0-9]{1,3}(\.[0-9]{1,3}){3}'
+  SiteAccessMode:
+    Type: String
+    Default: evaluator-only
+    AllowedValues: [evaluator-only, route-governed]
+
+Conditions:
+  RouteGovernedAccess: !Equals [!Ref SiteAccessMode, route-governed]
 
 Resources:
   Website:
@@ -44,21 +54,104 @@ Resources:
 
   EvaluatorAccess:
     Type: AWS::CloudFront::Function
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Separate public site and identity routes from server-authorized account operations.
+        must: Keep the evaluator-only rollback intact and enforce all permissions in the origin.
     Properties:
       Name: !Sub '${AWS::StackName}-access'
       AutoPublish: true
       FunctionConfig:
-        Comment: Restrict prelaunch site and account routes to the evaluator connection
+        Comment: Govern Customer Zero routes and keep account permissions at the origin
         Runtime: cloudfront-js-2.0
       FunctionCode: !Sub |
+        var accountPages = ['/sign-in', '/signup', '/verify-email', '/recover', '/reset-password', '/account'];
+        var publicAssets = ['/', '/index.html', '/site.css', '/site.js', '/account.css', '/account.js',
+          '/cloud-bracket.svg', '/favicon.svg', '/favicon.ico', '/instrument-sans.woff2', '/instrument-sans-OFL.txt'];
+        var authPrefix = '/api/cloud/auth/';
+        var registry = /^\/api\/cloud\/v1\/organizations\/[a-fA-F0-9-]{36}\/projects(?:\/[a-z0-9][a-z0-9-]{0,47}\/applications)?$/;
+        var workload = /^\/api\/cloud\/v1\/organizations\/[a-f0-9-]{36}\/projects\/[a-z0-9][a-z0-9-]{0,47}\/applications\/[a-z0-9][a-z0-9-]{0,47}\/environments\/[a-z0-9][a-z0-9-]{0,47}\/(?:inspection|configuration(?:\/revisions\/[1-9][0-9]{0,9})?)$/;
+
+        function response(status, description, type, method, body) {
+          var result = { statusCode: status, statusDescription: description, headers: {
+            'content-type': { value: type + '; charset=utf-8' },
+            'cache-control': { value: 'no-store' },
+            'x-content-type-options': { value: 'nosniff' },
+            'referrer-policy': { value: 'no-referrer' },
+            'strict-transport-security': { value: 'max-age=31536000' }
+          }};
+          if (method !== 'HEAD') result.body = body;
+          return result;
+        }
+
+        function fault(status, description, code, request, isApi, heading, message) {
+          if (isApi) return response(status, description, 'application/json', request.method, '{"error":"' + code + '"}');
+          var result = response(status, description, 'text/html', request.method,
+            '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
+            '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+            '<title>' + heading + ' · PAIGE Cloud</title><link rel="icon" href="/favicon.svg">' +
+            '<link rel="stylesheet" href="/site.css"><link rel="stylesheet" href="/account.css"></head>' +
+            '<body class="account-surface"><header class="account-header">' +
+            '<a class="brand" href="/" aria-label="PAIGE Cloud home"><img src="/cloud-bracket.svg" alt="">' +
+            '<strong>PAIGE Cloud</strong></a></header><main class="account-entry">' +
+            '<h1>' + heading + '</h1><p>' + message + '</p><nav class="account-links" aria-label="Account options">' +
+            '<a href="/">Back to PAIGE Cloud</a><a href="/sign-in">Sign in</a></nav></main></body></html>');
+          result.headers['content-security-policy'] = { value: "default-src 'none'; img-src 'self'; style-src 'self'; font-src 'self'; base-uri 'none'; frame-ancestors 'none'" };
+          result.headers['x-frame-options'] = { value: 'DENY' };
+          return result;
+        }
+
+        function signinRedirect(request) {
+          var result = response(303, 'See Other', 'text/html', request.method, '');
+          result.headers.location = { value: '/sign-in' };
+          return result;
+        }
+
+        function hasSessionCookie(request) {
+          var cookie = request.cookies && request.cookies['__Host-paige_cloud_session'];
+          return cookie && typeof cookie.value === 'string' && cookie.value.length <= 3800 &&
+            /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(cookie.value);
+        }
+
         function handler(event) {
-          if (event.viewer.ip !== '${EvaluatorIp}') {
-            return { statusCode: 403, statusDescription: 'Forbidden' };
-          }
           var request = event.request;
-          var pages = ['/sign-in', '/signup', '/verify-email', '/recover', '/reset-password', '/account'];
-          if (pages.indexOf(request.uri) !== -1) request.uri = '/account-entry.html';
-          return request;
+          var uri = request.uri;
+          var evaluator = event.viewer.ip === '${EvaluatorIp}';
+          // Replace client input. The origin accepts this budget signal only through the trusted edge.
+          request.headers['x-paige-viewer-ip'] = { value: event.viewer.ip };
+          var reads = request.method === 'GET' || request.method === 'HEAD';
+          var isApi = uri.indexOf('/api/') === 0;
+          var accountPage = accountPages.indexOf(uri) !== -1;
+          if ('${SiteAccessMode}' !== 'route-governed') {
+            if (!evaluator) {
+              if (isApi) return fault(403, 'Forbidden', 'evaluator_network_required', request, true, '', '');
+              return response(403, 'Forbidden', 'text/plain', request.method, 'Open this page from the approved evaluator connection.');
+            }
+            if (accountPage) request.uri = '/account-entry.html';
+            return request;
+          }
+          if (reads && publicAssets.indexOf(uri) !== -1) return request;
+
+          var auth = uri.indexOf(authPrefix) === 0 ? uri.slice(authPrefix.length) : '';
+          if (reads && accountPage) {
+            if (uri === '/account' && !hasSessionCookie(request)) return signinRedirect(request);
+            request.uri = '/account-entry.html';
+            return request;
+          }
+          if (request.method === 'POST' &&
+              ['sign-up', 'verify-email', 'resend-code', 'sign-in', 'sign-out', 'recover', 'reset-password'].indexOf(auth) !== -1) return request;
+
+          if (reads && uri === '/mission-control') {
+            if (!hasSessionCookie(request)) return signinRedirect(request);
+            return request;
+          }
+          if (auth === 'account' || /^organizations(?:\/[a-fA-F0-9-]{36})?$/.test(auth) ||
+              registry.test(uri) || workload.test(uri)) {
+            if (!hasSessionCookie(request)) return fault(401, 'Unauthorized', 'sign_in_required', request, true, '', '');
+            return request;
+          }
+          return fault(404, 'Not Found', 'not_found', request, isApi,
+            'Page not found', 'Check the address or return to the PAIGE Cloud website.');
         }
 
   AccountsRequestPolicy:
@@ -71,7 +164,7 @@ Resources:
           Cookies: [__Host-paige_cloud_session]
         HeadersConfig:
           HeaderBehavior: whitelist
-          Headers: [Origin, Content-Type]
+          Headers: [Origin, Content-Type, X-Paige-Viewer-IP]
         QueryStringsConfig:
           QueryStringBehavior: none
 
@@ -117,7 +210,7 @@ Resources:
     Properties:
       DistributionConfig:
         Enabled: true
-        IPV6Enabled: false
+        IPV6Enabled: !If [RouteGovernedAccess, true, false]
         HttpVersion: http2and3
         DefaultRootObject: index.html
         Origins:

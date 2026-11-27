@@ -14,14 +14,14 @@ const screens = {
     links: [["Forgot password?", "/recover"], ["Create an account", "/signup"]]
   },
   "/signup": {
-    title: "Create your account", intro: "Registration is open to approved prelaunch evaluators.",
-    action: "Send verification code", path: "/sign-up", password: "new-password",
+    title: "Create your account", intro: "Verify your email address to open your workspace.",
+    action: "Send verification code", path: "/sign-up",
     links: [["Already have an account? Sign in", "/sign-in"]]
   },
   "/verify-email": {
-    title: "Verify your email", intro: "Enter the six-digit code sent to your email address.",
-    action: "Verify email", path: "/verify-email", code: true,
-    links: [["Back to sign in", "/sign-in"]]
+    title: "Verify your email", intro: "Enter your six-digit code and choose a password.",
+    action: "Verify email", path: "/verify-email", code: true, password: "new-password",
+    links: [["Sign in", "/sign-in"], ["Forgot password?", "/recover"]]
   },
   "/recover": {
     title: "Recover your account", intro: "Enter the email address associated with your account.",
@@ -36,10 +36,12 @@ const screens = {
 
 const errors = {
   invalid_credentials: "Check your email address and password, then try again.",
-  registration_unavailable: "This email address is outside the evaluator group.",
+  registration_unavailable: "New registrations are unavailable right now. You can still sign in or recover an existing account.",
   email_already_registered: "An account already exists for this address. Sign in or verify your email.",
   invalid_code: "Check the six-digit code and try again.",
   expired_code: "That code has expired. Request a new one.",
+  enrollment_password_unverified: "Your email was verified. Use password recovery to finish setting up your sign-in.",
+  recovery_sessions_unverified: "Your password changed. We could not confirm that other sessions ended. Sign in with your new password, then sign out to end them.",
   invalid_password: "Check the password requirements and try again.",
   invalid_email: "Enter a valid email address.",
   invalid_name: "Enter a name with no more than 120 characters.",
@@ -113,7 +115,11 @@ function showScreen(path, email = "", message = "", moveFocus = false) {
   password.required = Boolean(screen.password);
   password.disabled = !screen.password;
   password.autocomplete = screen.password || "current-password";
-  password.minLength = screen.password === "new-password" ? 15 : 1;
+  const choosingPassword = screen.password === "new-password";
+  password.minLength = choosingPassword ? 15 : 1;
+  password.maxLength = choosingPassword ? 256 : 512;
+  if (choosingPassword) password.pattern = "\\S+";
+  else password.removeAttribute("pattern");
   find("[data-password-field]").hidden = !screen.password;
   find("[data-password-note]").hidden = screen.password !== "new-password";
   credentials.elements.code.required = Boolean(screen.code);
@@ -159,9 +165,9 @@ credentials?.addEventListener("submit", event => {
     if (submitted === "/sign-in" || submitted === "/reset-password") sessionUpdates?.postMessage("changed");
     if (!isCurrent()) return;
     switch (submitted) {
-      case "/sign-up": advance("/verify-email", values.email); break;
+      case "/sign-up": advance("/verify-email", values.email, "Check your inbox for a verification code."); break;
       case "/verify-email": advance("/sign-in", values.email, "Email verified. You can sign in now."); break;
-      case "/recover": advance("/reset-password", values.email, "If this account is eligible, a code will arrive by email."); break;
+      case "/recover": advance("/reset-password", values.email, "If a reset code can be sent, it will arrive by email."); break;
       case "/reset-password":
         advance("/sign-in", values.email, "Password reset. Sign in with your new password.");
         break;

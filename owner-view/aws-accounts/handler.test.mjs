@@ -8,14 +8,15 @@ const tokens = ["access.a.test", "access.b.test"];
 const ids = ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"];
 const cookie = token => "__Host-paige_cloud_session=" + token;
 const authError = name => Object.assign(new Error("private provider diagnostic"), { name });
-const password = "synthetic passphrase for tests";
+const password = "synthetic-passphrase-for-tests";
 const defaultEdgeKey = "test-only-default-edge-key-with-thirty-two-characters";
 
-function event(method, route, { token, body, from = origin } = {}) {
+function event(method, route, { token, body, from = origin, network = "192.0.2.8" } = {}) {
   return {
     rawPath: "/api/cloud/auth" + route,
     requestContext: { http: { method } },
-    headers: { origin: from, "content-type": "application/json", "x-paige-cloud-edge": defaultEdgeKey },
+    headers: { origin: from, "content-type": "application/json", "x-paige-cloud-edge": defaultEdgeKey,
+      "x-paige-viewer-ip": network },
     cookies: token ? [cookie(token)] : [],
     body: body === undefined ? undefined : JSON.stringify(body)
   };
@@ -55,6 +56,7 @@ function fixture(overrides = {}) {
     ...overrides.identity
   };
   const records = {
+    async reserveAccountEmail() { return true; },
     async recordIdentity(user) {
       const actor = "actor-" + user.subject;
       if (!store.has(actor)) store.set(actor, { email: user.email, displayName: null, organizations: [] });
@@ -83,11 +85,131 @@ function fixture(overrides = {}) {
   const request = (method, route, options) => handle(event(method, route, options));
   async function register(email) {
     assert.equal((await request("POST", "/sign-up", { body: { email, password } })).statusCode, 202);
-    assert.equal((await request("POST", "/verify-email", { body: { email, code: "123456" } })).statusCode, 204);
+    assert.equal((await request("POST", "/verify-email", { body: { email, code: "123456", password } })).statusCode, 204);
     return request("POST", "/sign-in", { body: { email, password } });
   }
   return { handle, request, register, calls, recordLookups };
 }
+
+test("public enrollment and recovery use email ownership and scoped accounts regardless of network", async () => {
+  const email = "new-owner@example.test";
+  const token = "public.owner.token";
+  const reservations = [];
+  let created = false;
+  let verified = false;
+  let active = false;
+  let confirmationCalls = 0;
+  const { request, handle } = fixture({
+    config: { enrollmentMode: "public", consoleHtml: "<main>Mission Control</main>" },
+    identity: {
+      async signUp(address, proposedPassword) {
+        assert.equal(address, email);
+        assert.equal(proposedPassword, undefined);
+        if (created) throw authError("UsernameExistsException");
+        created = true;
+      },
+      async confirmSignUp(address, code, chosenPassword) {
+        confirmationCalls++;
+        if (address !== email) throw authError("UserNotFoundException");
+        if (verified) throw authError("NotAuthorizedException");
+        if (code !== "123456") throw authError("CodeMismatchException");
+        assert.equal(chosenPassword, password);
+        verified = true;
+      },
+      async signIn() {
+        if (!verified) throw authError("UserNotConfirmedException");
+        active = true;
+        return { token, lifetimeSeconds: 1800 };
+      },
+      async verify(value) {
+        return active && value === token ? { issuer: "test-issuer", subject: "0", email } : null;
+      },
+      async startRecovery(address) {
+        if (address !== email) throw authError("UserNotFoundException");
+      },
+      async finishRecovery(address, code) {
+        if (address !== email || code !== "654321") throw authError("CodeMismatchException");
+        active = false;
+      }
+    },
+    records: { async reserveAccountEmail(...args) { reservations.push(args); return true; } }
+  });
+  const enroll = network => request("POST", "/sign-up", { body: { email, password }, network });
+  const first = await enroll("203.0.113.9");
+  assert.equal(first.statusCode, 202);
+  assert.deepEqual(first, await enroll("2001:db8::9"));
+  assert.equal((await request("POST", "/sign-in", { body: { email, password } })).statusCode, 403);
+  const confirm = (address, code) => request("POST", "/verify-email", { body: { email: address, code, password } });
+  for (const invalidPassword of ["a".repeat(257), "passphrase with spaces"]) {
+    const denied = await request("POST", "/verify-email", { body: { email, code: "123456", password: invalidPassword } });
+    assert.equal(denied.statusCode, 400);
+    assert.equal(JSON.parse(denied.body).error, "invalid_password");
+  }
+  assert.equal(confirmationCalls, 0);
+  assert.deepEqual(await confirm("unknown@example.test", "123456"), await confirm(email, "111111"));
+  assert.equal((await confirm(email, "123456")).statusCode, 204);
+  assert.equal((await confirm(email, "123456")).statusCode, 400);
+  assert.equal((await request("POST", "/sign-in", { body: { email, password }, network: "2001:db8::11" })).statusCode, 204);
+  const mission = value => handle({ ...event("GET", "", { token: value }), rawPath: "/mission-control" });
+  assert.equal((await mission(token)).statusCode, 200);
+  assert.equal((await request("GET", "/organizations/" + ids[1], { token })).statusCode, 404);
+  const recover = address => request("POST", "/recover", { body: { email: address }, network: "2001:db8::11" });
+  assert.deepEqual(await recover(email), await recover("unknown@example.test"));
+  const reset = await request("POST", "/reset-password", { body: { email, code: "654321", password } });
+  assert.equal(reset.statusCode, 204);
+  assert.match(reset.cookies[0], /Max-Age=0/);
+  assert.equal((await mission(token)).statusCode, 303);
+  assert.notEqual(reservations[0][1], reservations[1][1]);
+  assert.equal(reservations[0][2], reservations[1][2]);
+  assert.ok(reservations.every(([, network, recipient]) => /^[a-f0-9]{64}$/.test(network) && /^[a-f0-9]{64}$/.test(recipient)));
+});
+
+test("email admission and same-origin controls run before contacting the provider", async () => {
+  const { request, calls } = fixture({ config: { enrollmentMode: "public" },
+    records: { async reserveAccountEmail() { return false; } } });
+  const recipient = { email: "someone@example.test" };
+  const body = { ...recipient, password };
+  assert.equal((await request("POST", "/sign-up", { body, from: "https://different.example.test" })).statusCode, 403);
+  assert.equal((await request("POST", "/sign-up", { body, network: "invalid" })).statusCode, 403);
+  assert.equal((await request("POST", "/sign-up", { body })).statusCode, 429);
+  assert.equal((await request("POST", "/recover", { body: recipient })).statusCode, 429);
+  assert.equal(calls.length, 0);
+});
+
+test("the evaluator-mode account package also reserves email before provider contact", async () => {
+  const { request, calls } = fixture({ records: { async reserveAccountEmail() { return false; } } });
+  const email = allowedEmails[0];
+  assert.equal((await request("POST", "/sign-up", { body: { email, password } })).statusCode, 429);
+  assert.equal((await request("POST", "/resend-code", { body: { email } })).statusCode, 429);
+  assert.equal((await request("POST", "/recover", { body: { email } })).statusCode, 429);
+  assert.equal(calls.length, 0);
+});
+
+test("evaluator mode uses the same email-first password boundary during the network transition", async () => {
+  const sent = [];
+  const verified = [];
+  const email = allowedEmails[0];
+  const { request } = fixture({ identity: {
+    async signUp(...args) { sent.push(args); },
+    async confirmSignUp(...args) { verified.push(args); }
+  } });
+  assert.equal((await request("POST", "/sign-up", { body: { email, password } })).statusCode, 202);
+  assert.deepEqual(sent, [[email]]);
+  assert.equal((await request("POST", "/verify-email", { body: { email, code: "123456" } })).statusCode, 400);
+  assert.equal(verified.length, 0);
+  assert.equal((await request("POST", "/verify-email", { body: { email, code: "123456", password } })).statusCode, 204);
+  assert.deepEqual(verified, [[email, "123456", password]]);
+});
+
+test("pausing enrollment keeps verification and recovery available to existing accounts", async () => {
+  const { request, calls } = fixture({ config: { enrollmentMode: "members" },
+    records: { async reserveAccountEmail() { return true; } } });
+  const recipient = { email: "already-enrolled@example.test" };
+  assert.equal((await request("POST", "/sign-up", { body: { ...recipient, password } })).statusCode, 403);
+  assert.equal((await request("POST", "/resend-code", { body: recipient })).statusCode, 202);
+  assert.equal((await request("POST", "/recover", { body: recipient })).statusCode, 202);
+  assert.deepEqual(calls, [["resendCode", recipient.email], ["startRecovery", recipient.email]]);
+});
 
 test("organization name updates derive the actor and enforce same-origin, scope and stale writes", async () => {
   const changes = [];
@@ -181,7 +303,7 @@ test("evaluator registration requires confirmation and keeps provider tokens out
   assert.deepEqual(response.cookies, [
     cookie(tokens[0]) + "; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=900"
   ]);
-  const replay = await request("POST", "/verify-email", { body: { email: allowedEmails[0], code: "123456" } });
+  const replay = await request("POST", "/verify-email", { body: { email: allowedEmails[0], code: "123456", password } });
   assert.equal(replay.statusCode, 400);
 });
 
@@ -324,7 +446,7 @@ test("the private edge and session gate protect the console before returning its
   assert.equal(signedOut.headers.location, "/sign-in");
   const email = allowedEmails[0];
   await request("POST", "/sign-up", { body: { email, password } });
-  await request("POST", "/verify-email", { body: { email, code: "123456" } });
+  await request("POST", "/verify-email", { body: { email, code: "123456", password } });
   await request("POST", "/sign-in", { body: { email, password } });
   page.cookies = [cookie(tokens[0])];
   const signedIn = await handle(page);

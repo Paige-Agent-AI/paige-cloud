@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
-import { timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
+import { isIP } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 
 const prefix = "/api/cloud/auth";
@@ -10,8 +11,10 @@ const resourceId = /^[a-z0-9][a-z0-9-]{0,47}$/;
 const repositoryName = /^[a-zA-Z0-9][a-zA-Z0-9-]{0,38}\/[a-zA-Z0-9_.-]{1,100}$/;
 const cookieName = "__Host-paige_cloud_session";
 const cookieAttributes = "Path=/; Secure; HttpOnly; SameSite=Lax";
+const clearSessionCookies = [cookieName + "=; " + cookieAttributes + "; Max-Age=0"];
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const jwt = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+const noCodeRecipient = new Set(["NotAuthorizedException", "UserNotFoundException", "InvalidParameterException"]);
 const providerErrors = new Map([
   ["NotAuthorizedException", [401, "invalid_credentials"]],
   ["UserNotFoundException", [401, "invalid_credentials"]],
@@ -79,8 +82,8 @@ function requireEmail(input) {
 }
 
 function requirePassword(password, enrollment = false) {
-  if (typeof password !== "string" || Buffer.byteLength(password) > 512 ||
-      [...password].length < (enrollment ? 15 : 1)) {
+  if (typeof password !== "string" || !password.length ||
+      (enrollment ? password.length > 256 || [...password].length < 15 || /\s/u.test(password) : Buffer.byteLength(password) > 512)) {
     throw new RequestError(400, "invalid_password");
   }
   return password;
@@ -112,18 +115,33 @@ function requireResourceId(value) {
   return value;
 }
 
-export function createAccountHandler({ origin, evaluatorEmails, identity, records, edgeKey, consoleHtml, workloadObservation }) {
+export function createAccountHandler({ origin, evaluatorEmails, identity, records, edgeKey, consoleHtml, workloadObservation,
+  enrollmentMode = "evaluator-only" }) {
   const site = new URL(origin);
   if (site.protocol !== "https:" || site.origin !== origin) throw new Error("An HTTPS site origin is required");
   const eligible = new Set(evaluatorEmails.map(requireEmail));
   if (!eligible.size) throw new Error("An evaluator allowlist is required");
   if (typeof edgeKey !== "string" || Buffer.byteLength(edgeKey) < 32) throw new Error("A private edge key is required");
   const expectedKey = Buffer.from(edgeKey);
+  if (!["evaluator-only", "members", "public"].includes(enrollmentMode)) throw new Error("Invalid account enrollment mode");
+  const publicAccounts = enrollmentMode !== "evaluator-only";
+  if (typeof records.reserveAccountEmail !== "function") throw new Error("Account email admission is required");
+  const allowsAccount = email => publicAccounts || eligible.has(email);
+
+  async function reserveEmail(event, lane, email) {
+    const address = event.headers?.["x-paige-viewer-ip"];
+    if (typeof address !== "string" || !isIP(address)) throw new RequestError(403, "edge_required");
+    const fingerprint = (kind, value) => createHmac("sha256", expectedKey).update(kind + "\0" + value).digest("hex");
+    const reserved = await records.reserveAccountEmail(lane, fingerprint("account-email-network", address),
+      fingerprint("account-email-recipient", email));
+    if (reserved !== true) throw new RequestError(429, "try_again_later");
+  }
 
   async function requireIdentity(token) {
     if (!token) throw new RequestError(401, "sign_in_required");
     const user = await identity.verify(token);
-    if (!user || !eligible.has(normalizeEmail(user.email))) {
+    const email = normalizeEmail(user?.email);
+    if (!email || !allowsAccount(email)) {
       throw new RequestError(401, "sign_in_required");
     }
     return user;
@@ -263,29 +281,48 @@ export function createAccountHandler({ origin, evaluatorEmails, identity, record
       case "POST /sign-up": {
         const body = readJson(event, ["email", "password"]);
         const email = requireEmail(body.email);
-        const password = requirePassword(body.password, true);
-        if (!eligible.has(email)) throw new RequestError(403, "registration_unavailable");
-        await identity.signUp(email, password);
+        if (enrollmentMode !== "public" && !eligible.has(email)) throw new RequestError(403, "registration_unavailable");
+        await reserveEmail(event, "enrollment", email);
+        try {
+          await identity.signUp(email);
+        } catch (error) {
+          if (!publicAccounts || error.name !== "UsernameExistsException") throw error;
+        }
         return reply(202, { next: "verify_email" });
       }
       case "POST /verify-email": {
-        const body = readJson(event, ["email", "code"]);
+        const body = readJson(event, ["email", "code", "password"]);
         const email = requireEmail(body.email);
-        if (!eligible.has(email)) throw new RequestError(403, "registration_unavailable");
-        await identity.confirmSignUp(email, requireCode(body.code));
+        if (!allowsAccount(email)) throw new RequestError(403, "registration_unavailable");
+        const code = requireCode(body.code);
+        const password = requirePassword(body.password, true);
+        try {
+          await identity.confirmSignUp(email, code, password);
+        } catch (error) {
+          if (error.name === "EnrollmentPasswordUnconfirmed") throw new RequestError(503, "enrollment_password_unverified");
+          if (publicAccounts && noCodeRecipient.has(error.name)) throw new RequestError(400, "invalid_code");
+          throw error;
+        }
         return reply(204);
       }
       case "POST /resend-code": {
         const body = readJson(event, ["email"]);
         const email = requireEmail(body.email);
-        if (eligible.has(email)) await identity.resendCode(email);
+        if (allowsAccount(email)) {
+          await reserveEmail(event, "enrollment", email);
+          try {
+            await identity.resendCode(email);
+          } catch (error) {
+            if (!publicAccounts || !noCodeRecipient.has(error.name)) throw error;
+          }
+        }
         return reply(202);
       }
       case "POST /sign-in": {
         const body = readJson(event, ["email", "password"]);
         const email = requireEmail(body.email);
         const password = requirePassword(body.password);
-        if (!eligible.has(email)) throw new RequestError(401, "invalid_credentials");
+        if (!allowsAccount(email)) throw new RequestError(401, "invalid_credentials");
         const { token, user, lifetime } = await openVerifiedSession(email, password);
         const account = await records.recordIdentity(user);
         if (!account) throw new RequestError(503, "account_service_unavailable");
@@ -300,16 +337,17 @@ export function createAccountHandler({ origin, evaluatorEmails, identity, record
             if (error.name !== "NotAuthorizedException" && error.name !== "UserNotFoundException") throw error;
           }
         }
-        return reply(204, undefined, [cookieName + "=; " + cookieAttributes + "; Max-Age=0"]);
+        return reply(204, undefined, clearSessionCookies);
       }
       case "POST /recover": {
         const body = readJson(event, ["email"]);
         const email = requireEmail(body.email);
-        if (eligible.has(email)) {
+        if (allowsAccount(email)) {
+          await reserveEmail(event, "recovery", email);
           try {
             await identity.startRecovery(email);
           } catch (error) {
-            if (error.name !== "UserNotFoundException" && error.name !== "InvalidParameterException") throw error;
+            if (!noCodeRecipient.has(error.name)) throw error;
           }
         }
         return reply(202);
@@ -317,9 +355,19 @@ export function createAccountHandler({ origin, evaluatorEmails, identity, record
       case "POST /reset-password": {
         const body = readJson(event, ["email", "code", "password"]);
         const email = requireEmail(body.email);
-        if (!eligible.has(email)) throw new RequestError(400, "invalid_code");
-        await identity.finishRecovery(email, requireCode(body.code), requirePassword(body.password, true));
-        return reply(204);
+        if (!allowsAccount(email)) throw new RequestError(400, "invalid_code");
+        const code = requireCode(body.code);
+        const password = requirePassword(body.password, true);
+        try {
+          await identity.finishRecovery(email, code, password);
+        } catch (error) {
+          if (error.name === "RecoveryRevocationUnconfirmed") {
+            return reply(503, { error: "recovery_sessions_unverified" }, clearSessionCookies);
+          }
+          if (publicAccounts && noCodeRecipient.has(error.name)) throw new RequestError(400, "invalid_code");
+          throw error;
+        }
+        return reply(204, undefined, clearSessionCookies);
       }
       case "GET /account": {
         const account = await records.accountDetails(await requireAccount(event));

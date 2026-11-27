@@ -25,7 +25,7 @@
     <form method="post" data-account-form="credentials" hidden>
       <label>Email address <input name="email" type="email" maxlength="254" required autocomplete="username"></label>
       <label data-password-field>Password <input name="password" type="password" required autocomplete="current-password"></label>
-      <p class="account-note" data-password-note hidden>Use at least 15 characters.</p>
+      <p class="account-note" data-password-note hidden>Use 15 to 256 characters without spaces.</p>
       <label data-code-field hidden>Six-digit code <input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6"></label>
       <button class="button button-dark" type="submit" data-account-submit>Continue</button>
       <button class="plain-button" type="button" data-resend hidden>Resend verification code</button>
