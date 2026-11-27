@@ -93,13 +93,19 @@ BEGIN
     RAISE EXCEPTION 'organization rename crossed scope';
   END IF;
   IF (cloud_accounts.rename_organization(first_account, first_org, 'Alpha', ' Alpha Holdings ')->>'id')::uuid
-       IS DISTINCT FROM first_org
-     OR cloud_accounts.rename_organization(first_account, first_org, 'Alpha', 'Alpha Holdings')->>'name'
-       IS DISTINCT FROM 'Alpha Holdings'
-     OR cloud_accounts.rename_organization(first_account, first_org, 'Alpha', 'Stale')->>'error'
-       IS DISTINCT FROM 'organization_changed'
-     OR cloud_accounts.account_details(first_account)->'organizations'->0->>'name' IS DISTINCT FROM 'Alpha Holdings' THEN
-    RAISE EXCEPTION 'organization rename, readback, retry or stale-write protection failed';
+       IS DISTINCT FROM first_org THEN
+    RAISE EXCEPTION 'organization rename changed its ID';
+  END IF;
+  IF cloud_accounts.rename_organization(first_account, first_org, 'Alpha', 'Alpha Holdings')->>'name'
+       IS DISTINCT FROM 'Alpha Holdings' THEN
+    RAISE EXCEPTION 'same-name retry failed';
+  END IF;
+  IF cloud_accounts.rename_organization(first_account, first_org, 'Alpha', 'Stale')->>'error'
+       IS DISTINCT FROM 'organization_changed' THEN
+    RAISE EXCEPTION 'stale organization rename was accepted';
+  END IF;
+  IF cloud_accounts.account_details(first_account)->'organizations'->0->>'name' IS DISTINCT FROM 'Alpha Holdings' THEN
+    RAISE EXCEPTION 'renamed organization was not persisted';
   END IF;
 
   IF cloud_accounts.update_display_name(first_account, ' Alpha Owner ')->>'displayName' IS DISTINCT FROM 'Alpha Owner'
