@@ -1,4 +1,8 @@
-# PAIGE Cloud owner deployment view
+# PAIGE Cloud console
+
+The AWS evaluator account and registry service is described in the [Customer Zero runbook](../infra/aws/customer-zero/README.md). See [architecture and requirements traceability](../docs/02-architecture.md) for current experience and capability boundaries.
+
+## Existing legacy deployment view
 
 [ANT-177](https://linear.app/paigeagentai/issue/ANT-177) tracks the private dashboard. The public F2 preview is a separate Coolify app. The dashboard reads its HTTPS `/healthz` and `/release.json` endpoints and the provider's application and deployment history metadata. It does not promote or rebuild releases. The accepted [F2 release evidence](https://linear.app/paigeagentai/issue/ANT-176) supplies the deployment-to-digest mapping. A new or ambiguous deployment, a changed digest, and a conflicting source manifest all leave the release unconfirmed.
 

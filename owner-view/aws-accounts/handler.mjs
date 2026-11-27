@@ -3,6 +3,9 @@ import { timingSafeEqual } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 
 const prefix = "/api/cloud/auth";
+const registryPath = /^\/api\/cloud\/v1\/organizations\/([a-fA-F0-9-]{36})\/projects(?:\/([a-z0-9][a-z0-9-]{0,47})\/applications)?$/;
+const resourceId = /^[a-z0-9][a-z0-9-]{0,47}$/;
+const repositoryName = /^[a-zA-Z0-9][a-zA-Z0-9-]{0,38}\/[a-zA-Z0-9_.-]{1,100}$/;
 const cookieName = "__Host-paige_cloud_session";
 const cookieAttributes = "Path=/; Secure; HttpOnly; SameSite=Lax";
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
@@ -102,6 +105,11 @@ function sessionToken(event) {
   return value.length <= 3800 && jwt.test(value) ? value : null;
 }
 
+function requireResourceId(value) {
+  if (typeof value !== "string" || !resourceId.test(value)) throw new RequestError(400, "invalid_identifier");
+  return value;
+}
+
 export function createAccountHandler({ origin, evaluatorEmails, identity, records, edgeKey, consoleHtml }) {
   const site = new URL(origin);
   if (site.protocol !== "https:" || site.origin !== origin) throw new Error("An HTTPS site origin is required");
@@ -146,6 +154,34 @@ export function createAccountHandler({ origin, evaluatorEmails, identity, record
     throw new RequestError(503, "account_service_unavailable");
   }
 
+  async function handleRegistry(event, method, organization, project) {
+    if (!uuid.test(organization) || !["GET", "POST"].includes(method)) throw new RequestError(404, "not_found");
+    if (method === "POST" && event.headers?.origin !== origin) throw new RequestError(403, "origin_denied");
+    const actor = await requireAccount(event);
+    let result;
+    if (method === "GET") {
+      result = project ? await records.registryApplications(actor, organization, project)
+        : await records.registryProjects(actor, organization);
+    } else if (project) {
+      const body = readJson(event, ["id", "name", "kind", "sourceRepository", "environment"]);
+      if (!["application", "service"].includes(body.kind)) throw new RequestError(400, "invalid_kind");
+      const repository = body.sourceRepository ?? "";
+      if (typeof repository !== "string" || (repository !== "" && !repositoryName.test(repository))) {
+        throw new RequestError(400, "invalid_repository");
+      }
+      result = await records.registryRegisterApplication(actor, organization, project, {
+        id: requireResourceId(body.id), name: requireName(body.name), kind: body.kind, repository,
+        environment: requireResourceId(body.environment)
+      });
+    } else {
+      const body = readJson(event, ["id", "name"]);
+      result = await records.registryCreateProject(actor, organization, requireResourceId(body.id), requireName(body.name));
+    }
+    if (result === null || result === undefined) throw new RequestError(404, "not_found");
+    if (["registration_conflict", "registry_limit"].includes(result.error)) throw new RequestError(409, result.error);
+    return reply(200, result);
+  }
+
   async function handle(event) {
     const method = event.requestContext?.http?.method;
     const path = event.rawPath;
@@ -166,6 +202,8 @@ export function createAccountHandler({ origin, evaluatorEmails, identity, record
         body: consoleHtml
       };
     }
+    const registry = typeof path === "string" && path.match(registryPath);
+    if (registry) return handleRegistry(event, method, registry[1], registry[2]);
     const route = typeof path === "string" && path.startsWith(prefix + "/") ? path.slice(prefix.length) : "";
     if (!route) throw new RequestError(404, "not_found");
     if (method !== "GET" && event.headers?.origin !== origin) throw new RequestError(403, "origin_denied");

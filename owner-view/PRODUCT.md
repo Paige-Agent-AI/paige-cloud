@@ -8,16 +8,16 @@ web
 
 ## Users
 
-The owner of PAIGE Cloud opens the deployment view to check what PAIGE Agent AI's production domains and the public preview are serving and to find the last verified preview rollback image.
+PAIGE Cloud operators and authorized evaluators work within an organization and its projects. The private AWS evaluator is the current account and registry development surface. The existing owner console serves the qualified legacy deployment and project workflows.
 
 ## Product Purpose
 
-Show production health and source from live domain readback. Keep preview health, verified release provenance and deployment history in the same workspace using Coolify and the accepted F2 evidence.
+Give operators an attention-first view of scoped decisions, working applications and verified changes. Preserve live domain readback, immutable release provenance and clear recovery evidence as application operations expand.
 
 ## Capabilities and Constraints
 
-PAIGE Cloud has its own email-and-password accounts. New accounts need an explicit project grant before they can see deployments. Deployment data is read-only. Show when data is stale, missing, or inconsistent. The production check reads fixed public endpoints. The Coolify credential stays scoped to the governed preview, which serves Release B independently of the owner view.
+The AWS evaluator has Cognito sign-in and Aurora-backed organizations. Registry records represent intended scope. Operators need specific authority and verified provider evidence to deploy or recover. Keep the legacy PAIGE Agent AI health reader and Coolify credentials confined to their existing deployment scope. Release B remains independent of the owner view.
 
 ## Evidence on Hand
 
-[ANT-177](https://linear.app/paigeagentai/issue/ANT-177) records the approved prototype and review. [ANT-176](https://linear.app/paigeagentai/issue/ANT-176) records the actual A → B → A → B release evidence.
+[Architecture and requirements traceability](../docs/02-architecture.md) distinguishes the AWS evaluator, legacy console, and Mission Control design studies. [ANT-177](https://linear.app/paigeagentai/issue/ANT-177) records the historical owner view. [ANT-176](https://linear.app/paigeagentai/issue/ANT-176) records private AWS acceptance and legacy release evidence.

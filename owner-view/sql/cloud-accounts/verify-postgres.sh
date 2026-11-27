@@ -23,7 +23,9 @@ verify_db() {
 
 verify_db -c 'CREATE ROLE paige_cloud_account_runtime NOLOGIN'
 verify_db < "$dir/001-accounts.sql"
+verify_db < "$dir/002-registry.sql"
 verify_db < "$dir/account-records.test.sql"
+verify_db < "$dir/registry.test.sql"
 
 verify_db -c "SET ROLE paige_cloud_account_runtime;
   SELECT cloud_accounts.record_verified_identity('test-issuer', 'concurrent', 'parallel@example.test');"
@@ -83,3 +85,44 @@ organization="$(head -n 1 "$first")"
 test "$organization" = "$(cat "$second")"
 test 1 = "$(verify_db -Atq -c "SELECT count(*) FROM cloud_accounts.memberships WHERE organization_id = '$organization'")"
 printf 'Confirmed one persisted organization and one membership after two concurrent requests.\n'
+
+verify_db -q -c "
+  SELECT cloud_accounts.registry_create_project(
+    cloud_accounts.find_verified_identity('test-issuer', 'concurrent'), '$organization', 'capacity', 'Capacity');
+  INSERT INTO cloud_accounts.registry_applications
+  SELECT '$organization', 'capacity', 'seed-' || n, 'Seed ' || n, 'application', NULL FROM generate_series(1,99) n;"
+
+register_at_capacity() {
+  docker exec -i -e PGAPPNAME="$1" "$container" psql -XAtq -U postgres -v ON_ERROR_STOP=1 <<SQL
+SET statement_timeout = '12s';
+SET ROLE paige_cloud_account_runtime;
+BEGIN;
+SELECT coalesce(result->>'error', result->>'id') FROM cloud_accounts.registry_register_application(
+  cloud_accounts.find_verified_identity('test-issuer', 'concurrent'), '$organization',
+  'capacity', '$2', '$2', 'application', NULL, 'development') result;
+SELECT pg_sleep($3);
+COMMIT;
+SQL
+}
+register_at_capacity registry_capacity_first last-slot 3 >"$first" &
+first_pid=$!
+first_holds_row=false
+for _ in {1..20}; do
+  if [[ "$(verify_db -Atq -c "SELECT EXISTS (
+    SELECT 1 FROM pg_stat_activity WHERE application_name = 'registry_capacity_first' AND wait_event = 'PgSleep'
+  )")" = t ]]; then
+    first_holds_row=true
+    break
+  fi
+  sleep 0.1
+done
+test "$first_holds_row" = true
+register_at_capacity registry_capacity_second over-capacity 0 >"$second" &
+second_pid=$!
+wait "$first_pid"
+wait "$second_pid"
+test last-slot = "$(head -n 1 "$first")"
+test registry_limit = "$(head -n 1 "$second")"
+test 100 = "$(verify_db -Atq -c "SELECT count(*) FROM cloud_accounts.registry_applications
+  WHERE organization_id = '$organization' AND project_id = 'capacity'")"
+printf 'Confirmed that two concurrent registrations cannot exceed the application limit.\n'
