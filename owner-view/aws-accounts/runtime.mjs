@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
   CognitoIdentityProviderClient,
   ConfirmForgotPasswordCommand,
@@ -149,12 +150,15 @@ function createAccountRecords({ resourceArn, secretArn, database }) {
 }
 
 const {
-  CLOUD_SITE_ORIGIN, CLOUD_EVALUATORS, COGNITO_USER_POOL_ID, COGNITO_CLIENT_ID,
+  CLOUD_SITE_ORIGIN, CLOUD_EVALUATORS, CLOUD_EDGE_KEY, COGNITO_USER_POOL_ID, COGNITO_CLIENT_ID,
   CLOUD_DB_CLUSTER_ARN, CLOUD_DB_RUNTIME_SECRET_ARN, CLOUD_DB_NAME
 } = process.env;
+if (!CLOUD_EDGE_KEY) throw new Error("The Cloud edge key is required");
 
 export const handler = createAccountHandler({
   origin: CLOUD_SITE_ORIGIN,
+  edgeKey: CLOUD_EDGE_KEY,
+  consoleHtml: readFileSync(new URL("./mission-control.html", import.meta.url), "utf8"),
   evaluatorEmails: (CLOUD_EVALUATORS ?? "").split(",").filter(Boolean),
   identity: createCognitoIdentity({
     userPoolId: COGNITO_USER_POOL_ID, clientId: COGNITO_CLIENT_ID

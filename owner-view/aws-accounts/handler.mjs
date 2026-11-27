@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { timingSafeEqual } from "node:crypto";
 
 const prefix = "/api/cloud/auth";
 const cookieName = "__Host-paige_cloud_session";
@@ -31,7 +32,7 @@ function reply(statusCode, body, cookies) {
   return {
     statusCode,
     headers: {
-      "content-type": "application/json; charset=utf-8",
+      ...(body !== undefined && { "content-type": "application/json; charset=utf-8" }),
       "cache-control": "no-store",
       "x-content-type-options": "nosniff"
     },
@@ -100,11 +101,13 @@ function sessionToken(event) {
   return value.length <= 3800 && jwt.test(value) ? value : null;
 }
 
-export function createAccountHandler({ origin, evaluatorEmails, identity, records }) {
+export function createAccountHandler({ origin, evaluatorEmails, identity, records, edgeKey, consoleHtml }) {
   const site = new URL(origin);
   if (site.protocol !== "https:" || site.origin !== origin) throw new Error("An HTTPS site origin is required");
   const eligible = new Set(evaluatorEmails.map(requireEmail));
   if (!eligible.size) throw new Error("An evaluator allowlist is required");
+  if (typeof edgeKey !== "string" || Buffer.byteLength(edgeKey) < 32) throw new Error("A private edge key is required");
+  const expectedKey = Buffer.from(edgeKey);
 
   async function requireIdentity(token) {
     if (!token) throw new RequestError(401, "sign_in_required");
@@ -125,6 +128,23 @@ export function createAccountHandler({ origin, evaluatorEmails, identity, record
   async function handle(event) {
     const method = event.requestContext?.http?.method;
     const path = event.rawPath;
+    const provided = Buffer.from(event.headers?.["x-paige-cloud-edge"] ?? "");
+    if (provided.length !== expectedKey.length || !timingSafeEqual(provided, expectedKey)) {
+      throw new RequestError(403, "edge_required");
+    }
+    if (method === "GET" && path === "/mission-control" && consoleHtml) {
+      try {
+        await requireAccount(event);
+      } catch (error) {
+        if (!(error instanceof RequestError) || error.status !== 401) throw error;
+        return { statusCode: 303, headers: { location: "/sign-in", "cache-control": "no-store" }, body: "" };
+      }
+      return {
+        statusCode: 200,
+        headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+        body: consoleHtml
+      };
+    }
     const route = typeof path === "string" && path.startsWith(prefix + "/") ? path.slice(prefix.length) : "";
     if (!route) throw new RequestError(404, "not_found");
     if (method !== "GET" && event.headers?.origin !== origin) throw new RequestError(403, "origin_denied");

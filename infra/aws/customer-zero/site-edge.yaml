@@ -5,6 +5,12 @@ Parameters:
   AccountsApiHostname:
     Type: String
     AllowedPattern: '[a-z0-9]+\.execute-api\.us-east-2\.amazonaws\.com'
+  EdgeSecretArn:
+    Type: String
+    AllowedPattern: 'arn:[a-z0-9-]+:secretsmanager:us-east-2:[0-9]{12}:secret:[a-zA-Z0-9/_+=.@-]+'
+  EvaluatorIp:
+    Type: String
+    AllowedPattern: '[0-9a-fA-F:.]{3,45}'
 
 Resources:
   Website:
@@ -35,6 +41,25 @@ Resources:
         OriginAccessControlOriginType: s3
         SigningBehavior: always
         SigningProtocol: sigv4
+
+  EvaluatorAccess:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub '${AWS::StackName}-access'
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Restrict prelaunch site and account routes to the evaluator connection
+        Runtime: cloudfront-js-2.0
+      FunctionCode: !Sub |
+        function handler(event) {
+          if (event.viewer.ip !== '${EvaluatorIp}') {
+            return { statusCode: 403, statusDescription: 'Forbidden' };
+          }
+          var request = event.request;
+          var pages = ['/sign-in', '/signup', '/verify-email', '/recover', '/reset-password', '/account'];
+          if (pages.indexOf(request.uri) !== -1) request.uri = '/account-entry.html';
+          return request;
+        }
 
   NoCache:
     Type: AWS::CloudFront::CachePolicy
@@ -68,6 +93,27 @@ Resources:
         QueryStringsConfig:
           QueryStringBehavior: none
 
+  BrowserSecurity:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub '${AWS::StackName}-security'
+        SecurityHeadersConfig:
+          ContentTypeOptions:
+            Override: true
+          FrameOptions:
+            FrameOption: DENY
+            Override: true
+          ReferrerPolicy:
+            ReferrerPolicy: no-referrer
+            Override: true
+          StrictTransportSecurity:
+            AccessControlMaxAgeSec: 31536000
+            Override: true
+          ContentSecurityPolicy:
+            ContentSecurityPolicy: "default-src 'self'; img-src 'self' data:; style-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; object-src 'none'"
+            Override: true
+
   WebsitePolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
@@ -99,6 +145,9 @@ Resources:
               OriginAccessIdentity: ''
           - Id: accounts
             DomainName: !Ref AccountsApiHostname
+            OriginCustomHeaders:
+              - HeaderName: x-paige-cloud-edge
+                HeaderValue: !Sub '{{resolve:secretsmanager:${EdgeSecretArn}:SecretString}}'
             CustomOriginConfig:
               OriginProtocolPolicy: https-only
               OriginSSLProtocols: [TLSv1.2]
@@ -106,6 +155,10 @@ Resources:
           TargetOriginId: website
           ViewerProtocolPolicy: redirect-to-https
           CachePolicyId: !Ref NoCache
+          ResponseHeadersPolicyId: !Ref BrowserSecurity
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt EvaluatorAccess.FunctionARN
           Compress: true
         CacheBehaviors:
           - PathPattern: /api/cloud/auth/*
@@ -115,6 +168,19 @@ Resources:
             CachedMethods: [GET, HEAD]
             CachePolicyId: !Ref NoCache
             OriginRequestPolicyId: !Ref AccountsRequestPolicy
+            ResponseHeadersPolicyId: !Ref BrowserSecurity
+            FunctionAssociations:
+              - EventType: viewer-request
+                FunctionARN: !GetAtt EvaluatorAccess.FunctionARN
+          - PathPattern: /mission-control
+            TargetOriginId: accounts
+            ViewerProtocolPolicy: https-only
+            CachePolicyId: !Ref NoCache
+            OriginRequestPolicyId: !Ref AccountsRequestPolicy
+            ResponseHeadersPolicyId: !Ref BrowserSecurity
+            FunctionAssociations:
+              - EventType: viewer-request
+                FunctionARN: !GetAtt EvaluatorAccess.FunctionARN
         CustomErrorResponses:
           - ErrorCode: 403
             ErrorCachingMinTTL: 0

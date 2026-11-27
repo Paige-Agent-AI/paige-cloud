@@ -9,12 +9,13 @@ const ids = ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-00
 const cookie = token => "__Host-paige_cloud_session=" + token;
 const authError = name => Object.assign(new Error("private provider diagnostic"), { name });
 const password = "synthetic passphrase for tests";
+const defaultEdgeKey = "test-only-default-edge-key-with-thirty-two-characters";
 
 function event(method, route, { token, body, from = origin } = {}) {
   return {
     rawPath: "/api/cloud/auth" + route,
     requestContext: { http: { method } },
-    headers: { origin: from, "content-type": "application/json" },
+    headers: { origin: from, "content-type": "application/json", "x-paige-cloud-edge": defaultEdgeKey },
     cookies: token ? [cookie(token)] : [],
     body: body === undefined ? undefined : JSON.stringify(body)
   };
@@ -78,14 +79,14 @@ function fixture(overrides = {}) {
     async organizationDetails(actor, id) { return store.get(actor).organizations.find(org => org.id === id); },
     ...overrides.records
   };
-  const handle = createAccountHandler({ origin, evaluatorEmails: allowedEmails, identity, records });
+  const handle = createAccountHandler({ origin, evaluatorEmails: allowedEmails, identity, records, edgeKey: defaultEdgeKey, ...overrides.config });
   const request = (method, route, options) => handle(event(method, route, options));
   async function register(email) {
     assert.equal((await request("POST", "/sign-up", { body: { email, password } })).statusCode, 202);
     assert.equal((await request("POST", "/verify-email", { body: { email, code: "123456" } })).statusCode, 204);
     return request("POST", "/sign-in", { body: { email, password } });
   }
-  return { request, register, calls, recordLookups };
+  return { handle, request, register, calls, recordLookups };
 }
 
 test("evaluator registration requires confirmation and keeps provider tokens out of the response body", async () => {
@@ -101,6 +102,7 @@ test("evaluator registration requires confirmation and keeps provider tokens out
   const response = await register(allowedEmails[0]);
   assert.equal(response.statusCode, 204);
   assert.equal(response.body, "");
+  assert.equal(response.headers["content-type"], undefined);
   assert.equal(response.headers["cache-control"], "no-store");
   assert.deepEqual(response.cookies, [
     cookie(tokens[0]) + "; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=900"
@@ -156,6 +158,7 @@ test("account recovery suppresses unlisted addresses and validates reset confirm
   const admitted = await request("POST", "/recover", { body: { email: allowedEmails[0] } });
   const omitted = await request("POST", "/recover", { body: { email: "other@example.test" } });
   assert.deepEqual(admitted, omitted);
+  assert.equal(admitted.headers["content-type"], undefined);
   assert.deepEqual(calls, [["startRecovery", allowedEmails[0]]]);
   const expired = await request("POST", "/reset-password", {
     body: { email: allowedEmails[0], code: "111111", password }
@@ -166,6 +169,39 @@ test("account recovery suppresses unlisted addresses and validates reset confirm
     body: { email: allowedEmails[0], code: "654321", password }
   });
   assert.equal(success.statusCode, 204);
+});
+
+test("the private edge and session gate protect the console before returning its document", async () => {
+  const edgeKey = "test-only-secret-with-thirty-two-characters";
+  const consoleHtml = "<main>Workspace</main>";
+  const { handle } = fixture({ config: { edgeKey, consoleHtml } });
+  const page = event("GET", "/account");
+  page.rawPath = "/mission-control";
+  delete page.headers["x-paige-cloud-edge"];
+  assert.equal((await handle(page)).statusCode, 403);
+  page.headers["x-paige-cloud-edge"] = edgeKey.toUpperCase();
+  assert.equal((await handle(page)).statusCode, 403);
+
+  async function request(method, route, options) {
+    const candidate = event(method, route, options);
+    candidate.headers["x-paige-cloud-edge"] = edgeKey;
+    return handle(candidate);
+  }
+  page.headers["x-paige-cloud-edge"] = edgeKey;
+  const signedOut = await handle(page);
+  assert.equal(signedOut.statusCode, 303);
+  assert.equal(signedOut.headers.location, "/sign-in");
+  const email = allowedEmails[0];
+  await request("POST", "/sign-up", { body: { email, password } });
+  await request("POST", "/verify-email", { body: { email, code: "123456" } });
+  await request("POST", "/sign-in", { body: { email, password } });
+  page.cookies = [cookie(tokens[0])];
+  const signedIn = await handle(page);
+  assert.equal(signedIn.statusCode, 200);
+  assert.equal(signedIn.body, consoleHtml);
+  assert.equal(signedIn.headers["cache-control"], "no-store");
+  await request("POST", "/sign-out", { token: tokens[0] });
+  assert.equal((await handle(page)).statusCode, 303);
 });
 
 test("upstream failures neither disclose diagnostics nor issue a cookie or report revocation", async () => {
