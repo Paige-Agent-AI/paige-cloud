@@ -87,7 +87,10 @@ async function run(button, operation, isCurrent = () => true) {
     if (isCurrent() && status.textContent === "Working…") status.textContent = "";
   } catch (error) {
     if (isCurrent()) {
-      if (error.status === 401 && (workspace || (profile && !profile.hidden))) location.replace("/sign-in");
+      if (error.status === 401 && (workspace || (profile && !profile.hidden))) {
+        clearWorkspace();
+        location.replace("/sign-in");
+      }
       else {
         if (failure !== status) status.textContent = "";
         showError(error);
@@ -214,6 +217,11 @@ function clearWorkspace() {
   workspaceClosed = true;
   projectRevision++;
   projectList?.replaceChildren();
+  const scope = find("[data-mission-scope]");
+  if (scope) {
+    scope.hidden = true;
+    scope.textContent = "";
+  }
   const projectLink = find("[data-project-link]");
   if (projectLink) projectLink.hidden = true;
   find("[data-account-content]").hidden = true;
@@ -351,6 +359,9 @@ function workloadInspection(app, applicationsPath, revision) {
       const status = document.createElement("strong");
       status.textContent = result.state === "healthy" ? "Healthy" : "Needs attention";
       observation.replaceChildren(status, ` · Version ${result.release.version} · ${result.release.commit.slice(0, 8)} · `, time);
+      if (result.consumedConfiguration) {
+        observation.append(` · Observed configuration revision ${result.consumedConfiguration.revision}`);
+      }
       if (result.incident?.reason === "backend_access_denied") {
         const plan = result.incident.plan;
         incident.textContent = plan?.operation === "restore_verified_alias" && plan.status === "review_required"
@@ -382,6 +393,41 @@ function workloadInspection(app, applicationsPath, revision) {
   return container;
 }
 
+function environmentConfiguration(app, environment, applicationsPath, revision) {
+  const details = document.createElement("details");
+  const title = document.createElement("summary");
+  const evidence = document.createElement("p");
+  const path = `${applicationsPath}/${encodeURIComponent(app.id)}/environments/${encodeURIComponent(environment)}/configuration`;
+  title.textContent = `Configuration · ${environment}`;
+  evidence.setAttribute("role", "status");
+  details.append(title, evidence);
+  let requestNumber = 0;
+  details.addEventListener("toggle", async () => {
+    const read = ++requestNumber;
+    if (!details.open) return;
+    const current = () => read === requestNumber && revision === projectRevision && details.isConnected;
+    evidence.textContent = "Reading saved configuration…";
+    try {
+      const saved = await requestJson(`/api/cloud/v1${path}`);
+      if (!current()) return;
+      evidence.textContent = saved.configuration
+        ? `Saved revision ${saved.revision} · Log level ${saved.configuration.logLevel} · Request timeout ${saved.configuration.requestTimeoutMs} ms.`
+        : "No configuration has been saved for this environment.";
+    } catch (error) {
+      if (!current()) return;
+      if (error.status === 401) {
+        clearWorkspace();
+        location.replace("/sign-in");
+        return;
+      }
+      evidence.textContent = error.status === 404 || error.status === 403
+        ? "Configuration is unavailable in your current scope."
+        : "Could not read configuration. Reopen this environment to retry.";
+    }
+  });
+  return details;
+}
+
 function renderProject(project, registryPath, revision) {
   const row = document.createElement("li");
   const details = document.createElement("details");
@@ -404,6 +450,10 @@ function renderProject(project, registryPath, revision) {
     label.textContent = app.name;
     targets.textContent = `${app.id} · Environments: ${app.environments.join(", ")}`;
     item.append(label, targets);
+    const configuration = document.createElement("div");
+    configuration.className = "environment-settings";
+    configuration.append(...app.environments.map(environment => environmentConfiguration(app, environment, applicationsPath, revision)));
+    item.append(configuration);
     if (app.inspectionEnvironment) item.append(workloadInspection(app, applicationsPath, revision));
     const template = find("#environment-editor");
     if (template && project.role === "owner") {
@@ -470,6 +520,28 @@ function renderProject(project, registryPath, revision) {
   return row;
 }
 
+function showMissionScope(organization, message, action = "") {
+  const overview = find("[data-mission-overview]");
+  const scope = find("[data-mission-scope]");
+  const attention = find("[data-mission-attention]");
+  if (!scope || !attention) return;
+  scope.hidden = !organization;
+  scope.textContent = organization?.name ?? "";
+  attention.textContent = message;
+  const link = find("[data-mission-action]");
+  link.hidden = !action;
+  if (action) {
+    link.href = organization ? "#projects" : "#organization";
+    link.textContent = action;
+  }
+  const projectLink = find("[data-mission-projects]");
+  projectLink.hidden = true;
+  find("[data-mission-coverage]").textContent = organization
+    ? "Select a project to view its registered environments and available workload checks."
+    : "An organization is required to register projects and environments.";
+  if (overview) overview.hidden = false;
+}
+
 async function loadProjects(openProject, announcement = "") {
   const revision = ++projectRevision;
   const organization = organizationControl.value;
@@ -485,6 +557,8 @@ async function loadProjects(openProject, announcement = "") {
   projectRetry.hidden = true;
   find("#projects").hidden = !organization;
   find("[data-project-link]").hidden = !organization;
+  showMissionScope(selected, selected ? "Checking projects in this organization…" : "Create an organization to get started.",
+    selected ? "" : "Set up organization");
   if (!organization) return;
   const path = `/organizations/${encodeURIComponent(organization)}/projects`;
   projectStatus.textContent = "Loading projects…";
@@ -494,6 +568,15 @@ async function loadProjects(openProject, announcement = "") {
     const rows = projects.map(project => renderProject(project, path, revision));
     projectList.replaceChildren(...rows);
     projectStatus.textContent = announcement || (projects.length ? "" : "No projects are available in this organization.");
+    showMissionScope(selected, projects.length
+      ? "Project registry is available. Review individual environments for workload health."
+      : "There are no projects available in this organization.",
+    projects.length ? "" : "Open projects");
+    const healthCoverage = find("[data-mission-coverage]");
+    if (healthCoverage && projects.length) {
+      healthCoverage.textContent = `${projects.length} ${projects.length === 1 ? "project" : "projects"} accessible in this organization. Environment and health evidence is scoped to each application.`;
+      find("[data-mission-projects]").hidden = false;
+    }
     if (projectEditor && selected?.role === "owner") {
       projectEditor.querySelector("[data-project-scope]").textContent = `Organization: ${selected.name}`;
       projectEditor.hidden = false;
@@ -505,11 +588,18 @@ async function loadProjects(openProject, announcement = "") {
     }
   } catch (error) {
     if (revision !== projectRevision) return;
-    if (error.status === 401) location.replace("/sign-in");
-    else {
+    if (error.status === 401) {
+      clearWorkspace();
+      location.replace("/sign-in");
+    } else {
       projectStatus.textContent = error.status === 404 ? "This organization is no longer available to you."
         : `${announcement ? announcement + " " : ""}Projects are temporarily unavailable.`;
       projectRetry.hidden = error.status === 404;
+      showMissionScope(selected, error.status === 404
+        ? "This organization is no longer available to you."
+        : "The project registry could not be reached. Retry from Projects.", error.status === 404 ? "" : "Open projects");
+      const coverage = find("[data-mission-coverage]");
+      if (coverage) coverage.textContent = "Environment coverage is unavailable for this organization.";
     }
   }
 }
