@@ -26,8 +26,10 @@ verify_db < "$dir/001-accounts.sql"
 verify_db < "$dir/002-registry.sql"
 verify_db < "$dir/003-workload-observation.sql"
 verify_db < "$dir/004-organization-name.sql"
+verify_db < "$dir/005-workload-configuration.sql"
 verify_db < "$dir/account-records.test.sql"
 verify_db < "$dir/registry.test.sql"
+verify_db < "$dir/workload-configuration.test.sql"
 
 verify_db -c "SET ROLE paige_cloud_account_runtime;
   SELECT cloud_accounts.record_verified_identity('test-issuer', 'concurrent', 'parallel@example.test');"
@@ -128,3 +130,38 @@ test registry_limit = "$(head -n 1 "$second")"
 test 100 = "$(verify_db -Atq -c "SELECT count(*) FROM cloud_accounts.registry_applications
   WHERE organization_id = '$organization' AND project_id = 'capacity'")"
 printf 'Confirmed that two concurrent registrations cannot exceed the application limit.\n'
+
+save_first_configuration() {
+  docker exec -i -e PGAPPNAME="$1" "$container" psql -XAtq -U postgres -v ON_ERROR_STOP=1 <<SQL
+SET statement_timeout = '12s';
+SET ROLE paige_cloud_account_runtime;
+BEGIN;
+SELECT coalesce(result->>'error', result->>'revision') FROM cloud_accounts.save_workload_configuration(
+  cloud_accounts.find_verified_identity('test-issuer', 'concurrent'), '$organization',
+  'capacity', 'last-slot', 'development', 0, 'info', $2) result;
+SELECT pg_sleep($3);
+COMMIT;
+SQL
+}
+save_first_configuration config_first 1000 3 >"$first" &
+first_pid=$!
+first_holds_row=false
+for _ in {1..20}; do
+  if [[ "$(verify_db -Atq -c "SELECT EXISTS (
+    SELECT 1 FROM pg_stat_activity WHERE application_name = 'config_first' AND wait_event = 'PgSleep'
+  )")" = t ]]; then
+    first_holds_row=true
+    break
+  fi
+  sleep 0.1
+done
+test "$first_holds_row" = true
+save_first_configuration config_second 1500 0 >"$second" &
+second_pid=$!
+wait "$first_pid"
+wait "$second_pid"
+test 1 = "$(head -n 1 "$first")"
+test configuration_changed = "$(head -n 1 "$second")"
+test 1 = "$(verify_db -Atq -c "SELECT count(*) FROM cloud_accounts.workload_configuration_revisions
+  WHERE organization_id = '$organization' AND project_id = 'capacity' AND application_id = 'last-slot'")"
+printf 'Confirmed that concurrent configuration writers cannot overwrite or duplicate the first revision.\n'

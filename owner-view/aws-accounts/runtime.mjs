@@ -177,6 +177,19 @@ function createAccountRecords({ resourceArn, secretArn, database }) {
         CAST(:organization AS uuid), :project, :application, :environment)`,
         { actor, organization, project, application, environment });
     },
+    readWorkloadConfiguration(actor, { organization, project, application, environment }, revision) {
+      return call(`SELECT CAST(cloud_accounts.read_workload_configuration(CAST(:actor AS uuid),
+        CAST(:organization AS uuid), :project, :application, :environment, CAST(NULLIF(:revision, '') AS integer)) AS text)`,
+        { actor, organization, project, application, environment, revision: revision ?? "" }, JSON.parse);
+    },
+    saveWorkloadConfiguration(actor, { organization, project, application, environment }, configuration) {
+      return call(`SELECT CAST(cloud_accounts.save_workload_configuration(CAST(:actor AS uuid),
+        CAST(:organization AS uuid), :project, :application, :environment,
+        CAST(:revision AS integer), :level, CAST(:timeout AS integer)) AS text)`, {
+        actor, organization, project, application, environment, revision: String(configuration.expectedRevision),
+        level: configuration.logLevel, timeout: String(configuration.requestTimeoutMs)
+      }, JSON.parse);
+    },
     registryRegisterApplication(actor, organization, project, { id, name, kind, repository, environment }) {
       return call(`SELECT CAST(cloud_accounts.registry_register_application(CAST(:actor AS uuid), CAST(:organization AS uuid),
         :project, :id, :name, :kind, NULLIF(:repository, ''), :environment) AS text)`,
