@@ -89,7 +89,7 @@ Resources:
           var result = response(status, description, 'text/html', request.method,
             '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
             '<meta name="viewport" content="width=device-width, initial-scale=1">' +
-            '<title>' + heading + ' · PAIGE Cloud</title><link rel="icon" href="/favicon.svg">' +
+            '<title>' + heading + ' &middot; PAIGE Cloud</title><link rel="icon" href="/favicon.svg">' +
             '<link rel="stylesheet" href="/site.css"><link rel="stylesheet" href="/account.css"></head>' +
             '<body class="account-surface"><header class="account-header">' +
             '<a class="brand" href="/" aria-label="PAIGE Cloud home"><img src="/cloud-bracket.svg" alt="">' +
