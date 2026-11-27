@@ -463,7 +463,8 @@ function environmentConfiguration(app, environment, applicationsPath, projectGen
   if (editor) details.append(editor);
 
   const scopeCurrent = () => projectGeneration === projectRevision && details.isConnected;
-  const isCurrent = request => scopeCurrent() && request === generation && details.open;
+  const scopeRequestCurrent = request => scopeCurrent() && request === generation;
+  const isCurrent = request => scopeRequestCurrent(request) && details.open;
   function renderRuntime() {
     const consumed = observed?.consumedConfiguration;
     if (!consumed) {
@@ -521,25 +522,26 @@ function environmentConfiguration(app, environment, applicationsPath, projectGen
   }
 
   details.addEventListener("toggle", async () => {
-    const request = ++generation;
     saved = null;
     if (editor) {
       editor.hidden = true;
       errorMessage.hidden = true;
     }
     if (!details.open) return;
+    const request = ++generation;
     evidence.textContent = "Reading saved configuration…";
     renderRuntime();
     try {
       const result = await requestJson(path, "GET");
       if (isCurrent(request)) showSaved(result);
     } catch (error) {
-      if (!isCurrent(request) || signInAgain(error)) return;
-      if (error.status === 404 || error.status === 403) {
-        evidence.textContent = "Configuration is unavailable in your current scope.";
-        denyScope();
-      } else {
-        evidence.textContent = "Could not read configuration. Reopen this environment to retry.";
+      if (!scopeRequestCurrent(request) || signInAgain(error)) return;
+      const denied = error.status === 404 || error.status === 403;
+      if (denied) denyScope();
+      if (details.open) {
+        evidence.textContent = denied
+          ? "Configuration is unavailable in your current scope."
+          : "Could not read configuration. Reopen this environment to retry.";
       }
     }
   });
@@ -561,15 +563,17 @@ function environmentConfiguration(app, environment, applicationsPath, projectGen
       const result = await requestJson(path, "PUT", values);
       if (isCurrent(request)) showSaved(result);
     } catch (error) {
-      if (!isCurrent(request) || signInAgain(error)) return;
-      if (error.status === 403 || error.status === 404 || error.code === "configuration_changed") {
+      if (!scopeRequestCurrent(request) || signInAgain(error)) return;
+      const denied = error.status === 403 || error.status === 404;
+      if (denied) denyScope();
+      if (!details.open) return;
+      if (denied || error.code === "configuration_changed") {
         editor.hidden = true;
         saved = null;
         if (error.code === "configuration_changed") {
           renderRuntime();
           evidence.textContent = "The saved revision changed. Reopen the environment to review it before saving again.";
         } else {
-          denyScope();
           evidence.textContent = "Configuration is unavailable in your current scope.";
         }
         title.focus();
