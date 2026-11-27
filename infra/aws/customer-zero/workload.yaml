@@ -28,7 +28,7 @@ Parameters:
     AllowedPattern: '[A-Za-z0-9+/]{43}='
   DataVersion:
     Type: String
-    AllowedPattern: '(?!null$)[A-Za-z0-9._~+/-]{1,1024}'
+    AllowedPattern: '(?!null$)[A-Za-z0-9._~+/-]{1,226}'
   RollbackVersion:
     Type: String
     Default: ''
