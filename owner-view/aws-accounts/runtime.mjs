@@ -49,11 +49,11 @@ function createCognitoIdentity({ userPoolId, clientId }) {
   }
 
   return {
-    async signUp(email, password) {
+    async signUp(email) {
       return emailCognito.send(new SignUpCommand({
         ClientId: clientId, SecretHash: await secretHash(email), Username: email,
         // Public callers cannot choose or know a password before ownership of the email is established.
-        Password: password ?? randomBytes(32).toString("base64url"),
+        Password: randomBytes(32).toString("base64url"),
         UserAttributes: [{ Name: "email", Value: email }]
       }));
     },
@@ -61,7 +61,6 @@ function createCognitoIdentity({ userPoolId, clientId }) {
       await cognito.send(new ConfirmSignUpCommand({
         ClientId: clientId, SecretHash: await secretHash(email), Username: email, ConfirmationCode: code
       }));
-      if (password === undefined) return;
       try {
         await cognito.send(new AdminSetUserPasswordCommand({
           UserPoolId: userPoolId, Username: email, Password: password, Permanent: true

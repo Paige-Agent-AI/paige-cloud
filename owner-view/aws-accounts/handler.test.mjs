@@ -85,7 +85,7 @@ function fixture(overrides = {}) {
   const request = (method, route, options) => handle(event(method, route, options));
   async function register(email) {
     assert.equal((await request("POST", "/sign-up", { body: { email, password } })).statusCode, 202);
-    assert.equal((await request("POST", "/verify-email", { body: { email, code: "123456" } })).statusCode, 204);
+    assert.equal((await request("POST", "/verify-email", { body: { email, code: "123456", password } })).statusCode, 204);
     return request("POST", "/sign-in", { body: { email, password } });
   }
   return { handle, request, register, calls, recordLookups };
@@ -183,6 +183,22 @@ test("the evaluator-mode account package also reserves email before provider con
   assert.equal((await request("POST", "/resend-code", { body: { email } })).statusCode, 429);
   assert.equal((await request("POST", "/recover", { body: { email } })).statusCode, 429);
   assert.equal(calls.length, 0);
+});
+
+test("evaluator mode uses the same email-first password boundary during the network transition", async () => {
+  const sent = [];
+  const verified = [];
+  const email = allowedEmails[0];
+  const { request } = fixture({ identity: {
+    async signUp(...args) { sent.push(args); },
+    async confirmSignUp(...args) { verified.push(args); }
+  } });
+  assert.equal((await request("POST", "/sign-up", { body: { email, password } })).statusCode, 202);
+  assert.deepEqual(sent, [[email]]);
+  assert.equal((await request("POST", "/verify-email", { body: { email, code: "123456" } })).statusCode, 400);
+  assert.equal(verified.length, 0);
+  assert.equal((await request("POST", "/verify-email", { body: { email, code: "123456", password } })).statusCode, 204);
+  assert.deepEqual(verified, [[email, "123456", password]]);
 });
 
 test("pausing enrollment keeps verification and recovery available to existing accounts", async () => {
@@ -287,7 +303,7 @@ test("evaluator registration requires confirmation and keeps provider tokens out
   assert.deepEqual(response.cookies, [
     cookie(tokens[0]) + "; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=900"
   ]);
-  const replay = await request("POST", "/verify-email", { body: { email: allowedEmails[0], code: "123456" } });
+  const replay = await request("POST", "/verify-email", { body: { email: allowedEmails[0], code: "123456", password } });
   assert.equal(replay.statusCode, 400);
 });
 
@@ -430,7 +446,7 @@ test("the private edge and session gate protect the console before returning its
   assert.equal(signedOut.headers.location, "/sign-in");
   const email = allowedEmails[0];
   await request("POST", "/sign-up", { body: { email, password } });
-  await request("POST", "/verify-email", { body: { email, code: "123456" } });
+  await request("POST", "/verify-email", { body: { email, code: "123456", password } });
   await request("POST", "/sign-in", { body: { email, password } });
   page.cookies = [cookie(tokens[0])];
   const signedIn = await handle(page);

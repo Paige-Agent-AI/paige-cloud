@@ -281,11 +281,10 @@ export function createAccountHandler({ origin, evaluatorEmails, identity, record
       case "POST /sign-up": {
         const body = readJson(event, ["email", "password"]);
         const email = requireEmail(body.email);
-        const password = publicAccounts || body.password === undefined ? undefined : requirePassword(body.password, true);
         if (enrollmentMode !== "public" && !eligible.has(email)) throw new RequestError(403, "registration_unavailable");
         await reserveEmail(event, "enrollment", email);
         try {
-          await identity.signUp(email, password);
+          await identity.signUp(email);
         } catch (error) {
           if (!publicAccounts || error.name !== "UsernameExistsException") throw error;
         }
@@ -296,7 +295,7 @@ export function createAccountHandler({ origin, evaluatorEmails, identity, record
         const email = requireEmail(body.email);
         if (!allowsAccount(email)) throw new RequestError(403, "registration_unavailable");
         const code = requireCode(body.code);
-        const password = publicAccounts || body.password !== undefined ? requirePassword(body.password, true) : undefined;
+        const password = requirePassword(body.password, true);
         try {
           await identity.confirmSignUp(email, code, password);
         } catch (error) {
