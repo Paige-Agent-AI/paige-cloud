@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createWorkloadObservation, inspectionCapability, parseInspectionScope } from "./workload-observation.mjs";
+import { createWorkloadObservation, inspectionCapability, parseInspectionRecoveryPoint, parseInspectionScope } from "./workload-observation.mjs";
 
 const organization = "00000000-0000-4000-8000-000000000001";
 const scope = parseInspectionScope(`${organization}/work/fixture/development`);
@@ -8,7 +8,7 @@ const records = [{ id: scope.application, environments: ["development", "preview
 const now = Date.parse("2026-11-27T12:00:00Z");
 const release = { commit: "a".repeat(40), candidate: "a" };
 
-function fixture({ compute, admission = "reserved", kind = "execute" } = {}) {
+function fixture({ compute, admission = "reserved", kind = "execute", recoveryPoint } = {}) {
   const calls = [];
   const result = {
     StatusCode: 200, ExecutedVersion: "1",
@@ -16,7 +16,7 @@ function fixture({ compute, admission = "reserved", kind = "execute" } = {}) {
       scope, release, observedAt: new Date(now).toISOString(), objectVersion: "internal" }))
   };
   const inspection = createWorkloadObservation({
-    scope,
+    scope, recoveryPoint,
     now: () => now,
     decide(input) { calls.push(["decision", input]); return { kind, args: input.requestArgs }; },
     async reserve(actor, actual) { calls.push(["reserve", actor, actual]); return admission; },
@@ -65,4 +65,25 @@ test("provider errors, wrong scope, and stale response never become a verified h
     assert.deepEqual(await inspection.inspect("verified-actor", scope, records), { status: 503 });
     assert.equal(calls.filter(([step]) => step === "invoke").length, 1);
   }
+});
+
+test("an observed AWS denial proposes only the prior scoped trusted recovery point", async () => {
+  const recoveryPoint = parseInspectionRecoveryPoint(`1/${"b".repeat(40)}`);
+  const compute = result => ({
+    ...result, ExecutedVersion: "3",
+    Payload: Buffer.from(JSON.stringify({ ...JSON.parse(result.Payload), state: "unavailable", reason: "backend_access_denied",
+      release: { ...release, candidate: "drill" } }))
+  });
+  const { inspection, calls } = fixture({ compute, recoveryPoint });
+  const result = await inspection.inspect("verified-actor", scope, records);
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.observation.incident, { reason: "backend_access_denied", plan: {
+    operation: "restore_verified_alias", status: "review_required", scope, fromVersion: "3",
+    target: recoveryPoint, evidenceSha256: result.observation.evidence.sha256
+  } });
+  assert.equal(calls.filter(([step]) => step === "invoke").length, 1);
+
+  const sameVersion = fixture({ compute, recoveryPoint: { ...recoveryPoint, version: "3" } });
+  assert.deepEqual((await sameVersion.inspection.inspect("verified-actor", scope, records)).observation.incident,
+    { reason: "backend_access_denied" });
 });

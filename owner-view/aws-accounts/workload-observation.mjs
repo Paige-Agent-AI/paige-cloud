@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 export const inspectionCapability = "paige.cloud.workload.inspect.v1";
 const segment = "[a-z0-9][a-z0-9-]{0,47}";
 const scopePattern = new RegExp(`^([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})/(${segment})/(${segment})/(${segment})$`);
+const unavailableReasons = new Set(["backend_access_denied", "backend_record_invalid", "backend_read_unverified"]);
 
 export function parseInspectionScope(value) {
   const match = scopePattern.exec(value);
@@ -12,7 +13,14 @@ export function parseInspectionScope(value) {
   return Object.freeze({ organization, project, application, environment });
 }
 
-export function createWorkloadObservation({ scope, decide, reserve, invoke, now = Date.now }) {
+export function parseInspectionRecoveryPoint(value) {
+  if (!value) return null;
+  const match = /^([1-9]\d*)\/([a-f0-9]{40})$/.exec(value);
+  if (!match) throw new Error("Invalid configured workload recovery point");
+  return Object.freeze({ version: match[1], commit: match[2] });
+}
+
+export function createWorkloadObservation({ scope, decide, reserve, invoke, recoveryPoint, now = Date.now }) {
   const { organization, project, application, environment } = scope;
   function targetFor(organizationId, projectId, record) {
     if (organizationId === organization && projectId === project &&
@@ -56,18 +64,33 @@ export function createWorkloadObservation({ scope, decide, reserve, invoke, now 
             !["healthy", "unavailable"].includes(observed.state) ||
             !Object.entries(scope).every(([key, value]) => observed.scope?.[key] === value) ||
             typeof observed.release?.commit !== "string" || !/^[a-f0-9]{40}$/.test(observed.release.commit) ||
-            !["a", "b"].includes(observed.release.candidate) ||
+            !["a", "b", "drill"].includes(observed.release.candidate) ||
             !Number.isFinite(elapsed) || elapsed < -3000 || elapsed > 30000 ||
             (observed.state === "healthy" && (typeof observed.objectVersion !== "string" ||
               !observed.objectVersion || observed.objectVersion === "null"))) return { status: 503 };
-        return { status: 200, observation: {
+        const observation = {
           schema: inspectionCapability,
           scope,
           state: observed.state,
           observedAt: new Date(observationTime).toISOString(),
           release: { commit: observed.release.commit, candidate: observed.release.candidate, version: result.ExecutedVersion },
           evidence: { source: "runtime_backend_read", sha256: createHash("sha256").update(bytes).digest("hex") }
-        } };
+        };
+        if (observed.state === "unavailable") {
+          const reason = unavailableReasons.has(observed.reason) ? observed.reason : "backend_read_unverified";
+          observation.incident = { reason };
+          if (reason === "backend_access_denied" && recoveryPoint && observation.release.version !== recoveryPoint.version) {
+            observation.incident.plan = {
+              operation: "restore_verified_alias",
+              status: "review_required",
+              scope,
+              fromVersion: observation.release.version,
+              target: recoveryPoint,
+              evidenceSha256: observation.evidence.sha256
+            };
+          }
+        }
+        return { status: 200, observation };
       } catch {
         return { status: 503 };
       }

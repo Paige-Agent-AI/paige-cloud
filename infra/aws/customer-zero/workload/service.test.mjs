@@ -60,3 +60,13 @@ test("does not expose provider failures or accept caller-selected backend target
   assert.ok(!JSON.stringify(failure).includes("private provider details"));
   assert.equal(reads, 1);
 });
+
+test("classifies an actual provider 403 and keeps provider details private", async () => {
+  const providerError = Object.assign(new Error("internal object identity"), {
+    name: "AccessDenied", $metadata: { httpStatusCode: 403 }
+  });
+  const result = await inspect(async () => { throw providerError; })(request);
+  assert.equal(result.state, "unavailable");
+  assert.equal(result.reason, "backend_access_denied");
+  assert.ok(!JSON.stringify(result).includes("internal object identity"));
+});

@@ -16,7 +16,7 @@ import { ExecuteStatementCommand, RDSDataClient } from "@aws-sdk/client-rds-data
 import { CognitoJwtVerifier } from "aws-jwt-verify";
 import { FetchError, JwksValidationError, JwtBaseError } from "aws-jwt-verify/error";
 import { createAccountHandler } from "./handler.mjs";
-import { createWorkloadObservation, parseInspectionScope } from "./workload-observation.mjs";
+import { createWorkloadObservation, parseInspectionScope, parseInspectionRecoveryPoint } from "./workload-observation.mjs";
 
 function createCognitoIdentity({ userPoolId, clientId }) {
   const cognito = new CognitoIdentityProviderClient({});
@@ -183,7 +183,7 @@ function createAccountRecords({ resourceArn, secretArn, database }) {
 const {
   CLOUD_SITE_ORIGIN, CLOUD_EVALUATORS, CLOUD_EDGE_KEY, COGNITO_USER_POOL_ID, COGNITO_CLIENT_ID,
   CLOUD_DB_CLUSTER_ARN, CLOUD_DB_RUNTIME_SECRET_ARN, CLOUD_DB_NAME,
-  CLOUD_INSPECTION_SCOPE, CLOUD_INSPECTION_ALIAS
+  CLOUD_INSPECTION_SCOPE, CLOUD_INSPECTION_ALIAS, CLOUD_INSPECTION_RECOVERY_POINT
 } = process.env;
 if (!CLOUD_EDGE_KEY) throw new Error("The Cloud edge key is required");
 
@@ -198,6 +198,7 @@ if (CLOUD_INSPECTION_ALIAS) {
   const lambda = new LambdaClient({ maxAttempts: 1 });
   workloadObservation = createWorkloadObservation({
     scope,
+    recoveryPoint: parseInspectionRecoveryPoint(CLOUD_INSPECTION_RECOVERY_POINT),
     decide: decideGovernedExecution,
     reserve: records.reserveInspection,
     invoke: args => lambda.send(new InvokeCommand({
