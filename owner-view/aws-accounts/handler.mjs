@@ -1,0 +1,240 @@
+import { Buffer } from "node:buffer";
+
+const prefix = "/api/cloud/auth";
+const cookieName = "__Host-paige_cloud_session";
+const cookieAttributes = "Path=/; Secure; HttpOnly; SameSite=Lax";
+const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
+const jwt = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+const providerErrors = new Map([
+  ["NotAuthorizedException", [401, "invalid_credentials"]],
+  ["UserNotFoundException", [401, "invalid_credentials"]],
+  ["UserNotConfirmedException", [403, "verification_required"]],
+  ["UsernameExistsException", [409, "email_already_registered"]],
+  ["CodeMismatchException", [400, "invalid_code"]],
+  ["ExpiredCodeException", [400, "expired_code"]],
+  ["InvalidPasswordException", [400, "invalid_password"]],
+  ["InvalidParameterException", [400, "invalid_input"]],
+  ["LimitExceededException", [429, "try_again_later"]],
+  ["TooManyRequestsException", [429, "try_again_later"]],
+  ["TooManyFailedAttemptsException", [429, "try_again_later"]]
+]);
+
+class RequestError extends Error {
+  constructor(status, code) {
+    super(code);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+function reply(statusCode, body, cookies) {
+  return {
+    statusCode,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff"
+    },
+    body: body === undefined ? "" : JSON.stringify(body),
+    ...(cookies ? { cookies } : {})
+  };
+}
+
+function readJson(event, keys) {
+  if (event.isBase64Encoded || typeof event.body !== "string" ||
+      Buffer.byteLength(event.body) > 8192 ||
+      event.headers?.["content-type"]?.split(";")[0]?.trim().toLowerCase() !== "application/json") {
+    throw new RequestError(400, "invalid_body");
+  }
+  let value;
+  try {
+    value = JSON.parse(event.body);
+  } catch {
+    throw new RequestError(400, "invalid_body");
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+      Object.keys(value).some(key => !keys.includes(key))) {
+    throw new RequestError(400, "invalid_body");
+  }
+  return value;
+}
+
+function normalizeEmail(input) {
+  return typeof input === "string" ? input.trim().toLowerCase() : "";
+}
+
+function requireEmail(input) {
+  const email = normalizeEmail(input);
+  if (email.length > 254 || !/^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(email)) {
+    throw new RequestError(400, "invalid_email");
+  }
+  return email;
+}
+
+function requirePassword(password, enrollment = false) {
+  if (typeof password !== "string" || Buffer.byteLength(password) > 512 ||
+      [...password].length < (enrollment ? 15 : 1)) {
+    throw new RequestError(400, "invalid_password");
+  }
+  return password;
+}
+
+function requireCode(code) {
+  if (typeof code !== "string" || !/^[0-9]{6}$/.test(code)) throw new RequestError(400, "invalid_code");
+  return code;
+}
+
+function requireName(value, allowEmpty = false) {
+  if (typeof value !== "string" || [...value.trim()].length > 120 || (!allowEmpty && !value.trim())) {
+    throw new RequestError(400, "invalid_name");
+  }
+  return value.trim();
+}
+
+function sessionToken(event) {
+  if (!Array.isArray(event.cookies)) return null;
+  const values = event.cookies.flatMap(line => line.split(";"))
+    .map(part => part.trim()).filter(part => part.startsWith(cookieName + "="));
+  if (values.length !== 1) return null;
+  const value = values[0].slice(cookieName.length + 1);
+  return value.length <= 3800 && jwt.test(value) ? value : null;
+}
+
+export function createAccountHandler({ origin, evaluatorEmails, identity, records }) {
+  const site = new URL(origin);
+  if (site.protocol !== "https:" || site.origin !== origin) throw new Error("An HTTPS site origin is required");
+  const eligible = new Set(evaluatorEmails.map(requireEmail));
+  if (!eligible.size) throw new Error("An evaluator allowlist is required");
+
+  async function requireIdentity(token) {
+    if (!token) throw new RequestError(401, "sign_in_required");
+    const user = await identity.verify(token);
+    if (!user || !eligible.has(normalizeEmail(user.email))) {
+      throw new RequestError(401, "sign_in_required");
+    }
+    return user;
+  }
+
+  async function requireAccount(event) {
+    const user = await requireIdentity(sessionToken(event));
+    const account = await records.findIdentity(user);
+    if (!account) throw new RequestError(401, "sign_in_required");
+    return account;
+  }
+
+  async function handle(event) {
+    const method = event.requestContext?.http?.method;
+    const path = event.rawPath;
+    const route = typeof path === "string" && path.startsWith(prefix + "/") ? path.slice(prefix.length) : "";
+    if (!route) throw new RequestError(404, "not_found");
+    if (method !== "GET" && event.headers?.origin !== origin) throw new RequestError(403, "origin_denied");
+
+    switch (method + " " + route) {
+      case "POST /sign-up": {
+        const body = readJson(event, ["email", "password"]);
+        const email = requireEmail(body.email);
+        const password = requirePassword(body.password, true);
+        if (!eligible.has(email)) throw new RequestError(403, "registration_unavailable");
+        await identity.signUp(email, password);
+        return reply(202, { next: "verify_email" });
+      }
+      case "POST /verify-email": {
+        const body = readJson(event, ["email", "code"]);
+        const email = requireEmail(body.email);
+        if (!eligible.has(email)) throw new RequestError(403, "registration_unavailable");
+        await identity.confirmSignUp(email, requireCode(body.code));
+        return reply(204);
+      }
+      case "POST /resend-code": {
+        const body = readJson(event, ["email"]);
+        const email = requireEmail(body.email);
+        if (eligible.has(email)) await identity.resendCode(email);
+        return reply(202);
+      }
+      case "POST /sign-in": {
+        const body = readJson(event, ["email", "password"]);
+        const email = requireEmail(body.email);
+        const password = requirePassword(body.password);
+        if (!eligible.has(email)) throw new RequestError(401, "invalid_credentials");
+        const result = await identity.signIn(email, password);
+        const token = result?.token;
+        if (typeof token !== "string" || token.length > 3800 || !jwt.test(token) ||
+            !Number.isSafeInteger(result.lifetimeSeconds) || result.lifetimeSeconds <= 0) {
+          throw new RequestError(503, "account_service_unavailable");
+        }
+        const user = await requireIdentity(token);
+        const account = await records.recordIdentity(user);
+        if (!account) throw new RequestError(503, "account_service_unavailable");
+        const lifetime = Math.min(result.lifetimeSeconds, 3600);
+        return reply(204, undefined, [cookieName + "=" + token + "; " + cookieAttributes + "; Max-Age=" + lifetime]);
+      }
+      case "POST /sign-out": {
+        const token = sessionToken(event);
+        if (token) {
+          try {
+            await identity.signOut(token);
+          } catch (error) {
+            if (error.name !== "NotAuthorizedException" && error.name !== "UserNotFoundException") throw error;
+          }
+        }
+        return reply(204, undefined, [cookieName + "=; " + cookieAttributes + "; Max-Age=0"]);
+      }
+      case "POST /recover": {
+        const body = readJson(event, ["email"]);
+        const email = requireEmail(body.email);
+        if (eligible.has(email)) {
+          try {
+            await identity.startRecovery(email);
+          } catch (error) {
+            if (error.name !== "UserNotFoundException" && error.name !== "InvalidParameterException") throw error;
+          }
+        }
+        return reply(202);
+      }
+      case "POST /reset-password": {
+        const body = readJson(event, ["email", "code", "password"]);
+        const email = requireEmail(body.email);
+        if (!eligible.has(email)) throw new RequestError(400, "invalid_code");
+        await identity.finishRecovery(email, requireCode(body.code), requirePassword(body.password, true));
+        return reply(204);
+      }
+      case "GET /account": {
+        const account = await records.accountDetails(await requireAccount(event));
+        if (!account) throw new RequestError(401, "sign_in_required");
+        return reply(200, account);
+      }
+      case "PATCH /account": {
+        const actor = await requireAccount(event);
+        const body = readJson(event, ["displayName"]);
+        const account = await records.updateDisplayName(actor, requireName(body.displayName, true));
+        if (!account) throw new RequestError(401, "sign_in_required");
+        return reply(200, account);
+      }
+      case "POST /organizations": {
+        const actor = await requireAccount(event);
+        const body = readJson(event, ["name"]);
+        const organization = await records.onboardOrganization(actor, requireName(body.name));
+        if (!organization) throw new RequestError(404, "not_found");
+        if (organization.error === "organization_exists") throw new RequestError(409, "organization_exists");
+        return reply(200, organization);
+      }
+    }
+
+    const organization = route.startsWith("/organizations/") && route.slice("/organizations/".length);
+    if (method === "GET" && organization && uuid.test(organization)) {
+      const result = await records.organizationDetails(await requireAccount(event), organization);
+      if (result) return reply(200, result);
+    }
+    throw new RequestError(404, "not_found");
+  }
+
+  return async event => {
+    try {
+      return await handle(event);
+    } catch (error) {
+      const [status, code] = error instanceof RequestError ? [error.status, error.code]
+        : providerErrors.get(error?.name) ?? [503, "account_service_unavailable"];
+      return reply(status, { error: code });
+    }
+  };
+}

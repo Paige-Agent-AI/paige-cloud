@@ -1,0 +1,11 @@
+# Customer Zero account service
+
+The account package uses Cognito for password authentication, email verification, recovery, and token revocation. Its SQL store binds verified issuer and subject to a stable account number. It creates the initial organization and membership together. The runtime database login can call scoped functions without access to the underlying tables. Existing console and application deployments use their current stores.
+
+`accounts.yaml` declares an isolated Cognito pool, an Aurora PostgreSQL writer, and the account API. Evaluator routes default to disabled. `site-edge.yaml` declares the private static site origin and same-origin API behavior. The account behavior forwards the session cookie and request origin without caching. The site hostname from the edge stack becomes the exact allowed origin for browser writes.
+
+Build a versioned function artifact from `owner-view/aws-accounts` using its lockfile and Node.js 24. Package `handler.mjs`, `runtime.mjs`, the dependency manifest and production dependencies. Keep the operator-only `bootstrap.mjs` and the PostgreSQL migration out of the Lambda artifact. The first authenticated release requires the site’s account pages and Mission Control to use the qualified account service.
+
+The operator migration uses a separate database administrator credential. After the database writer is ready, run `node owner-view/aws-accounts/bootstrap.mjs` with the cluster ARN, administrator secret ARN and provisioned runtime secret ARN in the operator's environment. It checks the migration checksum and verifies the application login with the runtime secret. Do the same readback after a restore. A replaced runtime secret requires synchronized rotation or restoration of the matching secret version.
+
+Validate the exact artifact, database login, trusted HTTPS path and protected account routes before enabling evaluator access. Confirm that CloudFront forwards `Set-Cookie` and the session cookie, preserves scope across requests and does not cache an authenticated response. Verify registration, verification, recovery, sign-out and reciprocal organization denial with approved evaluators. Confirm backup restoration and attributable costs before production cutover.

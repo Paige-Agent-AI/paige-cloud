@@ -1,0 +1,256 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS-native PAIGE Cloud accounts for an isolated evaluator environment.
+
+Parameters:
+  SiteOrigin:
+    Type: String
+    AllowedPattern: 'https://[a-zA-Z0-9.-]+'
+  EvaluatorEmails:
+    Type: String
+    NoEcho: true
+    MinLength: 3
+    MaxLength: 2048
+  ArtifactBucket:
+    Type: String
+  ArtifactKey:
+    Type: String
+  ArtifactVersion:
+    Type: String
+    MinLength: 1
+    AllowedPattern: '(?!null$).+'
+  EvaluatorApiEnabled:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+
+Conditions:
+  PublishEvaluatorRoutes: !Equals [!Ref EvaluatorApiEnabled, 'true']
+
+Resources:
+  IdentityPool:
+    Type: AWS::Cognito::UserPool
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      UserPoolTier: ESSENTIALS
+      DeletionProtection: ACTIVE
+      UsernameAttributes: [email]
+      UsernameConfiguration:
+        CaseSensitive: false
+      AutoVerifiedAttributes: [email]
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 15
+          RequireLowercase: false
+          RequireNumbers: false
+          RequireSymbols: false
+          RequireUppercase: false
+
+  IdentityClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref IdentityPool
+      GenerateSecret: true
+      EnableTokenRevocation: true
+      ExplicitAuthFlows: [ALLOW_USER_PASSWORD_AUTH]
+      PreventUserExistenceErrors: ENABLED
+      AccessTokenValidity: 30
+      IdTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+      ReadAttributes: [email, email_verified, sub]
+      WriteAttributes: [email]
+
+  AccountVpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.42.0.0/24
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-accounts'
+
+  AccountSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: 10.42.0.0/26
+      MapPublicIpOnLaunch: false
+      VpcId: !Ref AccountVpc
+
+  AccountSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: 10.42.0.64/26
+      MapPublicIpOnLaunch: false
+      VpcId: !Ref AccountVpc
+
+  AccountSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Private Aurora accounts database accessed via RDS Data API
+      VpcId: !Ref AccountVpc
+
+  AccountSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Private subnets for Cloud account records
+      SubnetIds: [!Ref AccountSubnetA, !Ref AccountSubnetB]
+
+  AccountDatabase:
+    Type: AWS::RDS::DBCluster
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      Engine: aurora-postgresql
+      EngineVersion: '16.14'
+      EngineMode: provisioned
+      DatabaseName: paige_cloud
+      DBSubnetGroupName: !Ref AccountSubnetGroup
+      VpcSecurityGroupIds: [!Ref AccountSecurityGroup]
+      ServerlessV2ScalingConfiguration:
+        MinCapacity: 0.5
+        MaxCapacity: 1
+      EnableHttpEndpoint: true
+      StorageEncrypted: true
+      BackupRetentionPeriod: 7
+      CopyTagsToSnapshot: true
+      DeletionProtection: true
+      MasterUsername: cloud_migration_admin
+      ManageMasterUserPassword: true
+
+  AccountWriter:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBClusterIdentifier: !Ref AccountDatabase
+      DBInstanceClass: db.serverless
+      Engine: aurora-postgresql
+      PubliclyAccessible: false
+
+  RuntimeLogin:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      GenerateSecretString:
+        SecretStringTemplate: '{"username":"paige_cloud_app"}'
+        GenerateStringKey: password
+        PasswordLength: 40
+        ExcludePunctuation: true
+
+  AccountsFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: AccountWriter
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-api'
+      Runtime: nodejs24.x
+      Architectures: [arm64]
+      Handler: runtime.handler
+      Role: !GetAtt AccountsRole.Arn
+      MemorySize: 256
+      Timeout: 28
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref ArtifactKey
+        S3ObjectVersion: !Ref ArtifactVersion
+      Environment:
+        Variables:
+          CLOUD_SITE_ORIGIN: !Ref SiteOrigin
+          CLOUD_EVALUATORS: !Ref EvaluatorEmails
+          COGNITO_USER_POOL_ID: !Ref IdentityPool
+          COGNITO_CLIENT_ID: !Ref IdentityClient
+          CLOUD_DB_CLUSTER_ARN: !GetAtt AccountDatabase.DBClusterArn
+          CLOUD_DB_RUNTIME_SECRET_ARN: !Ref RuntimeLogin
+          CLOUD_DB_NAME: paige_cloud
+
+  AccountsLog:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-api'
+      RetentionInDays: 14
+
+  AccountsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CloudAccountsRuntime
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: cognito-idp:DescribeUserPoolClient
+                Resource: !GetAtt IdentityPool.Arn
+              - Effect: Allow
+                Action: rds-data:ExecuteStatement
+                Resource: !GetAtt AccountDatabase.DBClusterArn
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref RuntimeLogin
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt AccountsLog.Arn
+
+  AccountsApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${AWS::StackName}-accounts'
+      ProtocolType: HTTP
+
+  AccountsIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref AccountsApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt AccountsFunction.Arn
+      PayloadFormatVersion: '2.0'
+      TimeoutInMillis: 29000
+
+  AccountsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: PublishEvaluatorRoutes
+    Properties:
+      ApiId: !Ref AccountsApi
+      RouteKey: 'ANY /api/cloud/auth/{proxy+}'
+      Target: !Sub 'integrations/${AccountsIntegration}'
+
+  AccountsStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Condition: PublishEvaluatorRoutes
+    DependsOn: AccountsRoute
+    Properties:
+      ApiId: !Ref AccountsApi
+      StageName: '$default'
+      AutoDeploy: true
+      DefaultRouteSettings:
+        ThrottlingRateLimit: 5
+        ThrottlingBurstLimit: 10
+
+  AccountsInvoke:
+    Type: AWS::Lambda::Permission
+    Condition: PublishEvaluatorRoutes
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref AccountsFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${AccountsApi}/$default/*/api/cloud/auth/*'
+
+Outputs:
+  AccountsApiEndpoint:
+    Value: !GetAtt AccountsApi.ApiEndpoint
+  ClusterArn:
+    Description: Private deployment operator output for migrations
+    Value: !GetAtt AccountDatabase.DBClusterArn
+  RuntimeLoginSecretArn:
+    Description: Private deployment operator output for database role bootstrap
+    Value: !Ref RuntimeLogin
