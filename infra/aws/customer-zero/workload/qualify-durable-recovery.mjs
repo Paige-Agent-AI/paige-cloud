@@ -76,9 +76,11 @@ await sql(`
 begin;
 do $$ begin
   if current_database() !~ '^paige_recovery_qualification_[a-z0-9]+$'
+     or current_setting('server_version_num')::integer not between 160000 and 169999
+     or exists (select from pg_database where not datistemplate and datname not in ('postgres', current_database()))
      or exists (select from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public')
      or exists (select from pg_namespace where nspname = 'auth') then
-    raise exception 'A fresh disposable qualification database is required';
+    raise exception 'A fresh qualification database on an otherwise empty, disposable PostgreSQL 16 cluster is required';
   end if;
 end $$;
 create role anon nologin;
