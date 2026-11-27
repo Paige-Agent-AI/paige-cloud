@@ -10,6 +10,9 @@ Parameters:
     NoEcho: true
     MinLength: 3
     MaxLength: 2048
+  EdgeSecretArn:
+    Type: String
+    AllowedPattern: 'arn:[a-z0-9-]+:secretsmanager:us-east-2:[0-9]{12}:secret:[a-zA-Z0-9/_+=.@-]+'
   ArtifactBucket:
     Type: String
   ArtifactKey:
@@ -161,6 +164,7 @@ Resources:
         Variables:
           CLOUD_SITE_ORIGIN: !Ref SiteOrigin
           CLOUD_EVALUATORS: !Ref EvaluatorEmails
+          CLOUD_EDGE_KEY: !Sub '{{resolve:secretsmanager:${EdgeSecretArn}:SecretString}}'
           COGNITO_USER_POOL_ID: !Ref IdentityPool
           COGNITO_CLIENT_ID: !Ref IdentityClient
           CLOUD_DB_CLUSTER_ARN: !GetAtt AccountDatabase.DBClusterArn
@@ -227,7 +231,7 @@ Resources:
   AccountsStage:
     Type: AWS::ApiGatewayV2::Stage
     Condition: PublishEvaluatorRoutes
-    DependsOn: AccountsRoute
+    DependsOn: [AccountsRoute, ConsoleRoute]
     Properties:
       ApiId: !Ref AccountsApi
       StageName: '$default'
@@ -236,6 +240,14 @@ Resources:
         ThrottlingRateLimit: 5
         ThrottlingBurstLimit: 10
 
+  ConsoleRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: PublishEvaluatorRoutes
+    Properties:
+      ApiId: !Ref AccountsApi
+      RouteKey: 'GET /mission-control'
+      Target: !Sub 'integrations/${AccountsIntegration}'
+
   AccountsInvoke:
     Type: AWS::Lambda::Permission
     Condition: PublishEvaluatorRoutes
@@ -243,7 +255,7 @@ Resources:
       Action: lambda:InvokeFunction
       FunctionName: !Ref AccountsFunction
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${AccountsApi}/$default/*/api/cloud/auth/*'
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${AccountsApi}/$default/*/*'
 
 Outputs:
   AccountsApiEndpoint:
@@ -251,6 +263,9 @@ Outputs:
   ClusterArn:
     Description: Private deployment operator output for migrations
     Value: !GetAtt AccountDatabase.DBClusterArn
+  MigrationSecretArn:
+    Description: Private operator output for database migration
+    Value: !GetAtt AccountDatabase.MasterUserSecret.SecretArn
   RuntimeLoginSecretArn:
     Description: Private deployment operator output for database role bootstrap
     Value: !Ref RuntimeLogin

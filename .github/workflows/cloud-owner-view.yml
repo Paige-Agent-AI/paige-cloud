@@ -41,11 +41,12 @@ jobs:
             node:24-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 \
             sh -eu -c '
               mkdir /tmp/accounts && cd /tmp/accounts
-              cp /candidate/*.mjs /candidate/package*.json .
+              cp /candidate/*.mjs /candidate/package*.json /candidate/mission-control.html .
               npm ci --omit=dev --ignore-scripts --no-audit --no-fund
               node --test handler.test.mjs
               node --check bootstrap.mjs
               export CLOUD_SITE_ORIGIN=https://cloud.example.test CLOUD_EVALUATORS=developer@example.test
+              export CLOUD_EDGE_KEY=synthetic-edge-key-for-package-check-only
               export COGNITO_USER_POOL_ID=us-east-2_Example COGNITO_CLIENT_ID=exampleclient
               export CLOUD_DB_CLUSTER_ARN=synthetic-cluster CLOUD_DB_RUNTIME_SECRET_ARN=synthetic-secret CLOUD_DB_NAME=paige_cloud
               node --input-type=module -e "import { handler } from \"./runtime.mjs\"; if (typeof handler !== \"function\") process.exit(1);"

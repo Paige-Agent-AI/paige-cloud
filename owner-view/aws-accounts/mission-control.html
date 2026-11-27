@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Account workspace · PAIGE Cloud</title>
+  <link rel="icon" href="/favicon.ico">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/site.css">
+  <link rel="stylesheet" href="/account.css">
+  <script src="/account.js" defer></script>
+</head>
+<body class="account-surface">
+  <a class="skip" href="#account-main">Skip to workspace</a>
+  <header class="account-header">
+    <a class="brand" href="/" aria-label="PAIGE Cloud home"><img src="/cloud-bracket.svg" alt=""><strong>PAIGE Cloud</strong></a>
+    <button class="plain-button" type="button" data-sign-out>Sign out</button>
+  </header>
+  <div class="account-shell">
+    <nav class="account-rail" aria-label="Mission Control">
+      <a href="/mission-control" aria-current="page">Overview</a>
+      <a href="/account">Account settings</a>
+    </nav>
+    <main class="account-workspace" id="account-main" tabindex="-1" data-workspace>
+      <p class="account-context">Mission Control</p>
+      <h1>Account workspace</h1>
+      <p role="status" data-account-status>Checking your account…</p>
+      <div data-account-content hidden>
+        <dl class="account-facts">
+          <div><dt>Account number</dt><dd data-account-number></dd></div>
+          <div><dt>Verified email</dt><dd data-account-email></dd></div>
+        </dl>
+        <section class="account-section" aria-labelledby="organizations-heading">
+          <h2 id="organizations-heading">Organizations</h2>
+          <ul class="organization-list" data-organizations></ul>
+          <form method="post" data-account-form="organization" hidden>
+            <p>Create your first organization to set up your workspace.</p>
+            <label>Organization name <input name="name" maxlength="120" required autocomplete="organization"></label>
+            <button class="button button-dark" type="submit">Create organization</button>
+          </form>
+        </section>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

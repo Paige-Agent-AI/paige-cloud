@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Account access · PAIGE Cloud</title>
+  <link rel="icon" href="/favicon.ico">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/site.css">
+  <link rel="stylesheet" href="/account.css">
+  <script src="/account.js" defer></script>
+</head>
+<body class="account-surface">
+  <a class="skip" href="#account-main">Skip to account</a>
+  <header class="account-header">
+    <a class="brand" href="/" aria-label="PAIGE Cloud home"><img src="/cloud-bracket.svg" alt=""><strong>PAIGE Cloud</strong></a>
+    <a href="/mission-control" data-workspace-link hidden>Mission Control</a>
+  </header>
+  <main class="account-entry" id="account-main" tabindex="-1">
+    <noscript><p>Enable JavaScript to access your PAIGE Cloud account.</p></noscript>
+    <h1 data-account-heading>Account access</h1>
+    <p data-account-intro></p>
+    <p role="status" data-account-status></p>
+    <div role="alert" data-account-error hidden></div>
+    <form method="post" data-account-form="credentials" hidden>
+      <label>Email address <input name="email" type="email" maxlength="254" required autocomplete="username"></label>
+      <label data-password-field>Password <input name="password" type="password" required autocomplete="current-password"></label>
+      <p class="account-note" data-password-note hidden>Use at least 15 characters.</p>
+      <label data-code-field hidden>Six-digit code <input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6"></label>
+      <button class="button button-dark" type="submit" data-account-submit>Continue</button>
+      <button class="plain-button" type="button" data-resend hidden>Resend verification code</button>
+    </form>
+    <form method="post" data-account-form="profile" hidden>
+      <p data-profile-email></p>
+      <label>Display name <input name="displayName" maxlength="120" autocomplete="name"></label>
+      <button class="button button-dark" type="submit">Save changes</button>
+      <button class="plain-button" type="button" data-sign-out>Sign out</button>
+    </form>
+    <nav class="account-links" aria-label="Account options" data-account-links></nav>
+  </main>
+</body>
+</html>
