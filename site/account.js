@@ -152,17 +152,16 @@ credentials?.addEventListener("submit", event => {
       }
       throw error;
     }
+    if (submitted === "/sign-in" || submitted === "/reset-password") sessionUpdates?.postMessage("changed");
     if (!isCurrent()) return;
     switch (submitted) {
       case "/sign-up": advance("/verify-email", values.email); break;
       case "/verify-email": advance("/sign-in", values.email, "Email verified. You can sign in now."); break;
       case "/recover": advance("/reset-password", values.email, "If this account is eligible, a code will arrive by email."); break;
       case "/reset-password":
-        sessionUpdates?.postMessage("changed");
         advance("/sign-in", values.email, "Password reset. Sign in with your new password.");
         break;
       case "/sign-in":
-        sessionUpdates?.postMessage("changed");
         location.replace("/mission-control");
         break;
     }
@@ -298,6 +297,7 @@ async function loadProjects() {
 }
 
 function renderOrganizations(organizations) {
+  if (workspaceClosed) return;
   const organizationList = find("[data-organizations]");
   find('[data-account-form="organization"]').hidden = organizations.length > 0;
   // The authenticated HTML and static script can be cached and rolled back independently.
