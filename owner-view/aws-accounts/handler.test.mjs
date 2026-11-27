@@ -273,3 +273,34 @@ test("upstream failures neither disclose diagnostics nor issue a cookie or repor
   assert.equal(unsuccessful.statusCode, 503);
   assert.equal(unsuccessful.cookies, undefined);
 });
+
+test("the versioned registry derives its actor from the session and validates inputs before writing", async () => {
+  const writes = [];
+  const { handle, register } = fixture({ records: {
+    async registryProjects(actor, organization) { return actor === "actor-0" && organization === ids[0] ? [] : null; },
+    async registryCreateProject(...args) { writes.push(args); return { id: args[2] }; },
+    async registryRegisterApplication(...args) { writes.push(args); return { error: "registration_conflict" }; }
+  } });
+  await register(allowedEmails[0]);
+  const base = "/api/cloud/v1/organizations/" + ids[0] + "/projects";
+  const request = (method, rawPath, options) => handle({ ...event(method, "", options), rawPath });
+  assert.equal((await request("GET", base)).statusCode, 401);
+  assert.deepEqual(JSON.parse((await request("GET", base, { token: tokens[0] })).body), []);
+  assert.equal((await request("POST", base, { token: tokens[0], from: "https://other.example.test",
+    body: { id: "workspace", name: "Workspace" } })).statusCode, 403);
+  assert.equal((await request("POST", base, { token: tokens[0],
+    body: { id: "workspace", name: "Workspace", actor: "someone else" } })).statusCode, 400);
+  assert.equal((await request("POST", base, { token: tokens[0],
+    body: { id: "workspace", name: "Workspace" } })).statusCode, 200);
+  const appPath = base + "/workspace/applications";
+  const app = { id: "second-app", name: "Second app", kind: "application", environment: "development" };
+  assert.equal((await request("POST", appPath, { token: tokens[0],
+    body: { ...app, sourceRepository: "https://example.test/token" } })).statusCode, 400);
+  assert.equal((await request("POST", appPath, { token: tokens[0],
+    body: { ...app, sourceRepository: "example/source" } })).statusCode, 409);
+  assert.deepEqual(writes, [
+    ["actor-0", ids[0], "workspace", "Workspace"],
+    ["actor-0", ids[0], "workspace", { id: "second-app", name: "Second app", kind: "application",
+      repository: "example/source", environment: "development" }]
+  ]);
+});

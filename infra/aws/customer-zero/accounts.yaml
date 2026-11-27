@@ -231,7 +231,7 @@ Resources:
   AccountsStage:
     Type: AWS::ApiGatewayV2::Stage
     Condition: PublishEvaluatorRoutes
-    DependsOn: [AccountsRoute, ConsoleRoute]
+    DependsOn: [AccountsRoute, RegistryRoute, ConsoleRoute]
     Properties:
       ApiId: !Ref AccountsApi
       StageName: '$default'
@@ -239,6 +239,14 @@ Resources:
       DefaultRouteSettings:
         ThrottlingRateLimit: 5
         ThrottlingBurstLimit: 10
+
+  RegistryRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: PublishEvaluatorRoutes
+    Properties:
+      ApiId: !Ref AccountsApi
+      RouteKey: 'ANY /api/cloud/v1/{proxy+}'
+      Target: !Sub 'integrations/${AccountsIntegration}'
 
   ConsoleRoute:
     Type: AWS::ApiGatewayV2::Route

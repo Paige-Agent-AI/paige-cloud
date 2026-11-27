@@ -23,7 +23,9 @@ verify_db() {
 
 verify_db -c 'CREATE ROLE paige_cloud_account_runtime NOLOGIN'
 verify_db < "$dir/001-accounts.sql"
+verify_db < "$dir/002-registry.sql"
 verify_db < "$dir/account-records.test.sql"
+verify_db < "$dir/registry.test.sql"
 
 verify_db -c "SET ROLE paige_cloud_account_runtime;
   SELECT cloud_accounts.record_verified_identity('test-issuer', 'concurrent', 'parallel@example.test');"

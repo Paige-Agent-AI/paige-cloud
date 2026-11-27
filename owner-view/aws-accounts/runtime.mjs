@@ -145,6 +145,23 @@ function createAccountRecords({ resourceArn, secretArn, database }) {
     organizationDetails(actor, organization) {
       return call("SELECT CAST(cloud_accounts.organization_details(CAST(:actor AS uuid), CAST(:organization AS uuid)) AS text)",
         { actor, organization }, JSON.parse);
+    },
+    registryProjects(actor, organization) {
+      return call("SELECT CAST(cloud_accounts.registry_list_projects(CAST(:actor AS uuid), CAST(:organization AS uuid)) AS text)",
+        { actor, organization }, JSON.parse);
+    },
+    registryCreateProject(actor, organization, project, name) {
+      return call("SELECT CAST(cloud_accounts.registry_create_project(CAST(:actor AS uuid), CAST(:organization AS uuid), :project, :name) AS text)",
+        { actor, organization, project, name }, JSON.parse);
+    },
+    registryApplications(actor, organization, project) {
+      return call("SELECT CAST(cloud_accounts.registry_list_applications(CAST(:actor AS uuid), CAST(:organization AS uuid), :project) AS text)",
+        { actor, organization, project }, JSON.parse);
+    },
+    registryRegisterApplication(actor, organization, project, { id, name, kind, repository, environment }) {
+      return call(`SELECT CAST(cloud_accounts.registry_register_application(CAST(:actor AS uuid), CAST(:organization AS uuid),
+        :project, :id, :name, :kind, NULLIF(:repository, ''), :environment) AS text)`,
+        { actor, organization, project, id, name, kind, repository, environment }, JSON.parse);
     }
   };
 }

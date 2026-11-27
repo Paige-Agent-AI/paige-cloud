@@ -11,3 +11,20 @@ Create the artifact stack, then the accounts stack with a temporary HTTPS origin
 The operator migration uses a separate database administrator credential. After the database writer is ready, run `node owner-view/aws-accounts/bootstrap.mjs` with the cluster ARN, administrator secret ARN and provisioned runtime secret ARN in the operator's environment. It checks the migration checksum and verifies the application login with the runtime secret. Do the same readback after a restore. A replaced runtime secret requires synchronized rotation or restoration of the matching secret version.
 
 Validate the exact artifact, database login, trusted HTTPS path and protected account routes before enabling evaluator access. Confirm that CloudFront forwards `Set-Cookie` and the session cookie, preserves scope across requests and does not cache an authenticated response. Verify registration, verification, recovery, sign-out and reciprocal organization denial with approved evaluators. Confirm backup restoration and attributable costs before production cutover.
+
+## Private registry contract
+
+Migration `002-registry.sql` is additive. The operator bootstrap applies it through the existing migration lock and checksum ledger after validating `001`. Run bootstrap twice to verify replay. Older Lambda versions can continue to serve account flows with the additive tables present. Roll back the application artifact to its earlier immutable version if needed. Keep the registry data for forward recovery.
+
+Use an existing verified evaluator session through the private origin. Writes require that origin and JSON. The server derives the actor from the session, then PostgreSQL checks current membership and project grants. Service credentials and public enrollment require separate qualification.
+
+| Method and path | Scope, request and result |
+| --- | --- |
+| `GET /api/cloud/v1/organizations/{organization}/projects` | An active organization member reads only their explicitly granted projects. Returns IDs, names and project roles. A new organization can return an empty list. |
+| `POST /api/cloud/v1/organizations/{organization}/projects` | An organization owner submits `id` and `name`. Creates one project and its creator’s project-owner grant together. Same request returns the existing record. |
+| `GET /api/cloud/v1/organizations/{organization}/projects/{project}/applications` | An active project grantee reads the scoped application and environment registrations. |
+| `POST /api/cloud/v1/organizations/{organization}/projects/{project}/applications` | A project owner submits `id`, `name`, `kind` (`application` or `service`), `environment` and optional `sourceRepository` (`owner/repository`). Reuse the same application identity and metadata to attach another environment. Returns the application and its environment IDs. |
+
+IDs accept 1–48 lowercase ASCII letters, digits or hyphens, starting with an alphanumeric character. Names accept 1–120 characters. Registry limits are 50 projects per organization, with 100 applications and 50 environments per project. Success is HTTP 200. Bad fields return 400, a missing session returns 401, denied browser origin returns 403, an inaccessible target returns 404, and conflicting metadata or capacity returns 409. Responses are not cached.
+
+Repository coordinates are desired source metadata. Registration does not fetch source, deploy anything, allocate compute, or read provider credentials. Resolve actual source and publish immutable artifacts as separate, independently authorized steps. The operator workbook should consume this contract after the authenticated navigation is approved.

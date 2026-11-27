@@ -155,6 +155,17 @@ Resources:
             FunctionAssociations:
               - EventType: viewer-request
                 FunctionARN: !GetAtt EvaluatorAccess.FunctionARN
+          - PathPattern: /api/cloud/v1/*
+            TargetOriginId: accounts
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+            CachedMethods: [GET, HEAD]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            OriginRequestPolicyId: !Ref AccountsRequestPolicy
+            ResponseHeadersPolicyId: !Ref BrowserSecurity
+            FunctionAssociations:
+              - EventType: viewer-request
+                FunctionARN: !GetAtt EvaluatorAccess.FunctionARN
           - PathPattern: /mission-control
             TargetOriginId: accounts
             ViewerProtocolPolicy: https-only

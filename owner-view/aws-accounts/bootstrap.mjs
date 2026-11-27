@@ -6,10 +6,15 @@ import { pathToFileURL } from "node:url";
 import { BeginTransactionCommand, CommitTransactionCommand, ExecuteStatementCommand, RDSDataClient, RollbackTransactionCommand } from "@aws-sdk/client-rds-data";
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 
-export async function applyAccountMigration(raw, execute, readRuntimeCredential) {
+function migrationParts(raw) {
   const migration = raw.trim().match(/^BEGIN;([\s\S]+)COMMIT;$/)?.[1];
   if (!migration || migration.includes("$cloud_ddl$")) throw new Error("Unexpected migration boundary");
   const hash = createHash("sha256").update(raw.replaceAll("\r\n", "\n")).digest("hex");
+  return { migration, hash };
+}
+
+export async function applyAccountMigration(raw, execute, readRuntimeCredential) {
+  const { migration, hash } = migrationParts(raw);
   await execute("DO $cloud_lock$ BEGIN PERFORM pg_advisory_xact_lock(hashtextextended('paige-cloud-account-migration', 0)); END $cloud_lock$");
   await execute("CREATE SCHEMA IF NOT EXISTS cloud_account_migrations");
   await execute("REVOKE ALL ON SCHEMA cloud_account_migrations FROM PUBLIC");
@@ -39,6 +44,18 @@ export async function applyAccountMigration(raw, execute, readRuntimeCredential)
   return true;
 }
 
+async function applyRegistryMigration(raw, execute) {
+  const { migration, hash } = migrationParts(raw);
+  const applied = await execute("SELECT checksum FROM cloud_account_migrations.applied WHERE version = '002'");
+  if (applied) {
+    if (applied !== hash) throw new Error("Applied registry migration differs from reviewed source");
+    return false;
+  }
+  await execute(`DO $cloud_ddl$ BEGIN ${migration} END $cloud_ddl$`);
+  await execute("INSERT INTO cloud_account_migrations.applied (version, checksum) VALUES ('002', :checksum)", { checksum: hash });
+  return true;
+}
+
 async function bootstrap() {
   const {
     CLOUD_DB_CLUSTER_ARN: resourceArn, CLOUD_DB_ADMIN_SECRET_ARN: secretArn,
@@ -48,6 +65,7 @@ async function bootstrap() {
     throw new Error("Separate operator and application database credentials are required");
   }
   const raw = await readFile(new URL("../sql/cloud-accounts/001-accounts.sql", import.meta.url), "utf8");
+  const registry = await readFile(new URL("../sql/cloud-accounts/002-registry.sql", import.meta.url), "utf8");
   const connection = { resourceArn, secretArn, database: "paige_cloud" };
   const data = new RDSDataClient({});
   const { transactionId } = await data.send(new BeginTransactionCommand(connection));
@@ -67,6 +85,7 @@ async function bootstrap() {
       const secret = await secrets.send(new GetSecretValueCommand({ SecretId: runtimeSecretArn }));
       return JSON.parse(secret.SecretString ?? "{}");
     });
+    applied = (await applyRegistryMigration(registry, execute)) || applied;
     await data.send(new CommitTransactionCommand(transaction));
   } catch (error) {
     try {
@@ -81,7 +100,9 @@ async function bootstrap() {
     ...connection, secretArn: runtimeSecretArn,
     sql: `SELECT current_user = 'paige_cloud_app'
       AND has_function_privilege(current_user, 'cloud_accounts.account_details(uuid)', 'EXECUTE')
-      AND NOT has_table_privilege(current_user, 'cloud_accounts.accounts', 'SELECT, INSERT, UPDATE, DELETE')`
+      AND has_function_privilege(current_user, 'cloud_accounts.registry_list_projects(uuid, uuid)', 'EXECUTE')
+      AND NOT has_table_privilege(current_user, 'cloud_accounts.accounts', 'SELECT, INSERT, UPDATE, DELETE')
+      AND NOT has_table_privilege(current_user, 'cloud_accounts.registry_applications', 'SELECT, INSERT, UPDATE, DELETE')`
   }));
   if (check.records?.[0]?.[0]?.booleanValue !== true) throw new Error("Application database login was not confirmed");
   console.log(applied ? "Cloud accounts migration and application login confirmed" : "Existing migration and application login confirmed");
