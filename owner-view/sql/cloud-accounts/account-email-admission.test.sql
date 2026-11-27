@@ -41,3 +41,65 @@ $$;
 RESET ROLE;
 
 ROLLBACK;
+
+BEGIN;
+
+DO $$
+BEGIN
+  BEGIN
+    UPDATE cloud_accounts.account_email_capacity SET enrollment_daily = 21;
+    RAISE EXCEPTION 'the policy allocated the provider headroom to enrollment';
+  EXCEPTION WHEN check_violation THEN
+    NULL;
+  END;
+END
+$$;
+
+UPDATE cloud_accounts.account_email_capacity
+SET enrollment_daily = 7, enrollment_network_hourly = 7, enrollment_recipient_hourly = 1,
+    recovery_daily = 3, recovery_network_hourly = 3, recovery_recipient_hourly = 1;
+
+SET ROLE paige_cloud_account_runtime;
+DO $$
+DECLARE
+  i integer;
+BEGIN
+  IF has_table_privilege(current_user, 'cloud_accounts.account_email_capacity', 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') THEN
+    RAISE EXCEPTION 'runtime can access the delivery policy directly';
+  END IF;
+  FOR i IN 1..7 LOOP
+    IF NOT cloud_accounts.reserve_account_email('enrollment', repeat('a', 64), lpad(i::text, 64, '0')) THEN
+      RAISE EXCEPTION 'different people behind the same network could not enroll under revised policy';
+    END IF;
+    IF cloud_accounts.reserve_account_email('enrollment', repeat('c', 64), lpad(i::text, 64, '0')) THEN
+      RAISE EXCEPTION 'the revised recipient limit was not enforced independently of network';
+    END IF;
+  END LOOP;
+  IF cloud_accounts.reserve_account_email('enrollment', repeat('b', 64), repeat('b', 64)) THEN
+    RAISE EXCEPTION 'the revised enrollment limit was exceeded';
+  END IF;
+  FOR i IN 1..3 LOOP
+    IF NOT cloud_accounts.reserve_account_email('recovery', repeat('a', 64), lpad(i::text, 64, '0')) THEN
+      RAISE EXCEPTION 'a saturated enrollment lane consumed reserved recovery capacity';
+    END IF;
+  END LOOP;
+  IF cloud_accounts.reserve_account_email('recovery', repeat('b', 64), repeat('b', 64)) THEN
+    RAISE EXCEPTION 'the revised recovery limit was exceeded';
+  END IF;
+END
+$$;
+RESET ROLE;
+
+DELETE FROM cloud_accounts.account_email_capacity;
+SET ROLE paige_cloud_account_runtime;
+DO $$
+BEGIN
+  IF cloud_accounts.reserve_account_email('enrollment', repeat('f', 64), repeat('e', 64))
+     OR cloud_accounts.reserve_account_email('recovery', repeat('f', 64), repeat('e', 64)) THEN
+    RAISE EXCEPTION 'missing capacity policy did not fail closed';
+  END IF;
+END
+$$;
+RESET ROLE;
+
+ROLLBACK;
