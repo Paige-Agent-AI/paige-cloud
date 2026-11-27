@@ -46,8 +46,8 @@ const errors = {
   try_again_later: "Too many attempts. Wait a minute, then try again."
 };
 
-async function request(path, method = "GET", body) {
-  const response = await fetch(base + path, {
+async function requestJson(url, method, body) {
+  const response = await fetch(url, {
     method, credentials: "same-origin", cache: "no-store",
     ...(body && { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
   });
@@ -59,6 +59,10 @@ async function request(path, method = "GET", body) {
     throw error;
   }
   return result;
+}
+
+function request(path, method = "GET", body) {
+  return requestJson(base + path, method, body);
 }
 
 function showError(error) {
@@ -179,18 +183,104 @@ async function readAccount() {
   }
 }
 
-function renderOrganizations(organizations) {
-  find("[data-organizations]").replaceChildren(...organizations.map(organization => {
-    const item = document.createElement("li");
-    const label = document.createElement("strong");
-    const role = document.createElement("span");
-    label.textContent = organization.name;
-    role.textContent = organization.role;
-    item.append(label, role);
-    return item;
-  }));
-  find('[data-account-form="organization"]').hidden = organizations.length > 0;
+const organizationControl = find("[data-active-organization]");
+const projectStatus = find("[data-project-status]");
+const projectRetry = find("[data-project-retry]");
+const projectList = find("[data-projects]");
+let projectRevision = 0;
+
+async function readRegistryList(path) {
+  const result = await requestJson(`/api/cloud/v1${path}`, "GET");
+  if (!Array.isArray(result)) throw new Error("Invalid registry response");
+  return result;
 }
+
+function renderProject(project, registryPath, revision) {
+  const row = document.createElement("li");
+  const details = document.createElement("details");
+  const summary = document.createElement("summary");
+  const name = document.createElement("strong");
+  const role = document.createElement("span");
+  const message = document.createElement("p");
+  const apps = document.createElement("ul");
+  name.textContent = project.name;
+  role.textContent = project.role;
+  message.setAttribute("role", "status");
+  summary.append(name, role);
+  details.append(summary, message, apps);
+  row.append(details);
+  let loading = false;
+  let loaded = false;
+  details.addEventListener("toggle", async () => {
+    if (!details.open || loading || loaded) return;
+    loading = true;
+    message.textContent = "Loading applications…";
+    try {
+      const records = await readRegistryList(`${registryPath}/${encodeURIComponent(project.id)}/applications`);
+      if (revision !== projectRevision) return;
+      apps.replaceChildren(...records.map(app => {
+        const item = document.createElement("li");
+        const name = document.createElement("strong");
+        const targets = document.createElement("span");
+        name.textContent = app.name;
+        targets.textContent = app.environments.join(" · ");
+        item.append(name, targets);
+        return item;
+      }));
+      message.textContent = records.length ? "" : "No applications registered.";
+      loaded = true;
+    } catch (error) {
+      if (revision !== projectRevision) return;
+      if (error.status === 401) location.replace("/sign-in");
+      else message.textContent = error.status === 404 ? "This project is no longer available to you."
+        : "Applications are unavailable. Close and reopen the project to retry.";
+    } finally {
+      loading = false;
+    }
+  });
+  return row;
+}
+
+async function loadProjects() {
+  const revision = ++projectRevision;
+  const organization = organizationControl.value;
+  projectList.replaceChildren();
+  projectRetry.hidden = true;
+  find("#projects").hidden = !organization;
+  if (!organization) return;
+  const path = `/organizations/${encodeURIComponent(organization)}/projects`;
+  projectStatus.textContent = "Loading projects…";
+  try {
+    const projects = await readRegistryList(path);
+    if (revision !== projectRevision) return;
+    projectList.replaceChildren(...projects.map(project => renderProject(project, path, revision)));
+    projectStatus.textContent = projects.length ? "" : "No projects are available in this organization.";
+  } catch (error) {
+    if (revision !== projectRevision) return;
+    if (error.status === 401) location.replace("/sign-in");
+    else {
+      projectStatus.textContent = error.status === 404 ? "This organization is no longer available to you."
+        : "Projects are temporarily unavailable.";
+      projectRetry.hidden = error.status === 404;
+    }
+  }
+}
+
+function renderOrganizations(organizations) {
+  organizationControl.replaceChildren(...organizations.map(organization =>
+    new Option(organization.name, organization.id)));
+  find("[data-organization-picker]").hidden = !organizations.length;
+  find('[data-account-form="organization"]').hidden = organizations.length > 0;
+  void loadProjects();
+}
+
+organizationControl?.addEventListener("change", loadProjects);
+projectRetry?.addEventListener("click", () => {
+  const heading = find("#projects-heading");
+  heading.tabIndex = -1;
+  heading.focus();
+  void loadProjects();
+});
 
 async function showWorkspace() {
   const account = await readAccount();
