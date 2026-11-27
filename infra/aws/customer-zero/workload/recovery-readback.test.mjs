@@ -52,6 +52,19 @@ test("holds changed aliases, weighted routing and wrong immutable versions unver
     .reason, "immutable_version_mismatch");
 });
 
+test("recovery checks the runtime settings independently of a matching code digest", () => {
+  const consumedConfiguration = { revision: 33, digest: "b".repeat(64) };
+  const expected = { ...fixture.expected, consumedConfiguration };
+  assert.equal(verifyRecoveryTarget({ ...fixture, expected }, now).reason, "runtime_configuration_mismatch");
+  const invocation = { ...fixture.invocation, Payload: JSON.stringify({
+    ...runtimeRead, configuration: { ...consumedConfiguration, version: "private-settings-version" }
+  }) };
+  assert.deepEqual(verifyRecoveryTarget({ ...fixture, expected, invocation }, now).consumedConfiguration, consumedConfiguration);
+  assert.equal(verifyRecoveryTarget({ ...fixture, invocation,
+    expected: { ...expected, consumedConfiguration: { ...consumedConfiguration, revision: 32 } }
+  }, now).reason, "runtime_configuration_mismatch");
+});
+
 test("holds stale, unhealthy, foreign and unverified observations without a retry signal", () => {
   assert.deepEqual(verifyRecoveryTarget(fixture, now + 31_000),
     { state: "unverified", reason: "stale_or_missing_observation" });

@@ -44,11 +44,18 @@ export function verifyRecoveryTarget(input, now = Date.now()) {
       observation.release.version !== expected.version || observation.release.commit !== expected.commit) {
     return unverified("runtime_observation_mismatch");
   }
+  const settings = expected.consumedConfiguration;
+  if (settings !== undefined && (!settings || !observation.consumedConfiguration ||
+      settings.revision !== observation.consumedConfiguration.revision ||
+      settings.digest !== observation.consumedConfiguration.digest)) {
+    return unverified("runtime_configuration_mismatch");
+  }
   return {
     state: "target_verified",
     observedAt: observation.observedAt,
     release: { version: expected.version, commit: expected.commit, codeSha256: expected.codeSha256 },
-    evidenceSha256: observation.evidence.sha256
+    evidenceSha256: observation.evidence.sha256,
+    ...(settings && { consumedConfiguration: observation.consumedConfiguration })
   };
 }
 

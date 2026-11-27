@@ -137,7 +137,7 @@ save_first_configuration() {
 SET statement_timeout = '12s';
 SET ROLE paige_cloud_account_runtime;
 BEGIN;
-SELECT coalesce(result->>'error', result->>'revision') FROM cloud_accounts.save_workload_configuration(
+SELECT coalesce(result->>'error', result->>'revision') FROM cloud_accounts.save_workload_configuration_v2(
   cloud_accounts.find_verified_identity('test-issuer', 'concurrent'), '$organization',
   'capacity', 'last-slot', 'development', 0, 'info', $2) result;
 SELECT pg_sleep($3);

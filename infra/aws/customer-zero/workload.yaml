@@ -113,6 +113,8 @@ Resources:
   SettingsWorkloadRole:
     Type: AWS::IAM::Role
     Condition: HasSettings
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Metadata:
       com.aws.cloudformation.Context:
         why: Supports independently authenticated settings reads and revocation for the registered workload.
