@@ -9,8 +9,7 @@ const productProjects = [
   ["ask-paige", "Ask PAIGE"],
   ["paige-intelligence", "PAIGE Intelligence"],
   ["paige-maps", "PAIGE Maps"],
-  ["presentation-room", "Presentation Room"],
-  ["paige-drive", "PAIGE Drive"],
+  ["paige-folio", "PAIGE Folio"],
   ["paige-secure", "PAIGE Secure"],
 ].map(([id, name]) => ({ id, name }));
 const uuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/;
@@ -28,19 +27,25 @@ const query = `
   desired_projects AS (
     SELECT * FROM jsonb_to_recordset(CAST(:products AS jsonb)) AS desired(id text, name text)
   )
-  SELECT CAST(jsonb_agg(jsonb_build_object(
+  SELECT CAST(jsonb_build_object(
+    'legacyProjects', (SELECT COALESCE(jsonb_agg(jsonb_build_object('id', legacy.id, 'name', legacy.name)
+      ORDER BY legacy.id), '[]'::jsonb) FROM cloud_accounts.registry_projects legacy
+      WHERE legacy.organization_id = organization.id
+        AND legacy.id IN ('paige-drive', 'presentation-room')),
+    'projects', jsonb_agg(jsonb_build_object(
     'id', desired.id, 'name', desired.name, 'state',
     CASE WHEN project.id IS NULL THEN 'missing'
          WHEN project.name = desired.name AND grant_entry.role = 'owner' THEN 'matching'
          ELSE 'conflict' END
-  ) ORDER BY desired.id) AS text)
+  ) ORDER BY desired.id)) AS text)
   FROM approved_organization organization
   CROSS JOIN desired_projects desired
   LEFT JOIN cloud_accounts.registry_projects project
     ON project.organization_id = organization.id AND project.id = desired.id
   LEFT JOIN cloud_accounts.registry_grants grant_entry
     ON grant_entry.organization_id = project.organization_id AND grant_entry.project_id = project.id
-    AND grant_entry.account_id = CAST(:owner AS uuid)`;
+    AND grant_entry.account_id = CAST(:owner AS uuid)
+  GROUP BY organization.id`;
 
 function requireBinding(organization, owner) {
   if (typeof organization !== "string" || !uuid.test(organization) ||
@@ -52,15 +57,17 @@ export async function checkCorporateRegistry({ organization, owner, execute }) {
   const bound = requireBinding(organization, owner);
   const row = await execute(query, { ...bound, company, products: JSON.stringify(productProjects) });
   if (row == null) return { state: "binding_unverified" };
-  const records = JSON.parse(row);
-  if (!Array.isArray(records) || records.length !== productProjects.length) throw new Error("Unexpected corporate registry readback");
+  const { projects: records, legacyProjects } = JSON.parse(row);
+  if (!Array.isArray(records) || records.length !== productProjects.length || !Array.isArray(legacyProjects) ||
+      legacyProjects.some(record => !["paige-drive", "presentation-room"].includes(record?.id) ||
+        typeof record.name !== "string")) throw new Error("Unexpected corporate registry readback");
   const observed = new Map(records.map(record => [record.id, record]));
   const projects = productProjects.map(({ id, name }) => {
     const record = observed.get(id);
     if (record?.name !== name || !statuses.has(record.state)) throw new Error("Unexpected corporate project readback");
     return { id, name, state: record.state };
   });
-  return { state: "binding_verified", projects };
+  return { state: "binding_verified", projects, legacyProjects: legacyProjects.map(({ id, name }) => ({ id, name })) };
 }
 
 // The supplied execute function must hold one transaction for the whole import. The
@@ -81,7 +88,12 @@ export async function registerCorporateProjects({ organization, owner, execute }
 
   const required = await checkCorporateRegistry({ ...bound, execute });
   if (required.state !== "binding_verified") return required;
-  if (required.projects.some(project => project.state === "conflict")) return { ...required, state: "conflict" };
+  if (required.legacyProjects.length || required.projects.some(project => project.state === "conflict")) {
+    return { ...required, state: "conflict" };
+  }
+  if (!required.projects.some(project => project.state === "matching")) {
+    return { ...required, state: "owner_project_required" };
+  }
 
   let additions = 0;
   for (const project of required.projects) {

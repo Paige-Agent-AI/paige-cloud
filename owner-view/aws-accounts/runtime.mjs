@@ -151,6 +151,11 @@ function createAccountRecords({ resourceArn, secretArn, database }) {
       return call("SELECT CAST(cloud_accounts.organization_details(CAST(:actor AS uuid), CAST(:organization AS uuid)) AS text)",
         { actor, organization }, JSON.parse);
     },
+    renameOrganization(actor, organization, expectedName, name) {
+      return call(`SELECT CAST(cloud_accounts.rename_organization(
+        CAST(:actor AS uuid), CAST(:organization AS uuid), :expectedName, :name) AS text)`,
+        { actor, organization, expectedName, name }, JSON.parse);
+    },
     registryProjects(actor, organization) {
       return call("SELECT CAST(cloud_accounts.registry_list_projects(CAST(:actor AS uuid), CAST(:organization AS uuid)) AS text)",
         { actor, organization }, JSON.parse);

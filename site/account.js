@@ -43,7 +43,11 @@ const errors = {
   invalid_password: "Check the password requirements and try again.",
   invalid_email: "Enter a valid email address.",
   invalid_name: "Enter a name with no more than 120 characters.",
+  invalid_identifier: "Use a lowercase ID that starts with a letter or number and contains only letters, numbers, or hyphens.",
+  invalid_kind: "Choose Application or Service.",
+  invalid_repository: "Enter the repository as owner/repository.",
   organization_exists: "Your first organization already exists. Reload the workspace to see it.",
+  organization_changed: "The organization name changed in another session. Reload to see the current name.",
   try_again_later: "Too many attempts. Wait a minute, then try again."
 };
 
@@ -193,6 +197,9 @@ const organizationControl = find("[data-active-organization]");
 const projectStatus = find("[data-project-status]");
 const projectRetry = find("[data-project-retry]");
 const projectList = find("[data-projects]");
+const projectEditor = find("[data-create-project]");
+const organizationEditor = find("[data-rename-organization]");
+let organizations = [];
 let projectRevision = 0;
 let workspaceClosed = false;
 
@@ -224,6 +231,86 @@ async function readRegistryList(path) {
   if (!Array.isArray(result)) throw new Error("Invalid registry response");
   return result;
 }
+
+function activeOrganization() {
+  return organizations.find(organization => organization.id === organizationControl?.value);
+}
+
+function resetEditor(editor, name = "") {
+  if (!editor) return;
+  editor.open = false;
+  const form = editor.querySelector("form");
+  form.reset();
+  if (form.elements.name) form.elements.name.value = name;
+  form.querySelector("[role='alert']").hidden = true;
+}
+
+function wireEditor(editor, operation) {
+  const form = editor.querySelector("form");
+  const detailsLabel = editor.querySelector("summary");
+  const alert = form.querySelector("[role='alert']");
+  const button = form.querySelector("button[type='submit']");
+  const cancel = form.querySelector("[data-registry-cancel]");
+  const labels = {
+    registration_conflict: "That ID already has different details. Choose a different ID or review the existing record.",
+    registry_limit: "This workspace has reached its registration limit."
+  };
+
+  cancel.addEventListener("click", () => {
+    resetEditor(editor, form.elements.name?.defaultValue);
+    detailsLabel.focus();
+  });
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (button.disabled || !editor.open) return;
+    const values = Object.fromEntries(new FormData(form));
+    for (const key of Object.keys(values)) values[key] = values[key].trim();
+    const revision = projectRevision;
+    const current = () => !workspaceClosed && revision === projectRevision && editor.isConnected;
+    const buttonLabel = button.textContent;
+    button.textContent = "Saving…";
+    button.disabled = cancel.disabled = true;
+    alert.hidden = true;
+    try {
+      await operation(values, current);
+    } catch (error) {
+      if (!current()) return;
+      if (error.status === 401) {
+        clearWorkspace();
+        location.replace("/sign-in");
+        return;
+      }
+      alert.textContent = labels[error.code] ?? ((error.status === 403 || error.status === 404)
+        ? "You no longer have permission to save here. Reload to check your access."
+        : error.status === 400 || error.status === 409
+          ? error.message
+          : "The save could not be confirmed. Try again with the same details or reload to check.");
+      editor.open = true;
+      alert.hidden = false;
+    } finally {
+      button.textContent = buttonLabel;
+      button.disabled = cancel.disabled = false;
+    }
+  });
+}
+
+if (projectEditor) wireEditor(projectEditor, async (values, current) => {
+  const organization = activeOrganization();
+  const path = `/organizations/${encodeURIComponent(organization.id)}/projects`;
+  const project = await requestJson(`/api/cloud/v1${path}`, "POST", values);
+  if (current()) await loadProjects(project.id, `Project saved: ${project.name}.`);
+});
+
+if (organizationEditor) wireEditor(organizationEditor, async ({ name }, current) => {
+  const organization = activeOrganization();
+  const result = await request(`/organizations/${encodeURIComponent(organization.id)}`, "PATCH", {
+    expectedName: organization.name, name
+  });
+  if (!current()) return;
+  renderOrganizations(organizations.map(item => item.id === result.id ? result : item), result.id);
+  organizationEditor.querySelector("summary").focus();
+  status.textContent = "Organization name saved.";
+});
 
 function workloadInspection(app, applicationsPath, revision) {
   const container = document.createElement("div");
@@ -297,48 +384,97 @@ function renderProject(project, registryPath, revision) {
   const role = document.createElement("span");
   const message = document.createElement("p");
   const apps = document.createElement("ul");
+  const applicationsPath = `${registryPath}/${encodeURIComponent(project.id)}/applications`;
   name.textContent = project.name;
-  role.textContent = project.role;
+  role.textContent = `${project.id} · ${project.role}`;
   message.setAttribute("role", "status");
   summary.append(name, role);
   details.append(summary, message, apps);
   row.append(details);
-  let loading = false;
-  details.addEventListener("toggle", async () => {
-    if (!details.open || loading || revision !== projectRevision) return;
-    loading = true;
-    apps.replaceChildren();
+  function renderApplication(app) {
+    const item = document.createElement("li");
+    const label = document.createElement("strong");
+    const targets = document.createElement("span");
+    label.textContent = app.name;
+    targets.textContent = `${app.id} · Environments: ${app.environments.join(", ")}`;
+    item.append(label, targets);
+    if (app.inspectionEnvironment) item.append(workloadInspection(app, applicationsPath, revision));
+    const template = find("#environment-editor");
+    if (template && project.role === "owner") {
+      const editor = template.content.firstElementChild.cloneNode(true);
+      editor.querySelector("[data-application-label]").textContent = `for ${app.name}`;
+      wireEditor(editor, async ({ environment }, current) => {
+        const { id, name, kind, sourceRepository } = app;
+        await saveApplication({ id, name, kind, sourceRepository: sourceRepository ?? "", environment }, current);
+      });
+      item.append(editor);
+    }
+    return item;
+  }
+
+  async function saveApplication(values, current) {
+    const saved = await requestJson(`/api/cloud/v1${applicationsPath}`, "POST", values);
+    if (!current()) return;
+    await loadApplications(`Application saved: ${saved.name}. Environment: ${values.environment}.`, saved.id);
+  }
+
+  const template = find("#application-editor");
+  const applicationEditor = template && project.role === "owner"
+    ? template.content.firstElementChild.cloneNode(true) : null;
+  if (applicationEditor) {
+    applicationEditor.hidden = true;
+    wireEditor(applicationEditor, saveApplication);
+    details.append(applicationEditor);
+  }
+
+  let applicationRevision = 0;
+  async function loadApplications(announcement = "", appId) {
+    if (revision !== projectRevision) return;
+    const read = ++applicationRevision;
+    if (applicationEditor) applicationEditor.hidden = true;
     message.textContent = "Loading applications…";
     try {
-      const applicationsPath = `${registryPath}/${encodeURIComponent(project.id)}/applications`;
       const records = await readRegistryList(applicationsPath);
-      if (revision !== projectRevision) return;
-      apps.replaceChildren(...records.map(app => {
-        const item = document.createElement("li");
-        const name = document.createElement("strong");
-        const targets = document.createElement("span");
-        name.textContent = app.name;
-        targets.textContent = app.environments.join(" · ");
-        item.append(name, targets);
-        if (app.inspectionEnvironment) item.append(workloadInspection(app, applicationsPath, revision));
-        return item;
-      }));
-      message.textContent = records.length ? "" : "No applications registered.";
+      if (revision !== projectRevision || read !== applicationRevision) return;
+      const items = records.map(renderApplication);
+      apps.replaceChildren(...items);
+      resetEditor(applicationEditor);
+      if (applicationEditor) applicationEditor.hidden = false;
+      message.textContent = announcement || (records.length ? "" : "No applications registered.");
+      const target = items[records.findIndex(app => app.id === appId)]?.querySelector("strong");
+      if (target && details.open) {
+        target.tabIndex = -1;
+        target.focus();
+      }
     } catch (error) {
-      if (revision !== projectRevision) return;
-      if (error.status === 401) location.replace("/sign-in");
-      else message.textContent = error.status === 404 ? "This project is no longer available to you."
-        : "Applications are unavailable. Close and reopen the project to retry.";
-    } finally {
-      loading = false;
+      if (revision !== projectRevision || read !== applicationRevision) return;
+      apps.replaceChildren();
+      if (error.status === 401) {
+        clearWorkspace();
+        location.replace("/sign-in");
+      } else {
+        message.textContent = error.status === 404 ? "This project is no longer available to you."
+          : `${announcement ? announcement + " " : ""}Applications are unavailable. Close and reopen the project to reload the list.`;
+      }
     }
+  }
+  details.addEventListener("toggle", () => {
+    if (details.open) void loadApplications();
   });
   return row;
 }
 
-async function loadProjects() {
+async function loadProjects(openProject, announcement = "") {
   const revision = ++projectRevision;
   const organization = organizationControl.value;
+  const selected = activeOrganization();
+  resetEditor(projectEditor);
+  resetEditor(organizationEditor, selected?.name);
+  if (organizationEditor) {
+    organizationEditor.hidden = selected?.role !== "owner";
+    organizationEditor.querySelector("input").defaultValue = selected?.name ?? "";
+  }
+  if (projectEditor) projectEditor.hidden = true;
   projectList.replaceChildren();
   projectRetry.hidden = true;
   find("#projects").hidden = !organization;
@@ -349,21 +485,32 @@ async function loadProjects() {
   try {
     const projects = await readRegistryList(path);
     if (revision !== projectRevision) return;
-    projectList.replaceChildren(...projects.map(project => renderProject(project, path, revision)));
-    projectStatus.textContent = projects.length ? "" : "No projects are available in this organization.";
+    const rows = projects.map(project => renderProject(project, path, revision));
+    projectList.replaceChildren(...rows);
+    projectStatus.textContent = announcement || (projects.length ? "" : "No projects are available in this organization.");
+    if (projectEditor && selected?.role === "owner") {
+      projectEditor.querySelector("[data-project-scope]").textContent = `Organization: ${selected.name}`;
+      projectEditor.hidden = false;
+    }
+    const target = rows[projects.findIndex(project => project.id === openProject)]?.querySelector("details");
+    if (target) {
+      target.open = true;
+      target.querySelector("summary").focus();
+    }
   } catch (error) {
     if (revision !== projectRevision) return;
     if (error.status === 401) location.replace("/sign-in");
     else {
       projectStatus.textContent = error.status === 404 ? "This organization is no longer available to you."
-        : "Projects are temporarily unavailable.";
+        : `${announcement ? announcement + " " : ""}Projects are temporarily unavailable.`;
       projectRetry.hidden = error.status === 404;
     }
   }
 }
 
-function renderOrganizations(organizations) {
+function renderOrganizations(records, selectedId) {
   if (workspaceClosed) return;
+  organizations = records;
   const organizationList = find("[data-organizations]");
   find('[data-account-form="organization"]').hidden = organizations.length > 0;
   // The authenticated HTML and static script can be cached and rolled back independently.
@@ -382,11 +529,12 @@ function renderOrganizations(organizations) {
   }
   organizationControl.replaceChildren(...organizations.map(organization =>
     new Option(organization.name, organization.id)));
+  if (selectedId) organizationControl.value = selectedId;
   find("[data-organization-picker]").hidden = !organizations.length;
   void loadProjects();
 }
 
-organizationControl?.addEventListener("change", loadProjects);
+organizationControl?.addEventListener("change", () => void loadProjects());
 projectRetry?.addEventListener("click", () => {
   const heading = find("#projects-heading");
   heading.tabIndex = -1;

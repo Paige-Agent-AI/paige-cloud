@@ -319,6 +319,13 @@ export function createAccountHandler({ origin, evaluatorEmails, identity, record
       const result = await records.organizationDetails(await requireAccount(event), organization);
       if (result) return reply(200, result);
     }
+    if (method === "PATCH" && organization && uuid.test(organization)) {
+      const actor = await requireAccount(event);
+      const body = readJson(event, ["expectedName", "name"]);
+      const result = await records.renameOrganization(actor, organization, requireName(body.expectedName), requireName(body.name));
+      if (result?.error === "organization_changed") throw new RequestError(409, "organization_changed");
+      if (result) return reply(200, result);
+    }
     throw new RequestError(404, "not_found");
   }
 
