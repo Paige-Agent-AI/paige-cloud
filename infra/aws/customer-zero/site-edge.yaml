@@ -17,7 +17,7 @@ Parameters:
   SiteAccessMode:
     Type: String
     Default: evaluator-only
-    AllowedValues: [evaluator-only, route-governed]
+    AllowedValues: [evaluator-only, marketing-public, route-governed]
 
 Conditions:
   RouteGovernedAccess: !Equals [!Ref SiteAccessMode, route-governed]
@@ -66,8 +66,9 @@ Resources:
         Runtime: cloudfront-js-2.0
       FunctionCode: !Sub |
         var accountPages = ['/sign-in', '/signup', '/verify-email', '/recover', '/reset-password', '/account'];
-        var publicAssets = ['/', '/index.html', '/site.css', '/site.js', '/account.css', '/account.js',
+        var marketingAssets = ['/', '/index.html', '/site.css', '/site.js',
           '/cloud-bracket.svg', '/favicon.svg', '/favicon.ico', '/instrument-sans.woff2', '/instrument-sans-OFL.txt'];
+        var accountAssets = ['/account.css', '/account.js'];
         var authPrefix = '/api/cloud/auth/';
         var registry = /^\/api\/cloud\/v1\/organizations\/[a-fA-F0-9-]{36}\/projects(?:\/[a-z0-9][a-z0-9-]{0,47}\/applications)?$/;
         var workload = /^\/api\/cloud\/v1\/organizations\/[a-f0-9-]{36}\/projects\/[a-z0-9][a-z0-9-]{0,47}\/applications\/[a-z0-9][a-z0-9-]{0,47}\/environments\/[a-z0-9][a-z0-9-]{0,47}\/(?:inspection|configuration(?:\/revisions\/[1-9][0-9]{0,9})?)$/;
@@ -122,6 +123,11 @@ Resources:
           var reads = request.method === 'GET' || request.method === 'HEAD';
           var isApi = uri.indexOf('/api/') === 0;
           var accountPage = accountPages.indexOf(uri) !== -1;
+          if ('${SiteAccessMode}' === 'marketing-public' && !evaluator) {
+            if (reads && marketingAssets.indexOf(uri) !== -1) return request;
+            return fault(403, 'Forbidden', 'evaluator_network_required', request, isApi,
+              'Private preview', 'Account access is available from the approved evaluator connection.');
+          }
           if ('${SiteAccessMode}' !== 'route-governed') {
             if (!evaluator) {
               if (isApi) return fault(403, 'Forbidden', 'evaluator_network_required', request, true, '', '');
@@ -130,7 +136,7 @@ Resources:
             if (accountPage) request.uri = '/account-entry.html';
             return request;
           }
-          if (reads && publicAssets.indexOf(uri) !== -1) return request;
+          if (reads && (marketingAssets.indexOf(uri) !== -1 || accountAssets.indexOf(uri) !== -1)) return request;
 
           var auth = uri.indexOf(authPrefix) === 0 ? uri.slice(authPrefix.length) : '';
           if (reads && accountPage) {
