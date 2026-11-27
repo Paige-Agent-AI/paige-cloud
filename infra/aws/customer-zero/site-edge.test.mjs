@@ -51,6 +51,29 @@ test("marketing assets and the complete account entry flow accept any viewer net
   }
 });
 
+test("public marketing works without opening the private account pilot", () => {
+  const fn = handler("marketing-public");
+  for (const ip of externalIps) {
+    for (const path of ["/", "/index.html", "/site.css", "/site.js", "/favicon.ico", "/favicon.svg",
+      "/cloud-bracket.svg", "/instrument-sans.woff2"]) {
+      for (const method of ["GET", "HEAD"]) assert.equal(request(fn, ip, path, method).uri, path);
+    }
+    for (const path of ["/account", "/sign-in", "/signup", "/verify-email", "/recover", "/reset-password",
+      "/account-entry.html", workspace, "/platform-operator", "/api/cloud/auth/account", registry, settings]) {
+      const denied = request(fn, ip, path, "GET", "a.b.c");
+      assert.equal(denied.statusCode, 403);
+      assert.equal(denied.headers["cache-control"].value, "no-store");
+    }
+    for (const path of ["/", signup, "/api/cloud/auth/sign-in", "/api/cloud/auth/recover", registry]) {
+      assert.equal(request(fn, ip, path, "POST").statusCode, 403);
+    }
+    assert.equal(request(fn, ip, "/sign-in", "HEAD").body, undefined);
+  }
+  assert.equal(request(fn, evaluatorIp, "/sign-in").uri, "/account-entry.html");
+  assert.equal(request(fn, evaluatorIp, workspace, "GET", "a.b.c").uri, workspace);
+  assert.equal(request(fn, evaluatorIp, signup, "POST").uri, signup);
+});
+
 test("workspace and data API still depend on the origin session and authority", () => {
   const fn = handler("route-governed");
   const ip = externalIps[0];
