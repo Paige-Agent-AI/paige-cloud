@@ -64,6 +64,20 @@ For PC-BR-15, 27, 31, 34–36 and PC-GR-25–28, Cloud supplies the current prov
 4. Surface working operations and attention states inside the approved Mission Control direction. A registry record, desired binding, and provider observation should always remain distinguishable.
 5. Connect eligible operations to original systems. Trust and Spine bind intent and capability to actor, scope, approvals and expiry. Vault resolves scoped references. Work, Harness and Orchestration handle durable execution, Action Bus coordinates events, and Rail records declaration, effects and independent readback. Model Fabric applies existing routing, Knowledge/Memory/Skills/MCP supply authorized context, and Intelligence/Evals evaluate verified outcomes. A deterministic operator path and independent recovery stay available.
 
+## Independent database-contract baseline
+
+The original PAIGE Agent AI database-contract job replays migrations and reproduces deployed API-role object ACLs and PostgreSQL default privileges before applying candidate migrations. Use a restricted schema-only baseline with a known deployed source commit. Preserve the original full schema, custom roles, explicit public ACL dump, raw pre/post migration lists and normalized recorded versions. Retain the exact PostgreSQL image digest and CLI version. A migration replay alone cannot reconstruct observed deployed grants.
+
+Before admitting a baseline to CI, restore it in isolation. Reconcile the recorded migration frontier against the original source, compare roles, object and default ACLs, ownership, extension versions, RLS, and privileged function behavior. Use the original grant reconciler and run the complete unmodified database-contract suite, including the candidate migration ordering proof. Keep exports in restricted custody and file independent capture and restore evidence in the existing record. [ANT-178](https://linear.app/paigeagentai/issue/ANT-178)
+
+The portable gate reads `manifest.json` and the six original files. The manifest uses schema `paige.database-baseline.v1` and carries `sourceCommit`, `capturedAt`, `postgresVersion`, `cliVersion`, `postgresImage` (the image digest), `captureReceipt`, `restoreReceipt` and a SHA-256 `files` map. Pin the manifest digest and source commit from the independently reviewed record outside the bundle.
+
+```sh
+node infra/aws/customer-zero/verify-database-baseline.mjs <local-bundle-directory> <approved-manifest-sha256> <deployed-source-commit>
+```
+
+This gate checks provenance fields and content integrity. Database verification requires the independently captured and restored bundle and the original suite.
+
 ## Historical F2 preview architecture
 
 The private Cloud repository identifies the public frontend by full commit SHA. GitHub Actions builds and tests a static nginx image from locked dependencies and digest-pinned bases, then publishes the candidate to the private GHCR package. The job records both Git revisions and the image manifest digest.
