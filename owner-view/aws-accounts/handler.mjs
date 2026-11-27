@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { timingSafeEqual } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 
 const prefix = "/api/cloud/auth";
 const cookieName = "__Host-paige_cloud_session";
@@ -125,6 +126,26 @@ export function createAccountHandler({ origin, evaluatorEmails, identity, record
     return account;
   }
 
+  async function openVerifiedSession(email, password) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await identity.signIn(email, password);
+      const token = result?.token;
+      if (typeof token !== "string" || token.length > 3800 || !jwt.test(token) ||
+          !Number.isSafeInteger(result.lifetimeSeconds) || result.lifetimeSeconds <= 0) break;
+
+      const user = await identity.verify(token);
+      if (user) {
+        if (normalizeEmail(user.email) !== email) break;
+        return { token, user, lifetime: Math.min(result.lifetimeSeconds, 3600) };
+      }
+
+      // Cognito can reject a token minted immediately after global sign-out.
+      // Mint a fresh token once after the provider's timestamp has advanced.
+      if (attempt === 0) await delay(1250);
+    }
+    throw new RequestError(503, "account_service_unavailable");
+  }
+
   async function handle(event) {
     const method = event.requestContext?.http?.method;
     const path = event.rawPath;
@@ -176,16 +197,9 @@ export function createAccountHandler({ origin, evaluatorEmails, identity, record
         const email = requireEmail(body.email);
         const password = requirePassword(body.password);
         if (!eligible.has(email)) throw new RequestError(401, "invalid_credentials");
-        const result = await identity.signIn(email, password);
-        const token = result?.token;
-        if (typeof token !== "string" || token.length > 3800 || !jwt.test(token) ||
-            !Number.isSafeInteger(result.lifetimeSeconds) || result.lifetimeSeconds <= 0) {
-          throw new RequestError(503, "account_service_unavailable");
-        }
-        const user = await requireIdentity(token);
+        const { token, user, lifetime } = await openVerifiedSession(email, password);
         const account = await records.recordIdentity(user);
         if (!account) throw new RequestError(503, "account_service_unavailable");
-        const lifetime = Math.min(result.lifetimeSeconds, 3600);
         return reply(204, undefined, [cookieName + "=" + token + "; " + cookieAttributes + "; Max-Age=" + lifetime]);
       }
       case "POST /sign-out": {
