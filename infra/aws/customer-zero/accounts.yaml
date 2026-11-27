@@ -25,9 +25,25 @@ Parameters:
     Type: String
     Default: 'false'
     AllowedValues: ['true', 'false']
+  InspectionAliasArn:
+    Type: String
+    Default: ''
+    AllowedPattern: '(|arn:aws:lambda:us-east-2:[0-9]{12}:function:paige-cloud-customer-zero-independent:live)'
+  InspectionScope:
+    Type: String
+    Default: ''
+    AllowedPattern: '(|[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}(/[a-z0-9][a-z0-9-]{0,47}){3})'
+
+Rules:
+  InspectionRequiresEvaluatorBinding:
+    RuleCondition: !Not [!Equals [!Ref InspectionAliasArn, '']]
+    Assertions:
+      - Assert: !And [!Not [!Equals [!Ref InspectionScope, '']], !Equals [!Ref EvaluatorApiEnabled, 'true']]
+        AssertDescription: Workload inspection requires a registered scope and the private evaluator routes.
 
 Conditions:
   PublishEvaluatorRoutes: !Equals [!Ref EvaluatorApiEnabled, 'true']
+  EnableInspection: !Not [!Equals [!Ref InspectionAliasArn, '']]
 
 Resources:
   IdentityPool:
@@ -170,6 +186,8 @@ Resources:
           CLOUD_DB_CLUSTER_ARN: !GetAtt AccountDatabase.DBClusterArn
           CLOUD_DB_RUNTIME_SECRET_ARN: !Ref RuntimeLogin
           CLOUD_DB_NAME: paige_cloud
+          CLOUD_INSPECTION_SCOPE: !Ref InspectionScope
+          CLOUD_INSPECTION_ALIAS: !Ref InspectionAliasArn
 
   AccountsLog:
     Type: AWS::Logs::LogGroup
@@ -204,6 +222,12 @@ Resources:
               - Effect: Allow
                 Action: [logs:CreateLogStream, logs:PutLogEvents]
                 Resource: !GetAtt AccountsLog.Arn
+              - !If
+                - EnableInspection
+                - Effect: Allow
+                  Action: lambda:InvokeFunction
+                  Resource: !Ref InspectionAliasArn
+                - !Ref AWS::NoValue
 
   AccountsApi:
     Type: AWS::ApiGatewayV2::Api

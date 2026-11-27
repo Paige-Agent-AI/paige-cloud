@@ -4,6 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 const prefix = "/api/cloud/auth";
 const registryPath = /^\/api\/cloud\/v1\/organizations\/([a-fA-F0-9-]{36})\/projects(?:\/([a-z0-9][a-z0-9-]{0,47})\/applications)?$/;
+const observationPath = /^\/api\/cloud\/v1\/organizations\/([a-f0-9-]{36})\/projects\/([a-z0-9][a-z0-9-]{0,47})\/applications\/([a-z0-9][a-z0-9-]{0,47})\/environments\/([a-z0-9][a-z0-9-]{0,47})\/inspection$/;
 const resourceId = /^[a-z0-9][a-z0-9-]{0,47}$/;
 const repositoryName = /^[a-zA-Z0-9][a-zA-Z0-9-]{0,38}\/[a-zA-Z0-9_.-]{1,100}$/;
 const cookieName = "__Host-paige_cloud_session";
@@ -110,7 +111,7 @@ function requireResourceId(value) {
   return value;
 }
 
-export function createAccountHandler({ origin, evaluatorEmails, identity, records, edgeKey, consoleHtml }) {
+export function createAccountHandler({ origin, evaluatorEmails, identity, records, edgeKey, consoleHtml, workloadObservation }) {
   const site = new URL(origin);
   if (site.protocol !== "https:" || site.origin !== origin) throw new Error("An HTTPS site origin is required");
   const eligible = new Set(evaluatorEmails.map(requireEmail));
@@ -179,7 +180,26 @@ export function createAccountHandler({ origin, evaluatorEmails, identity, record
     }
     if (result === null || result === undefined) throw new RequestError(404, "not_found");
     if (["registration_conflict", "registry_limit"].includes(result.error)) throw new RequestError(409, result.error);
+    if (method === "GET" && project && workloadObservation) {
+      result = result.map(record => {
+        const environment = workloadObservation.targetFor(organization, project, record);
+        return environment ? { ...record, inspectionEnvironment: environment } : record;
+      });
+    }
     return reply(200, result);
+  }
+
+  async function handleObservation(event, method, [, organization, project, application, environment]) {
+    if (!workloadObservation || method !== "POST" || !uuid.test(organization)) throw new RequestError(404, "not_found");
+    if (event.headers?.origin !== origin) throw new RequestError(403, "origin_denied");
+    const actor = await requireAccount(event);
+    const registered = await records.registryApplications(actor, organization, project);
+    const result = await workloadObservation.inspect(actor, { organization, project, application, environment }, registered);
+    if (result.status === 200) return reply(200, result.observation);
+    if (result.status === 404) throw new RequestError(404, "not_found");
+    if (result.status === 403) throw new RequestError(403, "inspection_denied");
+    if (result.status === 429) throw new RequestError(429, "inspection_limited");
+    throw new RequestError(503, "inspection_unavailable");
   }
 
   async function handle(event) {
@@ -202,6 +222,8 @@ export function createAccountHandler({ origin, evaluatorEmails, identity, record
         body: consoleHtml
       };
     }
+    const observation = typeof path === "string" && path.match(observationPath);
+    if (observation) return handleObservation(event, method, observation);
     const registry = typeof path === "string" && path.match(registryPath);
     if (registry) return handleRegistry(event, method, registry[1], registry[2]);
     const route = typeof path === "string" && path.startsWith(prefix + "/") ? path.slice(prefix.length) : "";

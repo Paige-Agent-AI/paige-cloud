@@ -24,6 +24,7 @@ verify_db() {
 verify_db -c 'CREATE ROLE paige_cloud_account_runtime NOLOGIN'
 verify_db < "$dir/001-accounts.sql"
 verify_db < "$dir/002-registry.sql"
+verify_db < "$dir/003-workload-observation.sql"
 verify_db < "$dir/account-records.test.sql"
 verify_db < "$dir/registry.test.sql"
 

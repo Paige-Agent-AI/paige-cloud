@@ -40,6 +40,10 @@
 .project-list span { color: var(--ink-muted); font-size: 0.88rem; }
 .project-list ul li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 1rem; padding: 0.45rem 0 0.45rem 1rem; overflow-wrap: anywhere; }
 .project-list p:not(:empty) { padding: 0.3rem 1rem 0.65rem; }
+.workload-inspection { flex: 0 0 100%; min-width: 0; }
+.workload-inspection button { min-height: 2.75rem; }
+.workload-inspection p:not(:empty) { padding: 0 0 0.35rem; }
+.workload-inspection time { white-space: normal; }
 [data-project-retry]:not([hidden]) { margin-top: 0.5rem; min-height: 2.75rem; }
 
 @media (max-width: 590px) {

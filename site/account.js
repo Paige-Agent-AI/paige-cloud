@@ -225,6 +225,57 @@ async function readRegistryList(path) {
   return result;
 }
 
+function workloadInspection(app, applicationsPath, revision) {
+  const container = document.createElement("div");
+  const trigger = document.createElement("button");
+  const observation = document.createElement("p");
+  const path = `${applicationsPath}/${encodeURIComponent(app.id)}/environments/${encodeURIComponent(app.inspectionEnvironment)}/inspection`;
+  container.className = "workload-inspection";
+  trigger.className = "plain-button";
+  trigger.type = "button";
+  trigger.textContent = `Check ${app.inspectionEnvironment} health`;
+  observation.setAttribute("role", "status");
+  container.append(trigger, observation);
+  const isCurrent = () => revision === projectRevision && container.isConnected;
+
+  trigger.addEventListener("click", async () => {
+    if (!isCurrent()) return;
+    trigger.setAttribute("aria-disabled", "true");
+    trigger.disabled = true;
+    observation.textContent = "Checking the running workload…";
+    try {
+      const result = await requestJson(`/api/cloud/v1${path}`, "POST");
+      if (!isCurrent()) return;
+      const time = document.createElement("time");
+      time.dateTime = result.observedAt;
+      time.textContent = new Intl.DateTimeFormat(undefined, {
+        month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+        second: "2-digit", timeZoneName: "short"
+      }).format(new Date(result.observedAt));
+      const status = document.createElement("strong");
+      status.textContent = result.state === "healthy" ? "Healthy" : "Needs attention";
+      observation.replaceChildren(status, ` · Version ${result.release.version} · ${result.release.commit.slice(0, 8)} · `, time);
+    } catch (error) {
+      if (!isCurrent()) return;
+      if (error.status === 401) {
+        clearWorkspace();
+        location.replace("/sign-in");
+      } else if (error.status === 404 || error.status === 403) {
+        observation.textContent = "This workload is no longer available to inspect.";
+        trigger.hidden = true;
+      } else if (error.status === 429) {
+        observation.textContent = "Inspection limit reached. Try again in 30 seconds. Daily capacity resets at 00:00 UTC.";
+      } else {
+        observation.textContent = "Health could not be verified. Try again in 30 seconds.";
+      }
+    } finally {
+      trigger.disabled = false;
+      trigger.removeAttribute("aria-disabled");
+    }
+  });
+  return container;
+}
+
 function renderProject(project, registryPath, revision) {
   const row = document.createElement("li");
   const details = document.createElement("details");
@@ -246,7 +297,8 @@ function renderProject(project, registryPath, revision) {
     apps.replaceChildren();
     message.textContent = "Loading applications…";
     try {
-      const records = await readRegistryList(`${registryPath}/${encodeURIComponent(project.id)}/applications`);
+      const applicationsPath = `${registryPath}/${encodeURIComponent(project.id)}/applications`;
+      const records = await readRegistryList(applicationsPath);
       if (revision !== projectRevision) return;
       apps.replaceChildren(...records.map(app => {
         const item = document.createElement("li");
@@ -255,6 +307,7 @@ function renderProject(project, registryPath, revision) {
         name.textContent = app.name;
         targets.textContent = app.environments.join(" · ");
         item.append(name, targets);
+        if (app.inspectionEnvironment) item.append(workloadInspection(app, applicationsPath, revision));
         return item;
       }));
       message.textContent = records.length ? "" : "No applications registered.";
