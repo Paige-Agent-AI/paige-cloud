@@ -71,6 +71,7 @@ async function bootstrap() {
   const workloadConfiguration = await readFile(new URL("../sql/cloud-accounts/005-workload-configuration.sql", import.meta.url), "utf8");
   const configurationHistory = await readFile(new URL("../sql/cloud-accounts/006-configuration-history.sql", import.meta.url), "utf8");
   const accountEmailAdmission = await readFile(new URL("../sql/cloud-accounts/007-account-email-admission.sql", import.meta.url), "utf8");
+  const accountEmailCapacity = await readFile(new URL("../sql/cloud-accounts/008-account-email-capacity.sql", import.meta.url), "utf8");
   const connection = { resourceArn, secretArn, database: "paige_cloud" };
   const data = new RDSDataClient({});
   const { transactionId } = await data.send(new BeginTransactionCommand(connection));
@@ -96,6 +97,7 @@ async function bootstrap() {
     applied = (await applyAdditiveMigration("005", workloadConfiguration, execute)) || applied;
     applied = (await applyAdditiveMigration("006", configurationHistory, execute)) || applied;
     applied = (await applyAdditiveMigration("007", accountEmailAdmission, execute)) || applied;
+    applied = (await applyAdditiveMigration("008", accountEmailCapacity, execute)) || applied;
     await data.send(new CommitTransactionCommand(transaction));
   } catch (error) {
     try {
