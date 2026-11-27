@@ -112,12 +112,16 @@ function createAccountRecords({ resourceArn, secretArn, database }) {
   if (!resourceArn || !secretArn || !database) throw new Error("The Cloud accounts database is required");
   const client = new RDSDataClient({});
 
-  async function call(sql, values, decode = value => value) {
+  async function query(sql, values) {
     const response = await client.send(new ExecuteStatementCommand({
       resourceArn, secretArn, database, sql,
       parameters: Object.entries(values).map(([name, value]) => ({ name, value: { stringValue: value } }))
     }));
-    const field = response.records?.[0]?.[0];
+    return response.records ?? [];
+  }
+
+  async function call(sql, values, decode = value => value) {
+    const field = (await query(sql, values))[0]?.[0];
     if (field?.isNull) return null;
     if (typeof field?.stringValue !== "string") throw new Error("Invalid Cloud account response");
     return decode(field.stringValue);
@@ -154,9 +158,13 @@ function createAccountRecords({ resourceArn, secretArn, database }) {
       return call("SELECT CAST(cloud_accounts.registry_create_project(CAST(:actor AS uuid), CAST(:organization AS uuid), :project, :name) AS text)",
         { actor, organization, project, name }, JSON.parse);
     },
-    registryApplications(actor, organization, project) {
-      return call("SELECT CAST(cloud_accounts.registry_list_applications(CAST(:actor AS uuid), CAST(:organization AS uuid), :project) AS text)",
-        { actor, organization, project }, JSON.parse);
+    async registryApplications(actor, organization, project) {
+      const rows = await query("SELECT cloud_accounts.registry_list_applications(CAST(:actor AS uuid), CAST(:organization AS uuid), :project)",
+        { actor, organization, project });
+      if (rows.length === 1 && rows[0][0]?.isNull) return null;
+      if (rows.length === 1 && rows[0][0]?.stringValue === "") return [];
+      if (!rows.length) throw new Error("Invalid registry response");
+      return rows.map(([field]) => JSON.parse(field.stringValue));
     },
     registryRegisterApplication(actor, organization, project, { id, name, kind, repository, environment }) {
       return call(`SELECT CAST(cloud_accounts.registry_register_application(CAST(:actor AS uuid), CAST(:organization AS uuid),

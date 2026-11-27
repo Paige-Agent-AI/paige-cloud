@@ -85,21 +85,29 @@ BEGIN
 END;
 $$;
 
-CREATE FUNCTION cloud_accounts.registry_list_applications(actor uuid, org uuid, project text) RETURNS jsonb
+CREATE FUNCTION cloud_accounts.registry_list_applications(actor uuid, org uuid, project text) RETURNS SETOF text
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp
 AS $$
-  SELECT COALESCE(jsonb_agg(jsonb_build_object(
-    'id', a.id, 'name', a.name, 'kind', a.kind, 'sourceRepository', a.source_repository,
-    'environments', (SELECT jsonb_agg(t.environment_id ORDER BY t.environment_id)
-      FROM cloud_accounts.registry_targets t WHERE t.organization_id = org
-        AND t.project_id = project AND t.application_id = a.id)
-  ) ORDER BY a.id), '[]'::jsonb)
-  FROM cloud_accounts.registry_applications a WHERE a.organization_id = org AND a.project_id = project
-  HAVING EXISTS (
-    SELECT 1 FROM cloud_accounts.registry_grants g JOIN cloud_accounts.memberships m
+  WITH access AS (
+    SELECT EXISTS (SELECT 1 FROM cloud_accounts.registry_grants g JOIN cloud_accounts.memberships m
       ON m.organization_id = g.organization_id AND m.account_id = g.account_id
     WHERE g.organization_id = org AND g.project_id = project AND g.account_id = actor AND m.revoked_at IS NULL
+    ) AS permitted
   )
+  -- A sentinel distinguishes denied from empty. Each application gets its own
+  -- Data API row, including its targets, to stay within the per-row limit.
+  SELECT CASE
+    WHEN NOT access.permitted THEN NULL
+    WHEN a.id IS NULL THEN ''
+    ELSE jsonb_build_object(
+      'id', a.id, 'name', a.name, 'kind', a.kind, 'sourceRepository', a.source_repository,
+      'environments', (SELECT jsonb_agg(t.environment_id ORDER BY t.environment_id)
+        FROM cloud_accounts.registry_targets t WHERE t.organization_id = org
+          AND t.project_id = project AND t.application_id = a.id))::text
+  END
+  FROM access LEFT JOIN cloud_accounts.registry_applications a
+    ON access.permitted AND a.organization_id = org AND a.project_id = project
+  ORDER BY a.id
 $$;
 
 CREATE FUNCTION cloud_accounts.registry_register_application(

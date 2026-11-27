@@ -41,10 +41,10 @@ BEGIN
   END IF;
   IF cloud_accounts.registry_register_application(actor, org, 'workspace', 'independent', 'Changed', 'service', NULL, 'preview')->>'error'
        IS DISTINCT FROM 'registration_conflict'
-     OR jsonb_array_length(cloud_accounts.registry_list_applications(actor, org, 'workspace')) <> 2
-     OR cloud_accounts.registry_list_applications(other_actor, other_org, 'workspace') IS DISTINCT FROM '[]'::jsonb
-     OR cloud_accounts.registry_list_applications(other_actor, org, 'workspace') IS NOT NULL
-     OR cloud_accounts.registry_list_applications(member, org, 'workspace') IS NOT NULL
+     OR (SELECT count(*) FROM cloud_accounts.registry_list_applications(actor, org, 'workspace')) <> 2
+     OR (SELECT * FROM cloud_accounts.registry_list_applications(other_actor, other_org, 'workspace')) IS DISTINCT FROM ''
+     OR (SELECT * FROM cloud_accounts.registry_list_applications(other_actor, org, 'workspace')) IS NOT NULL
+     OR (SELECT * FROM cloud_accounts.registry_list_applications(member, org, 'workspace')) IS NOT NULL
      OR cloud_accounts.registry_register_application(other_actor, org, 'workspace', 'app', 'Foreign', 'service', NULL, 'preview') IS NOT NULL THEN
     RAISE EXCEPTION 'application collision or project membership isolation failed';
   END IF;
@@ -61,7 +61,7 @@ DECLARE
   member uuid := current_setting('paige.registry.member')::uuid;
   org uuid := current_setting('paige.registry.org')::uuid;
 BEGIN
-  IF jsonb_array_length(cloud_accounts.registry_list_applications(member, org, 'workspace')) IS DISTINCT FROM 2
+  IF (SELECT count(*) FROM cloud_accounts.registry_list_applications(member, org, 'workspace')) IS DISTINCT FROM 2::bigint
      OR cloud_accounts.registry_register_application(member, org, 'workspace', 'app', 'Denied', 'service', NULL, 'preview') IS NOT NULL THEN
     RAISE EXCEPTION 'project member read/write separation failed';
   END IF;
@@ -73,9 +73,36 @@ WHERE organization_id = current_setting('paige.registry.org')::uuid AND account_
 SET LOCAL ROLE paige_cloud_account_runtime;
 DO $$
 BEGIN
-  IF cloud_accounts.registry_list_applications(current_setting('paige.registry.member')::uuid,
-     current_setting('paige.registry.org')::uuid, 'workspace') IS NOT NULL THEN
+  IF (SELECT * FROM cloud_accounts.registry_list_applications(current_setting('paige.registry.member')::uuid,
+     current_setting('paige.registry.org')::uuid, 'workspace')) IS NOT NULL THEN
     RAISE EXCEPTION 'revoked organization membership left a project read active';
+  END IF;
+END
+$$;
+RESET ROLE;
+
+-- The complete result exceeds the Data API's per-row limit. Each application
+-- still fits individually, and the aggregate stays below the response limit.
+INSERT INTO cloud_accounts.registry_applications
+SELECT current_setting('paige.registry.org')::uuid, 'workspace', 'app-' || n, 'Application ' || n, 'application', NULL
+FROM generate_series(1, 98) n;
+INSERT INTO cloud_accounts.registry_environments
+SELECT current_setting('paige.registry.org')::uuid, 'workspace', repeat('e', 45) || lpad(n::text, 3, '0')
+FROM generate_series(1, 48) n;
+INSERT INTO cloud_accounts.registry_targets
+SELECT a.organization_id, a.project_id, a.id, e.id FROM cloud_accounts.registry_applications a
+JOIN cloud_accounts.registry_environments e USING (organization_id, project_id)
+WHERE a.organization_id = current_setting('paige.registry.org')::uuid
+ON CONFLICT DO NOTHING;
+SET LOCAL ROLE paige_cloud_account_runtime;
+DO $$
+DECLARE row_count bigint; largest_row integer; result_bytes bigint;
+BEGIN
+  SELECT count(*), max(octet_length(value)), sum(octet_length(value)) INTO row_count, largest_row, result_bytes
+  FROM cloud_accounts.registry_list_applications(current_setting('paige.registry.owner')::uuid,
+       current_setting('paige.registry.org')::uuid, 'workspace') value;
+  IF row_count <> 100 OR largest_row >= 65536 OR result_bytes NOT BETWEEN 65537 AND 900000 THEN
+    RAISE EXCEPTION 'registry output is unsafe at configured capacity';
   END IF;
 END
 $$;
