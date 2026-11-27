@@ -32,6 +32,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$REVIEW_HEAD"
           docker build --target verify ./owner-view
           docker build --tag "paige-cloud-owner-view-check:$REVIEW_HEAD" ./owner-view
+          bash owner-view/sql/cloud-accounts/verify-postgres.sh
           printf 'Verified owner-view PR head `%s` (tests and image build; not published).\n' "$REVIEW_HEAD" >> "$GITHUB_STEP_SUMMARY"
 
   publish:
