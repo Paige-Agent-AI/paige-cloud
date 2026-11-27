@@ -31,6 +31,16 @@
 .organization-list { padding: 0; list-style: none; }
 .organization-list li { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; border-bottom: 1px solid var(--line); padding: 0.7rem 0; overflow-wrap: anywhere; }
 .organization-list li span { color: var(--ink-muted); }
+.organization-picker { display: grid; gap: 0.35rem; width: min(100%, 25rem); margin-top: 0.55rem; font-size: 0.88rem; }
+.organization-picker select { min-width: 0; min-height: 2.75rem; padding: 0.45rem 0.65rem; border: 1px solid #8292a3; border-radius: 0.38rem; color: var(--midnight); background: var(--white); font: inherit; }
+.project-list, .project-list ul { padding: 0; list-style: none; }
+.project-list > li { border-bottom: 1px solid var(--line); }
+.project-list summary { min-height: 2.75rem; padding: 0.65rem 0.3rem; cursor: pointer; overflow-wrap: anywhere; }
+.project-list summary span { margin-inline-start: 0.75rem; }
+.project-list span { color: var(--ink-muted); font-size: 0.88rem; }
+.project-list ul li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 1rem; padding: 0.45rem 0 0.45rem 1rem; overflow-wrap: anywhere; }
+.project-list p:not(:empty) { padding: 0.3rem 1rem 0.65rem; }
+[data-project-retry]:not([hidden]) { margin-top: 0.5rem; min-height: 2.75rem; }
 
 @media (max-width: 590px) {
   .account-shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }

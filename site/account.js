@@ -6,6 +6,7 @@ const credentials = find('[data-account-form="credentials"]');
 const profile = find('[data-account-form="profile"]');
 const workspace = find("[data-workspace]");
 const links = find("[data-account-links]");
+const sessionUpdates = typeof BroadcastChannel === "function" ? new BroadcastChannel("paige-cloud-session") : null;
 
 const screens = {
   "/sign-in": {
@@ -46,8 +47,8 @@ const errors = {
   try_again_later: "Too many attempts. Wait a minute, then try again."
 };
 
-async function request(path, method = "GET", body) {
-  const response = await fetch(base + path, {
+async function requestJson(url, method, body) {
+  const response = await fetch(url, {
     method, credentials: "same-origin", cache: "no-store",
     ...(body && { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
   });
@@ -59,6 +60,10 @@ async function request(path, method = "GET", body) {
     throw error;
   }
   return result;
+}
+
+function request(path, method = "GET", body) {
+  return requestJson(base + path, method, body);
 }
 
 function showError(error) {
@@ -147,13 +152,18 @@ credentials?.addEventListener("submit", event => {
       }
       throw error;
     }
+    if (submitted === "/sign-in" || submitted === "/reset-password") sessionUpdates?.postMessage("changed");
     if (!isCurrent()) return;
     switch (submitted) {
       case "/sign-up": advance("/verify-email", values.email); break;
       case "/verify-email": advance("/sign-in", values.email, "Email verified. You can sign in now."); break;
       case "/recover": advance("/reset-password", values.email, "If this account is eligible, a code will arrive by email."); break;
-      case "/reset-password": advance("/sign-in", values.email, "Password reset. Sign in with your new password."); break;
-      case "/sign-in": location.replace("/mission-control"); break;
+      case "/reset-password":
+        advance("/sign-in", values.email, "Password reset. Sign in with your new password.");
+        break;
+      case "/sign-in":
+        location.replace("/mission-control");
+        break;
     }
   }, isCurrent);
 });
@@ -179,22 +189,148 @@ async function readAccount() {
   }
 }
 
-function renderOrganizations(organizations) {
-  find("[data-organizations]").replaceChildren(...organizations.map(organization => {
-    const item = document.createElement("li");
-    const label = document.createElement("strong");
-    const role = document.createElement("span");
-    label.textContent = organization.name;
-    role.textContent = organization.role;
-    item.append(label, role);
-    return item;
-  }));
-  find('[data-account-form="organization"]').hidden = organizations.length > 0;
+const organizationControl = find("[data-active-organization]");
+const projectStatus = find("[data-project-status]");
+const projectRetry = find("[data-project-retry]");
+const projectList = find("[data-projects]");
+let projectRevision = 0;
+let workspaceClosed = false;
+
+function clearWorkspace() {
+  if (!workspace) return;
+  workspaceClosed = true;
+  projectRevision++;
+  projectList?.replaceChildren();
+  const projectLink = find("[data-project-link]");
+  if (projectLink) projectLink.hidden = true;
+  find("[data-account-content]").hidden = true;
 }
+
+if (workspace) {
+  const refreshWorkspace = () => {
+    clearWorkspace();
+    location.reload();
+  };
+  sessionUpdates?.addEventListener("message", event => {
+    if (event.data === "changed" && !workspaceClosed) refreshWorkspace();
+  });
+  window.addEventListener("pageshow", event => {
+    if (event.persisted) refreshWorkspace();
+  });
+}
+
+async function readRegistryList(path) {
+  const result = await requestJson(`/api/cloud/v1${path}`, "GET");
+  if (!Array.isArray(result)) throw new Error("Invalid registry response");
+  return result;
+}
+
+function renderProject(project, registryPath, revision) {
+  const row = document.createElement("li");
+  const details = document.createElement("details");
+  const summary = document.createElement("summary");
+  const name = document.createElement("strong");
+  const role = document.createElement("span");
+  const message = document.createElement("p");
+  const apps = document.createElement("ul");
+  name.textContent = project.name;
+  role.textContent = project.role;
+  message.setAttribute("role", "status");
+  summary.append(name, role);
+  details.append(summary, message, apps);
+  row.append(details);
+  let loading = false;
+  details.addEventListener("toggle", async () => {
+    if (!details.open || loading || revision !== projectRevision) return;
+    loading = true;
+    apps.replaceChildren();
+    message.textContent = "Loading applications…";
+    try {
+      const records = await readRegistryList(`${registryPath}/${encodeURIComponent(project.id)}/applications`);
+      if (revision !== projectRevision) return;
+      apps.replaceChildren(...records.map(app => {
+        const item = document.createElement("li");
+        const name = document.createElement("strong");
+        const targets = document.createElement("span");
+        name.textContent = app.name;
+        targets.textContent = app.environments.join(" · ");
+        item.append(name, targets);
+        return item;
+      }));
+      message.textContent = records.length ? "" : "No applications registered.";
+    } catch (error) {
+      if (revision !== projectRevision) return;
+      if (error.status === 401) location.replace("/sign-in");
+      else message.textContent = error.status === 404 ? "This project is no longer available to you."
+        : "Applications are unavailable. Close and reopen the project to retry.";
+    } finally {
+      loading = false;
+    }
+  });
+  return row;
+}
+
+async function loadProjects() {
+  const revision = ++projectRevision;
+  const organization = organizationControl.value;
+  projectList.replaceChildren();
+  projectRetry.hidden = true;
+  find("#projects").hidden = !organization;
+  find("[data-project-link]").hidden = !organization;
+  if (!organization) return;
+  const path = `/organizations/${encodeURIComponent(organization)}/projects`;
+  projectStatus.textContent = "Loading projects…";
+  try {
+    const projects = await readRegistryList(path);
+    if (revision !== projectRevision) return;
+    projectList.replaceChildren(...projects.map(project => renderProject(project, path, revision)));
+    projectStatus.textContent = projects.length ? "" : "No projects are available in this organization.";
+  } catch (error) {
+    if (revision !== projectRevision) return;
+    if (error.status === 401) location.replace("/sign-in");
+    else {
+      projectStatus.textContent = error.status === 404 ? "This organization is no longer available to you."
+        : "Projects are temporarily unavailable.";
+      projectRetry.hidden = error.status === 404;
+    }
+  }
+}
+
+function renderOrganizations(organizations) {
+  if (workspaceClosed) return;
+  const organizationList = find("[data-organizations]");
+  find('[data-account-form="organization"]').hidden = organizations.length > 0;
+  // The authenticated HTML and static script can be cached and rolled back independently.
+  organizationList.hidden = Boolean(organizationControl);
+  if (!organizationControl) {
+    organizationList.replaceChildren(...organizations.map(organization => {
+      const item = document.createElement("li");
+      const label = document.createElement("strong");
+      const role = document.createElement("span");
+      label.textContent = organization.name;
+      role.textContent = organization.role;
+      item.append(label, role);
+      return item;
+    }));
+    return;
+  }
+  organizationControl.replaceChildren(...organizations.map(organization =>
+    new Option(organization.name, organization.id)));
+  find("[data-organization-picker]").hidden = !organizations.length;
+  void loadProjects();
+}
+
+organizationControl?.addEventListener("change", loadProjects);
+projectRetry?.addEventListener("click", () => {
+  const heading = find("#projects-heading");
+  heading.tabIndex = -1;
+  heading.focus();
+  void loadProjects();
+});
 
 async function showWorkspace() {
   const account = await readAccount();
-  if (!account) return;
+  if (!account || workspaceClosed) return;
   find("[data-account-number]").textContent = account.number;
   find("[data-account-email]").textContent = account.email;
   renderOrganizations(account.organizations);
@@ -239,6 +375,8 @@ profile?.addEventListener("submit", event => {
 for (const button of document.querySelectorAll("[data-sign-out]")) {
   button.addEventListener("click", () => run(button, async () => {
     await request("/sign-out", "POST");
+    clearWorkspace();
+    sessionUpdates?.postMessage("changed");
     location.replace("/sign-in");
   }));
 }

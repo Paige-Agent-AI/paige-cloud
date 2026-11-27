@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Account workspace · PAIGE Cloud</title>
+  <title>Mission Control · PAIGE Cloud</title>
   <link rel="icon" href="/favicon.ico">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/site.css">
@@ -19,26 +19,36 @@
   <div class="account-shell">
     <nav class="account-rail" aria-label="Mission Control">
       <a href="/mission-control" aria-current="page">Overview</a>
+      <a href="/mission-control#projects" data-project-link hidden>Projects</a>
       <a href="/account">Account settings</a>
     </nav>
     <main class="account-workspace" id="account-main" tabindex="-1" data-workspace>
-      <p class="account-context">Mission Control</p>
-      <h1>Account workspace</h1>
+      <h1>Mission Control</h1>
       <p role="status" data-account-status>Checking your account…</p>
       <div data-account-content hidden>
-        <dl class="account-facts">
-          <div><dt>Account number</dt><dd data-account-number></dd></div>
-          <div><dt>Verified email</dt><dd data-account-email></dd></div>
-        </dl>
         <section class="account-section" aria-labelledby="organizations-heading">
-          <h2 id="organizations-heading">Organizations</h2>
+          <h2 id="organizations-heading">Organization</h2>
           <ul class="organization-list" data-organizations></ul>
+          <label class="organization-picker" data-organization-picker hidden>
+            <span>Active organization</span>
+            <select data-active-organization></select>
+          </label>
           <form method="post" data-account-form="organization" hidden>
             <p>Create your first organization to set up your workspace.</p>
             <label>Organization name <input name="name" maxlength="120" required autocomplete="organization"></label>
             <button class="button button-dark" type="submit">Create organization</button>
           </form>
         </section>
+        <section class="account-section" id="projects" aria-labelledby="projects-heading" hidden>
+          <h2 id="projects-heading">Projects</h2>
+          <p role="status" data-project-status></p>
+          <button class="plain-button" type="button" data-project-retry hidden>Retry projects</button>
+          <ul class="project-list" data-projects></ul>
+        </section>
+        <dl class="account-facts">
+          <div><dt>Account number</dt><dd data-account-number></dd></div>
+          <div><dt>Verified email</dt><dd data-account-email></dd></div>
+        </dl>
       </div>
     </main>
   </div>
