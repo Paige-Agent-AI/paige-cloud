@@ -33,6 +33,15 @@ BEGIN
   IF cloud_accounts.reserve_account_email('enrollment', repeat('f', 64), repeat('d', 64)) THEN
     RAISE EXCEPTION 'enrollment exceeded its daily budget';
   END IF;
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_locks
+    WHERE locktype = 'advisory' AND pid = pg_backend_pid() AND granted AND objsubid = 1
+      AND (classid::bigint << 32 | objid::bigint) =
+          hashtextextended('paige-cloud-account-email:enrollment', 0)
+  ) THEN
+    RAISE EXCEPTION 'admission no longer shares the legacy lane lock during upgrade';
+  END IF;
   IF has_table_privilege(current_user, 'cloud_accounts.account_email_admission', 'SELECT, INSERT, UPDATE, DELETE') THEN
     RAISE EXCEPTION 'runtime can bypass email admission';
   END IF;

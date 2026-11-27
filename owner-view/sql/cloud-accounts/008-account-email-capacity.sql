@@ -44,6 +44,8 @@ BEGIN
 
   -- Reallocations must account for today's admissions under every earlier policy.
   PERFORM pg_advisory_xact_lock(hashtextextended('paige-cloud-account-email:capacity', 0));
+  -- Share the original lane lock with requests already executing during the migration.
+  PERFORM pg_advisory_xact_lock(hashtextextended('paige-cloud-account-email:' || lane_name, 0));
   SELECT * INTO capacity FROM cloud_accounts.account_email_capacity WHERE singleton FOR SHARE;
   IF NOT FOUND THEN RETURN false; END IF;
   IF lane_name = 'enrollment' THEN
