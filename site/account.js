@@ -212,6 +212,8 @@ let organizations = [];
 let projectRevision = 0;
 let workspaceClosed = false;
 const missionHeading = find("[data-mission-heading]");
+const missionViewsReady = missionHeading && getComputedStyle(workspace)
+  .getPropertyValue("--mission-operating-views").trim() === "1";
 const missionViews = {
   overview: ["Mission Control", ""],
   projects: ["Projects", ""],
@@ -221,7 +223,7 @@ const missionViews = {
 };
 
 function renderMissionRoute(moveFocus = false) {
-  if (!missionHeading || workspaceClosed) return;
+  if (!missionViewsReady || workspaceClosed) return;
   const requested = location.hash.slice(1);
   const view = Object.hasOwn(missionViews, requested) ? requested : "overview";
   const [label, description] = missionViews[view];
@@ -354,7 +356,7 @@ if (organizationEditor) wireEditor(organizationEditor, async ({ name }, current)
   status.textContent = "Organization name saved.";
 });
 
-function workloadInspection(app, applicationsPath, revision, report = () => {}) {
+function workloadInspection(app, applicationsPath, revision, settings) {
   const container = document.createElement("div");
   const trigger = document.createElement("button");
   const observation = document.createElement("p");
@@ -368,11 +370,18 @@ function workloadInspection(app, applicationsPath, revision, report = () => {}) 
   observation.setAttribute("role", "status");
   incident.setAttribute("role", "status");
   container.append(trigger, observation, incident);
-  const isCurrent = () => revision === projectRevision && container.isConnected;
+  settings?.connectInspection(denied => {
+    trigger.hidden = denied;
+    observation.textContent = denied ? "This workload is no longer available to inspect." : "";
+    incident.textContent = "";
+  });
 
   trigger.addEventListener("click", async () => {
+    const generation = settings?.inspectionGeneration();
+    const isCurrent = () => revision === projectRevision && container.isConnected
+      && (!settings || settings.acceptsInspection(generation));
     if (!isCurrent()) return;
-    report(null, "Checking the running workload…");
+    settings?.report(null, "Checking the running workload…");
     trigger.setAttribute("aria-disabled", "true");
     trigger.disabled = true;
     observation.textContent = "Checking the running workload…";
@@ -380,7 +389,7 @@ function workloadInspection(app, applicationsPath, revision, report = () => {}) 
     try {
       const result = await requestJson(`/api/cloud/v1${path}`, "POST");
       if (!isCurrent()) return;
-      report(result);
+      settings?.report(result);
       const time = document.createElement("time");
       time.dateTime = result.observedAt;
       time.textContent = new Intl.DateTimeFormat(undefined, {
@@ -409,14 +418,14 @@ function workloadInspection(app, applicationsPath, revision, report = () => {}) 
         clearWorkspace();
         location.replace("/sign-in");
       } else if (error.status === 404 || error.status === 403) {
-        report(null, "Inspection is unavailable in your current scope.");
+        settings?.report(null, "Inspection is unavailable in your current scope.");
         observation.textContent = "This workload is no longer available to inspect.";
         trigger.hidden = true;
       } else if (error.status === 429) {
-        report(null, "Inspection limit reached. No new observation was recorded.");
+        settings?.report(null, "Inspection limit reached. No new observation was recorded.");
         observation.textContent = "Inspection limit reached. Try again in 30 seconds. Daily capacity resets at 00:00 UTC.";
       } else {
-        report(null, "Consumption could not be verified.");
+        settings?.report(null, "Consumption could not be verified.");
         observation.textContent = "Health could not be verified. Try again in 30 seconds.";
       }
     } finally {
@@ -434,13 +443,18 @@ function environmentConfiguration(app, environment, applicationsPath, projectGen
   const runtime = document.createElement("p");
   const path = `/api/cloud/v1${applicationsPath}/${encodeURIComponent(app.id)}/environments/${encodeURIComponent(environment)}/configuration`;
   const bound = app.inspectionEnvironment === environment;
-  const editor = canWrite ? find("#workload-configuration-editor")?.content.firstElementChild.cloneNode(true) : null;
+  const editor = canWrite && missionViewsReady
+    ? find("#workload-configuration-editor")?.content.firstElementChild.cloneNode(true)
+    : null;
   const submit = editor && editor.querySelector("button[type='submit']");
   const errorMessage = editor && editor.querySelector("[role='alert']");
   let saved = null;
   let observed = null;
   let runtimeMessage = bound ? "Run the environment health check to verify consumption." : "No inspection is bound to this environment.";
   let generation = 0;
+  let inspectionGeneration = 0;
+  let inspectionDenied = false;
+  let updateInspectionAccess;
 
   title.textContent = `Configuration · ${environment}`;
   evidence.setAttribute("role", "status");
@@ -475,7 +489,18 @@ function environmentConfiguration(app, environment, applicationsPath, projectGen
     renderRuntime();
   }
 
+  function denyScope() {
+    inspectionDenied = true;
+    inspectionGeneration++;
+    updateInspectionAccess?.(true);
+    report(null, "No configuration evidence is available in your current scope.");
+  }
+
   function showSaved(result) {
+    if (inspectionDenied) {
+      inspectionDenied = false;
+      updateInspectionAccess?.(false);
+    }
     if (editor) {
       editor.elements.logLevel.value = result.configuration?.logLevel ?? "";
       editor.elements.requestTimeoutMs.value = result.configuration?.requestTimeoutMs ?? "";
@@ -512,7 +537,7 @@ function environmentConfiguration(app, environment, applicationsPath, projectGen
       if (!isCurrent(request) || signInAgain(error)) return;
       if (error.status === 404 || error.status === 403) {
         evidence.textContent = "Configuration is unavailable in your current scope.";
-        report(null, "No configuration evidence is available in your current scope.");
+        denyScope();
       } else {
         evidence.textContent = "Could not read configuration. Reopen this environment to retry.";
       }
@@ -544,18 +569,24 @@ function environmentConfiguration(app, environment, applicationsPath, projectGen
           renderRuntime();
           evidence.textContent = "The saved revision changed. Reopen the environment to review it before saving again.";
         } else {
-          report(null, "No configuration evidence is available in your current scope.");
+          denyScope();
           evidence.textContent = "Configuration is unavailable in your current scope.";
         }
         title.focus();
         return;
       }
-      errorMessage.textContent = error.code === "configuration_rate_limited"
-        ? "Wait one minute before saving another revision."
-        : error.code === "configuration_limit"
-          ? "This configuration has reached its revision limit."
-          : "The save could not be confirmed. Reopen this environment to check the saved revision.";
-      errorMessage.hidden = false;
+      if (error.code === "configuration_rate_limited" || error.code === "configuration_limit") {
+        errorMessage.textContent = error.code === "configuration_rate_limited"
+          ? "Wait one minute before saving another revision."
+          : "This configuration has reached its revision limit.";
+        errorMessage.hidden = false;
+      } else {
+        editor.hidden = true;
+        saved = null;
+        renderRuntime();
+        evidence.textContent = "The save could not be confirmed. Reopen this environment to check the saved revision.";
+        title.focus();
+      }
     } finally {
       submit.disabled = false;
       editor.elements.logLevel.disabled = editor.elements.requestTimeoutMs.disabled = false;
@@ -567,7 +598,12 @@ function environmentConfiguration(app, environment, applicationsPath, projectGen
     }
   });
   renderRuntime();
-  return { details, report };
+  return {
+    details, report,
+    connectInspection(update) { updateInspectionAccess = update; },
+    inspectionGeneration: () => inspectionGeneration,
+    acceptsInspection: request => !inspectionDenied && request === inspectionGeneration
+  };
 }
 
 function renderProject(project, registryPath, revision) {
@@ -601,7 +637,7 @@ function renderProject(project, registryPath, revision) {
     configuration.append(...Array.from(settings.values(), result => result.details));
     item.append(configuration);
     if (app.inspectionEnvironment) {
-      item.append(workloadInspection(app, applicationsPath, revision, settings.get(app.inspectionEnvironment)?.report));
+      item.append(workloadInspection(app, applicationsPath, revision, settings.get(app.inspectionEnvironment)));
     } else if (missionHeading) {
       const unavailable = document.createElement("p");
       unavailable.dataset.missionFeature = "observation";
@@ -800,7 +836,7 @@ async function showWorkspace() {
   find("[data-account-email]").textContent = account.email;
   renderOrganizations(account.organizations);
   renderMissionRoute();
-  if (missionHeading) {
+  if (missionViewsReady) {
     for (const link of document.querySelectorAll("[data-mission-route]:not([data-project-link])")) link.hidden = false;
   }
   find("[data-account-content]").hidden = false;

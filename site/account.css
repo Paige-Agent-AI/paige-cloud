@@ -102,6 +102,7 @@
   .account-facts { grid-template-columns: minmax(0, 1fr); }
 }
 
+.mission-surface { --mission-operating-views: 1; }
 [data-mission-view]:not([data-mission-view="overview"]) .mission-overview,
 [data-mission-view="projects"] [data-mission-feature="configuration"],
 [data-mission-view="projects"] [data-mission-feature="observation"],
