@@ -115,7 +115,11 @@ function showScreen(path, email = "", message = "", moveFocus = false) {
   password.required = Boolean(screen.password);
   password.disabled = !screen.password;
   password.autocomplete = screen.password || "current-password";
-  password.minLength = screen.password === "new-password" ? 15 : 1;
+  const choosingPassword = screen.password === "new-password";
+  password.minLength = choosingPassword ? 15 : 1;
+  password.maxLength = choosingPassword ? 256 : 512;
+  if (choosingPassword) password.pattern = "\\S+";
+  else password.removeAttribute("pattern");
   find("[data-password-field]").hidden = !screen.password;
   find("[data-password-note]").hidden = screen.password !== "new-password";
   credentials.elements.code.required = Boolean(screen.code);

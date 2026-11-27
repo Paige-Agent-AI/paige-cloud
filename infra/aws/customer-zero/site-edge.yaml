@@ -19,6 +19,9 @@ Parameters:
     Default: evaluator-only
     AllowedValues: [evaluator-only, route-governed]
 
+Conditions:
+  RouteGovernedAccess: !Equals [!Ref SiteAccessMode, route-governed]
+
 Resources:
   Website:
     Type: AWS::S3::Bucket
@@ -207,7 +210,7 @@ Resources:
     Properties:
       DistributionConfig:
         Enabled: true
-        IPV6Enabled: false
+        IPV6Enabled: !If [RouteGovernedAccess, true, false]
         HttpVersion: http2and3
         DefaultRootObject: index.html
         Origins:

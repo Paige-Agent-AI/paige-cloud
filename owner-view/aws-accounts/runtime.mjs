@@ -22,6 +22,8 @@ import { createWorkloadObservation, parseInspectionScope, parseInspectionRecover
 
 function createCognitoIdentity({ userPoolId, clientId }) {
   const cognito = new CognitoIdentityProviderClient({});
+  // A reserved email attempt can be spent at most once, even if the provider response is lost.
+  const emailCognito = new CognitoIdentityProviderClient({ maxAttempts: 1 });
   const jwt = CognitoJwtVerifier.create({ userPoolId, clientId, tokenUse: "access" });
   let clientSecret;
 
@@ -48,7 +50,7 @@ function createCognitoIdentity({ userPoolId, clientId }) {
 
   return {
     async signUp(email, password) {
-      return cognito.send(new SignUpCommand({
+      return emailCognito.send(new SignUpCommand({
         ClientId: clientId, SecretHash: await secretHash(email), Username: email,
         // Public callers cannot choose or know a password before ownership of the email is established.
         Password: password ?? randomBytes(32).toString("base64url"),
@@ -71,7 +73,7 @@ function createCognitoIdentity({ userPoolId, clientId }) {
       }
     },
     async resendCode(email) {
-      return cognito.send(new ResendConfirmationCodeCommand({
+      return emailCognito.send(new ResendConfirmationCodeCommand({
         ClientId: clientId, SecretHash: await secretHash(email), Username: email
       }));
     },
@@ -110,7 +112,7 @@ function createCognitoIdentity({ userPoolId, clientId }) {
       }
     },
     async startRecovery(email) {
-      return cognito.send(new ForgotPasswordCommand({
+      return emailCognito.send(new ForgotPasswordCommand({
         ClientId: clientId, SecretHash: await secretHash(email), Username: email
       }));
     },

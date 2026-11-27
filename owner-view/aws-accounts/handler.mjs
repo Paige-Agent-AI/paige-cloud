@@ -82,8 +82,8 @@ function requireEmail(input) {
 }
 
 function requirePassword(password, enrollment = false) {
-  if (typeof password !== "string" || Buffer.byteLength(password) > 512 ||
-      [...password].length < (enrollment ? 15 : 1)) {
+  if (typeof password !== "string" || !password.length ||
+      (enrollment ? password.length > 256 || [...password].length < 15 || /\s/u.test(password) : Buffer.byteLength(password) > 512)) {
     throw new RequestError(400, "invalid_password");
   }
   return password;
@@ -125,11 +125,10 @@ export function createAccountHandler({ origin, evaluatorEmails, identity, record
   const expectedKey = Buffer.from(edgeKey);
   if (!["evaluator-only", "members", "public"].includes(enrollmentMode)) throw new Error("Invalid account enrollment mode");
   const publicAccounts = enrollmentMode !== "evaluator-only";
-  if (publicAccounts && typeof records.reserveAccountEmail !== "function") throw new Error("Account email admission is required");
+  if (typeof records.reserveAccountEmail !== "function") throw new Error("Account email admission is required");
   const allowsAccount = email => publicAccounts || eligible.has(email);
 
   async function reserveEmail(event, lane, email) {
-    if (!publicAccounts) return;
     const address = event.headers?.["x-paige-viewer-ip"];
     if (typeof address !== "string" || !isIP(address)) throw new RequestError(403, "edge_required");
     const fingerprint = (kind, value) => createHmac("sha256", expectedKey).update(kind + "\0" + value).digest("hex");
