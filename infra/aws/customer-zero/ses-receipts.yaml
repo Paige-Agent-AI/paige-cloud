@@ -91,7 +91,9 @@ Resources:
           - Email Rendering Failed
         detail:
           mail:
-            source: [!Ref SenderAddress]
+            source:
+              - !Ref SenderAddress
+              - !Sub 'PAIGE Cloud <${SenderAddress}>'
             tags:
               'ses:configuration-set': [!Ref TransactionalConfiguration]
       State: ENABLED
