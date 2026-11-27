@@ -56,7 +56,7 @@ jobs:
           REVIEW_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          node --test infra/aws/customer-zero/workload/service.test.mjs
+          node --test infra/aws/customer-zero/workload/*.test.mjs
           python3 infra/aws/customer-zero/workload/build.py "$REVIEW_HEAD" "$RUNNER_TEMP/workload" --private-drill | tee -a "$GITHUB_STEP_SUMMARY"
           python3 infra/aws/customer-zero/workload/build.py "$REVIEW_HEAD" "$RUNNER_TEMP/workload-repeat" --private-drill
           cmp "$RUNNER_TEMP/workload/a.zip" "$RUNNER_TEMP/workload-repeat/a.zip"

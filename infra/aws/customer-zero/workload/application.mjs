@@ -15,7 +15,7 @@ const key = `workloads/${organization}/${project}/${application}/${environment}/
 const requestedVersion = release.candidate === "drill"
   ? `${dataVersion[0] === "A" ? "B" : "A"}${dataVersion.slice(1)}`
   : dataVersion;
-const s3 = new S3Client({ maxAttempts: 1 });
+const s3 = new S3Client({ maxAttempts: release.candidate === "drill" ? 1 : 2 });
 
 export const handler = inspectWorkload({
   scope, release, dataVersion,

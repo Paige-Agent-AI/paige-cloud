@@ -12,30 +12,52 @@ function sameScope(first, second) {
     .every(key => typeof first[key] === "string" && first[key] && first[key] === second[key]);
 }
 
+const version = value => typeof value === "string" && /^[1-9]\d*$/.test(value);
+const commit = value => typeof value === "string" && /^[a-f0-9]{40}$/.test(value);
+const payloadDigest = value => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+const lambdaDigest = value => typeof value === "string" && /^[A-Za-z0-9+/]{43}=$/.test(value);
+const instant = value => typeof value === "string" && Number.isFinite(Date.parse(value));
+const changeSet = value => typeof value === "string" && /^arn:aws:cloudformation:[a-z0-9-]+:\d{12}:changeSet\/.+\/[a-f0-9-]{36}$/.test(value);
+
 // Criteria are specific to the verified Cloud drill. Original PAIGE Intelligence owns
 // the verdict semantics. This operator tool consumes already verified provider receipts.
 export function gradeRecovery(facts, evaluatorVerdict) {
   const { baseline, fault, approval, recovered } = facts;
   const plan = fault?.incident?.plan;
+  const baselineComplete = sameScope(baseline?.scope, baseline?.scope) && version(baseline?.release?.version) &&
+    commit(baseline?.release?.commit) && lambdaDigest(baseline?.codeSha256) && instant(baseline?.observedAt) &&
+    typeof baseline?.state === "string";
+  const faultComplete = sameScope(fault?.scope, fault?.scope) && version(fault?.release?.version) && instant(fault?.observedAt) &&
+    payloadDigest(fault?.evidence?.sha256) && typeof fault?.incident?.reason === "string" && typeof fault?.state === "string";
+  const planComplete = sameScope(plan?.scope, plan?.scope) && typeof plan?.status === "string" &&
+    typeof plan?.operation === "string" && version(plan.fromVersion) && version(plan.target?.version) &&
+    commit(plan.target?.commit) && payloadDigest(plan.evidenceSha256);
+  const approvalComplete = changeSet(approval?.reviewedChangeSet) && changeSet(approval?.executedChangeSet) &&
+    version(approval.fromVersion) && version(approval.targetVersion) && instant(approval.executedAt) &&
+    typeof approval.stackStatus === "string";
+  const recoveryComplete = sameScope(recovered?.scope, recovered?.scope) && version(recovered?.release?.version) &&
+    commit(recovered?.release?.commit) && lambdaDigest(recovered?.codeSha256) && instant(recovered?.observedAt) &&
+    typeof recovered?.state === "string";
   const grade = (complete, condition) => evaluatorVerdict("applicable",
-    complete ? "complete" : "missing", complete ? (condition ? "met" : "not_met") : "unknown");
+    complete ? "complete" : "missing", complete ? (condition() ? "met" : "not_met") : "unknown");
   return {
-    diagnosis: grade(fault?.evidence?.sha256 && fault?.incident?.reason,
-      sameScope(fault?.scope, baseline?.scope) && fault.state === "unavailable" &&
+    diagnosis: grade(baselineComplete && faultComplete, () =>
+      sameScope(fault.scope, baseline.scope) && baseline.state === "healthy" && fault.state === "unavailable" &&
+      fault.release.version !== baseline.release.version && Date.parse(fault.observedAt) >= Date.parse(baseline.observedAt) &&
       fault.incident.reason === "backend_access_denied"),
-    scopedPlanning: grade(plan && baseline?.release?.commit && fault?.evidence?.sha256,
-      sameScope(plan?.scope, baseline?.scope) && plan.status === "review_required" &&
-      plan.operation === "restore_verified_alias" && plan.fromVersion === fault?.release?.version &&
-      plan.target?.version === baseline.release?.version && plan.target?.commit === baseline.release?.commit &&
-      plan.evidenceSha256 === fault?.evidence?.sha256),
-    authorizedExecution: grade(approval?.reviewedChangeSet && approval?.executedChangeSet && plan?.target,
-      approval?.reviewedChangeSet === approval?.executedChangeSet && approval?.targetVersion === plan?.target?.version &&
-      approval?.fromVersion === plan?.fromVersion && approval?.stackStatus === "UPDATE_COMPLETE"),
-    independentRecovery: grade(recovered?.codeSha256 && recovered?.observedAt && baseline?.codeSha256 && approval?.executedAt,
-      sameScope(recovered?.scope, baseline?.scope) && recovered?.state === "healthy" &&
-      baseline?.state === "healthy" &&
-      recovered?.release?.version === baseline?.release?.version && recovered?.release?.commit === baseline?.release?.commit &&
-      recovered?.codeSha256 === baseline?.codeSha256 && Date.parse(recovered?.observedAt) >= Date.parse(approval?.executedAt))
+    scopedPlanning: grade(baselineComplete && faultComplete && planComplete, () =>
+      sameScope(plan.scope, baseline.scope) && sameScope(plan.scope, fault.scope) &&
+      plan.status === "review_required" && plan.operation === "restore_verified_alias" &&
+      plan.fromVersion === fault.release.version && plan.target.version === baseline.release.version &&
+      plan.target.commit === baseline.release.commit && plan.evidenceSha256 === fault.evidence.sha256),
+    authorizedExecution: grade(faultComplete && planComplete && approvalComplete, () =>
+      approval.reviewedChangeSet === approval.executedChangeSet && approval.targetVersion === plan.target.version &&
+      approval.fromVersion === plan.fromVersion && approval.stackStatus === "UPDATE_COMPLETE" &&
+      Date.parse(approval.executedAt) >= Date.parse(fault.observedAt)),
+    independentRecovery: grade(baselineComplete && approvalComplete && recoveryComplete, () =>
+      sameScope(recovered.scope, baseline.scope) && recovered.state === "healthy" && baseline.state === "healthy" &&
+      recovered.release.version === baseline.release.version && recovered.release.commit === baseline.release.commit &&
+      recovered.codeSha256 === baseline.codeSha256 && Date.parse(recovered.observedAt) >= Date.parse(approval.executedAt))
   };
 }
 
