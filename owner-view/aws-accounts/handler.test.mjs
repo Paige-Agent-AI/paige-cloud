@@ -137,6 +137,63 @@ test("onboarding and account management derive the actor from the current creden
   assert.equal(JSON.parse((await request("GET", "/account", { token: tokens[1] })).body).displayName, null);
 });
 
+test("sign-in retries once when a newly issued token is rejected and only sets a verified cookie", async () => {
+  const oldToken = "provider.rejected.token";
+  const newToken = "provider.accepted.token";
+  const email = allowedEmails[0];
+  let attempts = 0;
+  let writes = 0;
+  const { request } = fixture({
+    identity: {
+      async signIn() {
+        attempts += 1;
+        return { token: attempts === 1 ? oldToken : newToken, lifetimeSeconds: 900 };
+      },
+      async verify(token) {
+        return token === newToken ? { issuer: "test-issuer", subject: "0", email } : null;
+      }
+    },
+    records: {
+      async recordIdentity() { writes += 1; return "actor-0"; }
+    }
+  });
+  const response = await request("POST", "/sign-in", { body: { email, password } });
+  assert.equal(attempts, 2);
+  assert.equal(writes, 1);
+  assert.equal(response.statusCode, 204);
+  assert.match(response.cookies[0], /^__Host-paige_cloud_session=provider\.accepted\.token;/);
+});
+
+test("persistent token rejection issues no cookie and records no account", async () => {
+  let attempts = 0;
+  const { request } = fixture({
+    identity: {
+      async signIn() { attempts += 1; return { token: tokens[0], lifetimeSeconds: 900 }; },
+      async verify() { return null; }
+    },
+    records: {
+      async recordIdentity() { assert.fail("Rejected tokens must not write identity records"); }
+    }
+  });
+  const response = await request("POST", "/sign-in", { body: { email: allowedEmails[0], password } });
+  assert.equal(attempts, 2);
+  assert.equal(response.statusCode, 503);
+  assert.equal(response.cookies, undefined);
+});
+
+test("credentials rejected by the provider are not retried", async () => {
+  let attempts = 0;
+  const { request } = fixture({
+    identity: {
+      async signIn() { attempts += 1; throw authError("NotAuthorizedException"); }
+    }
+  });
+  const response = await request("POST", "/sign-in", { body: { email: allowedEmails[0], password } });
+  assert.equal(attempts, 1);
+  assert.equal(response.statusCode, 401);
+  assert.equal(response.cookies, undefined);
+});
+
 test("invalid, unavailable, and signed-out sessions fail closed before account reads", async () => {
   const { request, register, recordLookups } = fixture();
   await register(allowedEmails[0]);
