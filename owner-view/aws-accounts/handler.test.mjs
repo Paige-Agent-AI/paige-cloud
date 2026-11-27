@@ -1,0 +1,182 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { createAccountHandler } from "./handler.mjs";
+
+const origin = "https://cloud.example.test";
+const allowedEmails = ["a@example.test", "b@example.test"];
+const tokens = ["access.a.test", "access.b.test"];
+const ids = ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"];
+const cookie = token => "__Host-paige_cloud_session=" + token;
+const authError = name => Object.assign(new Error("private provider diagnostic"), { name });
+const password = "synthetic passphrase for tests";
+
+function event(method, route, { token, body, from = origin } = {}) {
+  return {
+    rawPath: "/api/cloud/auth" + route,
+    requestContext: { http: { method } },
+    headers: { origin: from, "content-type": "application/json" },
+    cookies: token ? [cookie(token)] : [],
+    body: body === undefined ? undefined : JSON.stringify(body)
+  };
+}
+
+function fixture(overrides = {}) {
+  const calls = [];
+  const active = new Map();
+  const registered = new Map();
+  const verified = new Set();
+  for (const [i, email] of allowedEmails.entries()) {
+    active.set(tokens[i], { issuer: "test-issuer", subject: String(i), email });
+  }
+  const store = new Map();
+  const recordLookups = [];
+  const identity = {
+    async signUp(email) {
+      calls.push(["signUp", email]);
+      registered.set(email, true);
+    },
+    async confirmSignUp(email, code) {
+      if (!registered.has(email) || code !== "123456" || verified.has(email)) throw authError("CodeMismatchException");
+      verified.add(email);
+    },
+    async resendCode(email) { calls.push(["resendCode", email]); },
+    async signIn(email) {
+      if (!verified.has(email)) throw authError("UserNotConfirmedException");
+      return { token: tokens[allowedEmails.indexOf(email)], lifetimeSeconds: 900 };
+    },
+    async verify(token) { return active.get(token) ?? null; },
+    async signOut(token) { active.delete(token); },
+    async startRecovery(email) { calls.push(["startRecovery", email]); },
+    async finishRecovery(email, code) {
+      if (code !== "654321") throw authError("ExpiredCodeException");
+      calls.push(["finishRecovery", email]);
+    },
+    ...overrides.identity
+  };
+  const records = {
+    async recordIdentity(user) {
+      const actor = "actor-" + user.subject;
+      if (!store.has(actor)) store.set(actor, { email: user.email, displayName: null, organizations: [] });
+      return actor;
+    },
+    async findIdentity(user) {
+      recordLookups.push(user.subject);
+      const actor = "actor-" + user.subject;
+      return store.has(actor) ? actor : null;
+    },
+    async accountDetails(actor) { return store.get(actor); },
+    async updateDisplayName(actor, displayName) {
+      const account = store.get(actor);
+      account.displayName = displayName;
+      return account;
+    },
+    async onboardOrganization(actor, name) {
+      const organization = { id: ids[Number(actor.slice(-1))], role: "owner", name };
+      store.get(actor).organizations.push(organization);
+      return organization;
+    },
+    async organizationDetails(actor, id) { return store.get(actor).organizations.find(org => org.id === id); },
+    ...overrides.records
+  };
+  const handle = createAccountHandler({ origin, evaluatorEmails: allowedEmails, identity, records });
+  const request = (method, route, options) => handle(event(method, route, options));
+  async function register(email) {
+    assert.equal((await request("POST", "/sign-up", { body: { email, password } })).statusCode, 202);
+    assert.equal((await request("POST", "/verify-email", { body: { email, code: "123456" } })).statusCode, 204);
+    return request("POST", "/sign-in", { body: { email, password } });
+  }
+  return { request, register, calls, recordLookups };
+}
+
+test("evaluator registration requires confirmation and keeps provider tokens out of the response body", async () => {
+  const { request, register, calls } = fixture();
+  const stranger = await request("POST", "/sign-up", { body: { email: "unlisted@example.test", password } });
+  assert.equal(stranger.statusCode, 403);
+  assert.equal(calls.length, 0);
+
+  const preVerification = await request("POST", "/sign-in", { body: { email: allowedEmails[0], password } });
+  assert.equal(preVerification.statusCode, 403);
+  assert.equal(preVerification.cookies, undefined);
+
+  const response = await register(allowedEmails[0]);
+  assert.equal(response.statusCode, 204);
+  assert.equal(response.body, "");
+  assert.equal(response.headers["cache-control"], "no-store");
+  assert.deepEqual(response.cookies, [
+    cookie(tokens[0]) + "; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=900"
+  ]);
+  const replay = await request("POST", "/verify-email", { body: { email: allowedEmails[0], code: "123456" } });
+  assert.equal(replay.statusCode, 400);
+});
+
+test("onboarding and account management derive the actor from the current credential", async () => {
+  const { request, register } = fixture();
+  for (const email of allowedEmails) assert.equal((await register(email)).statusCode, 204);
+  for (const [i, token] of tokens.entries()) {
+    const result = await request("POST", "/organizations", { token, body: { name: "Organization " + i } });
+    assert.equal(result.statusCode, 200);
+    assert.equal(JSON.parse(result.body).id, ids[i]);
+  }
+  for (const [i, token] of tokens.entries()) {
+    const own = await request("GET", "/organizations/" + ids[i], { token });
+    const foreign = await request("GET", "/organizations/" + ids[1 - i], { token });
+    assert.equal(own.statusCode, 200);
+    assert.equal(foreign.statusCode, 404);
+    assert.equal(foreign.body, '{"error":"not_found"}');
+  }
+  const invalid = await request("PATCH", "/account", {
+    token: tokens[0], body: { displayName: "Other", actor: "actor-1" }
+  });
+  assert.equal(invalid.statusCode, 400);
+  assert.equal((await request("PATCH", "/account", {
+    token: tokens[0], body: { displayName: "Updated" }
+  })).statusCode, 200);
+  assert.equal(JSON.parse((await request("GET", "/account", { token: tokens[0] })).body).displayName, "Updated");
+  assert.equal(JSON.parse((await request("GET", "/account", { token: tokens[1] })).body).displayName, null);
+});
+
+test("invalid, unavailable, and signed-out sessions fail closed before account reads", async () => {
+  const { request, register, recordLookups } = fixture();
+  await register(allowedEmails[0]);
+  assert.equal((await request("GET", "/account")).statusCode, 401);
+  assert.equal((await request("GET", "/account", { token: "expired.token.test" })).statusCode, 401);
+  assert.equal((await request("GET", "/account", { token: "malformed" })).statusCode, 401);
+  assert.equal(recordLookups.length, 0);
+  assert.equal((await request("POST", "/sign-out", { token: tokens[0], from: "https://other.example.test" })).statusCode, 403);
+  assert.equal((await request("GET", "/account", { token: tokens[0] })).statusCode, 200);
+  const signedOut = await request("POST", "/sign-out", { token: tokens[0] });
+  assert.equal(signedOut.statusCode, 204);
+  assert.match(signedOut.cookies[0], /Max-Age=0/);
+  assert.equal((await request("GET", "/account", { token: tokens[0] })).statusCode, 401);
+  assert.equal(recordLookups.length, 1);
+});
+
+test("account recovery suppresses unlisted addresses and validates reset confirmation", async () => {
+  const { request, calls } = fixture();
+  const admitted = await request("POST", "/recover", { body: { email: allowedEmails[0] } });
+  const omitted = await request("POST", "/recover", { body: { email: "other@example.test" } });
+  assert.deepEqual(admitted, omitted);
+  assert.deepEqual(calls, [["startRecovery", allowedEmails[0]]]);
+  const expired = await request("POST", "/reset-password", {
+    body: { email: allowedEmails[0], code: "111111", password }
+  });
+  assert.equal(expired.statusCode, 400);
+  assert.equal(expired.body, '{"error":"expired_code"}');
+  const success = await request("POST", "/reset-password", {
+    body: { email: allowedEmails[0], code: "654321", password }
+  });
+  assert.equal(success.statusCode, 204);
+});
+
+test("upstream failures neither disclose diagnostics nor issue a cookie or report revocation", async () => {
+  const failed = fixture({ records: { async recordIdentity() { throw new Error("opaque internal error"); } } });
+  const response = await failed.register(allowedEmails[0]);
+  assert.equal(response.statusCode, 503);
+  assert.equal(response.body, '{"error":"account_service_unavailable"}');
+  assert.equal(response.cookies, undefined);
+  const unrevoked = fixture({ identity: { async signOut() { throw new Error("service unavailable"); } } });
+  await unrevoked.register(allowedEmails[0]);
+  const unsuccessful = await unrevoked.request("POST", "/sign-out", { token: tokens[0] });
+  assert.equal(unsuccessful.statusCode, 503);
+  assert.equal(unsuccessful.cookies, undefined);
+});

@@ -1,0 +1,14 @@
+{
+  "name": "paige-cloud-account-service",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "3.1178.0",
+    "@aws-sdk/client-rds-data": "3.1178.0",
+    "@aws-sdk/client-secrets-manager": "3.1178.0",
+    "aws-jwt-verify": "5.2.1"
+  }
+}
