@@ -2,6 +2,8 @@
 
 The website uses the owner-selected Cloud Bracket mark. The SVG follows the open cloud outline, angled slash, and detached orb of the approved lockup. The source reference is the owner-supplied November 26 image with SHA-256 `becd01e383b4a8959ee2c996f38b01e2bed3a3d29fcde06f869e58ce3f68566f`. The SVG is a vector interpretation of that image.
 
+The header shows the full mark alongside the wordmark. The favicon retains the same shapes and colors on a white tile, with a heavier outline for legibility at 16 pixels. The ICO fallback contains 16, 32, and 48 pixel versions.
+
 | Approved color | Value | Website role |
 | --- | --- | --- |
 | Midnight | `#081324` | Mark outline, hero ground, paper text, primary controls |

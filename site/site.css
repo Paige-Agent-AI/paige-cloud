@@ -42,6 +42,7 @@ button { font: inherit; color: inherit; }
 .brand { display: inline-flex; align-items: center; gap: 0.65rem; white-space: nowrap; text-decoration: none; font-size: 1.1rem; flex-shrink: 0; }
 .brand strong { font-weight: 700; }
 .brand img { width: 2.6rem; height: auto; }
+.site-header .brand img { width: clamp(3.5rem, 5.4vw, 4.75rem); }
 .site-nav { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex: 1; }
 .main-nav, .account-nav { display: flex; align-items: center; gap: clamp(1rem, 2vw, 2rem); }
 .main-nav a, .account-nav a, .nav-group summary { font-size: 0.94rem; font-weight: 600; text-decoration: none; }
@@ -206,8 +207,8 @@ h3 { font-weight: 650; line-height: 1.19; }
   a, button { transition: color 145ms ease-out, background-color 145ms ease-out, border-color 145ms ease-out; }
 }
 @media (max-width: 1020px) {
-  .nav-shell { gap: 1.25rem; }
-  .main-nav, .account-nav { gap: 0.9rem; }
+  .nav-shell { gap: 1rem; }
+  .site-nav, .main-nav, .account-nav { gap: 0.65rem; }
 }
 @media (max-width: 860px) {
   .nav-shell { flex-wrap: wrap; justify-content: space-between; min-height: 4rem; padding-block: 0.55rem; }
