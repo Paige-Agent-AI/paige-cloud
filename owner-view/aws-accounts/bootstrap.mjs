@@ -68,6 +68,7 @@ async function bootstrap() {
   const registry = await readFile(new URL("../sql/cloud-accounts/002-registry.sql", import.meta.url), "utf8");
   const observation = await readFile(new URL("../sql/cloud-accounts/003-workload-observation.sql", import.meta.url), "utf8");
   const organizationName = await readFile(new URL("../sql/cloud-accounts/004-organization-name.sql", import.meta.url), "utf8");
+  const workloadConfiguration = await readFile(new URL("../sql/cloud-accounts/005-workload-configuration.sql", import.meta.url), "utf8");
   const connection = { resourceArn, secretArn, database: "paige_cloud" };
   const data = new RDSDataClient({});
   const { transactionId } = await data.send(new BeginTransactionCommand(connection));
@@ -90,6 +91,7 @@ async function bootstrap() {
     applied = (await applyAdditiveMigration("002", registry, execute)) || applied;
     applied = (await applyAdditiveMigration("003", observation, execute)) || applied;
     applied = (await applyAdditiveMigration("004", organizationName, execute)) || applied;
+    applied = (await applyAdditiveMigration("005", workloadConfiguration, execute)) || applied;
     await data.send(new CommitTransactionCommand(transaction));
   } catch (error) {
     try {
@@ -110,7 +112,10 @@ async function bootstrap() {
       AND NOT has_table_privilege(current_user, 'cloud_accounts.accounts', 'SELECT, INSERT, UPDATE, DELETE')
       AND NOT has_table_privilege(current_user, 'cloud_accounts.organizations', 'SELECT, INSERT, UPDATE, DELETE')
       AND NOT has_table_privilege(current_user, 'cloud_accounts.registry_applications', 'SELECT, INSERT, UPDATE, DELETE')
-      AND NOT has_table_privilege(current_user, 'cloud_accounts.workload_observation_budget', 'SELECT, INSERT, UPDATE, DELETE')`
+      AND NOT has_table_privilege(current_user, 'cloud_accounts.workload_observation_budget', 'SELECT, INSERT, UPDATE, DELETE')
+      AND has_function_privilege(current_user, 'cloud_accounts.read_workload_configuration(uuid, uuid, text, text, text, integer)', 'EXECUTE')
+      AND has_function_privilege(current_user, 'cloud_accounts.save_workload_configuration(uuid, uuid, text, text, text, integer, text, integer)', 'EXECUTE')
+      AND NOT has_table_privilege(current_user, 'cloud_accounts.workload_configuration_revisions', 'SELECT, INSERT, UPDATE, DELETE')`
   }));
   if (check.records?.[0]?.[0]?.booleanValue !== true) throw new Error("Application database login was not confirmed");
   console.log(applied ? "Cloud accounts migration and application login confirmed" : "Existing migration and application login confirmed");

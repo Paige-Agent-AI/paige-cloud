@@ -30,9 +30,23 @@ IDs accept 1–48 lowercase ASCII letters, digits or hyphens, starting with an a
 
 Repository coordinates are desired source metadata. Registration does not fetch source, deploy anything, allocate compute, or read provider credentials. Resolve actual source and publish immutable artifacts as separate, independently authorized steps. The operator workbook should consume this contract after the authenticated navigation is approved.
 
-For corporate registry reconciliation, run `node owner-view/aws-accounts/corporate-registry-preflight.mjs` with the pre-approved corporate organization and named Cloud account UUIDs in `CLOUD_CORPORATE_ORG_ID` and `CLOUD_CORPORATE_OWNER_ID`. Use the existing operator database connection from the account bootstrap. The read-only command requires the exact legal organization name and an active owner membership. It checks PAIGE Cloud, PAIGE Agent AI SaaS, Ask PAIGE, PAIGE Intelligence, PAIGE Maps, PAIGE Folio and PAIGE Secure. It also reports existing PAIGE Drive and Presentation Room project records for explicit reconciliation. Folio Files and Folio Present belong under PAIGE Folio as independently deployable applications. The consolidation preserves the earlier Drive and Presentation Room requirements.
+For corporate registry reconciliation, run `node owner-view/aws-accounts/corporate-registry-preflight.mjs` with the independently verified organization and named Cloud account UUIDs in `CLOUD_CORPORATE_ORG_ID` and `CLOUD_CORPORATE_OWNER_ID`. Use the existing operator database connection from the account bootstrap. The command requires the existing **PAIGE Cloud** organization and an active owner membership. It checks the six verified projects under that organization and reports any superseded PAIGE Cloud, Drive, or Presentation Room project IDs for explicit reconciliation. Folio Files and Folio Present belong under PAIGE Folio as independently deployable applications. The consolidation preserves the earlier Drive and Presentation Room requirements.
 
-The corporate owner first creates a project through authenticated Mission Control and verifies its persistence after reloading. Their explicit delegation is required before running `--register` for any remaining projects. The command checks for at least one matching project, which is only a state check. Keep the owner's signed-in evidence in ANT-176. The command locks the active owner membership and organization, calls the existing scoped project writer for missing records, and checks all seven projects before commit. A legacy project, scope conflict, revocation or failed write holds the transaction. Reconcile an uncertain commit with a read-only preflight. Platform Operator standing remains separately authorized. [Corporate and Platform Operator direction](https://linear.app/paigeagentai/issue/ANT-169)
+The six projects were created through the signed-in Mission Control form and persisted across reload. The corporate preflight is read-only and the superseded bulk registration mode has been removed. Future project changes use the existing registry contracts under owner authorization. Platform Operator standing remains separately authorized. [Corporate registry receipt](https://linear.app/paigeagentai/issue/ANT-176#comment-c22a9c20-5c22-4872-8cb7-a7651461acaa)
+
+### Private workload configuration
+
+The configuration API uses the existing same-origin, verified Cloud account session and the exact registered organization, project, application and environment. A currently granted project member can read. An active project owner can write. The server derives the account identity from the session. The `005-workload-configuration.sql` migration creates immutable revisions with a restricted function-only runtime boundary and records the submitting account and save time.
+
+Use `/api/cloud/v1/organizations/{organization}/projects/{project}/applications/{application}/environments/{environment}/configuration`.
+
+| Method | Behavior |
+| --- | --- |
+| `GET` | Reads the latest saved revision or returns `{"revision":0,"configuration":null}` for an eligible empty target. |
+| `GET /revisions/{revision}` | Reads a specific saved revision from 1 through 32. |
+| `PUT` | Saves the complete configuration with a matching `expectedRevision`. A same-value write at the current revision or a same-value retry of the immediately preceding revision returns the existing record. A stale conflicting write returns `409 configuration_changed`. |
+
+A write submits exactly `expectedRevision` (0–32), `logLevel` (`error`, `warn`, or `info`), and `requestTimeoutMs` (an integer 100–30000). The 32-revision ceiling yields `409 configuration_limit`. Denial of a registered scope, and absence of a target or historical revision, return the same 404. These typed settings store desired configuration. Runtime consumption, activation and recovery are separately governed. To restore a prior declaration before the revision ceiling, read that revision and resubmit its settings against the current revision. Credentials, freeform values and arbitrary provider parameters are outside the contract.
 
 ## Independent workload delivery and inspection
 

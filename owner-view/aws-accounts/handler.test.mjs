@@ -116,6 +116,47 @@ test("organization name updates derive the actor and enforce same-origin, scope 
   assert.deepEqual(changes.at(-1), ["actor-0", ids[0], "Original", "Updated"]);
 });
 
+test("workload configuration uses current session, exact scope, bounded values and same-origin writes", async () => {
+  const calls = [];
+  const { handle, register } = fixture({ records: {
+    async readWorkloadConfiguration(actor, scope, revision) {
+      calls.push({ actor, scope, revision });
+      return actor === "actor-0" && scope.organization === ids[0] ? { revision: 0, configuration: null } : null;
+    },
+    async saveWorkloadConfiguration(actor, scope, body) {
+      calls.push({ actor, scope, body });
+      return actor === "actor-0" && scope.organization === ids[0] ? { error: "configuration_changed" } : null;
+    },
+  } });
+  for (const email of allowedEmails) await register(email);
+  const path = `/api/cloud/v1/organizations/${ids[0]}/projects/project/applications/app/environments/development/configuration`;
+  const request = (method, options, suffix = "") =>
+    handle({ ...event(method, "", options), rawPath: path + suffix });
+  const body = { expectedRevision: 0, logLevel: "info", requestTimeoutMs: 2500 };
+  assert.equal((await request("GET")).statusCode, 401);
+  assert.equal((await request("PUT", { token: tokens[0], body, from: "https://foreign.example.test" })).statusCode, 403);
+  for (const invalid of [{ requestTimeoutMs: 1.5 }, { expectedRevision: 33 }, { logLevel: "debug" },
+    { destination: "secret" }, { requestTimeoutMs: 30001 }]) {
+    assert.equal((await request("PUT", { token: tokens[0], body: { ...body, ...invalid } })).statusCode, 400);
+  }
+  assert.equal((await request("GET", { token: tokens[0] }, "/revisions/33")).statusCode, 404);
+  assert.equal((await request("PUT", { token: tokens[0], body }, "/revisions/1")).statusCode, 404);
+  assert.equal(calls.length, 0);
+  assert.equal((await request("GET", { token: tokens[1] })).statusCode, 404);
+  const empty = await request("GET", { token: tokens[0] });
+  assert.equal(empty.statusCode, 200);
+  assert.equal(empty.headers["cache-control"], "no-store");
+  assert.deepEqual(JSON.parse(empty.body), { revision: 0, configuration: null });
+  assert.equal((await request("GET", { token: tokens[0] }, "/revisions/1")).statusCode, 200);
+  assert.equal(calls.at(-1).revision, "1");
+  const conflict = await request("PUT", { token: tokens[0], body });
+  assert.equal(conflict.statusCode, 409);
+  assert.equal(JSON.parse(conflict.body).error, "configuration_changed");
+  assert.deepEqual(calls.at(-1), {
+    actor: "actor-0", scope: { organization: ids[0], project: "project", application: "app", environment: "development" }, body
+  });
+});
+
 test("evaluator registration requires confirmation and keeps provider tokens out of the response body", async () => {
   const { request, register, calls } = fixture();
   const stranger = await request("POST", "/sign-up", { body: { email: "unlisted@example.test", password } });
