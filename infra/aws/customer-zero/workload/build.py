@@ -6,7 +6,7 @@ import sys
 import zipfile
 
 
-def build(commit, target):
+def build(commit, target, include_drill=False):
     if subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() != commit:
         raise SystemExit("the requested source is not checked out")
     stem = "infra/aws/customer-zero/workload"
@@ -15,7 +15,8 @@ def build(commit, target):
         for name in ("application.mjs", "service.mjs")
     }
     target.mkdir(parents=True, exist_ok=True)
-    for candidate in ("a", "b"):
+    candidates = ("a", "b", "drill") if include_drill else ("a", "b")
+    for candidate in candidates:
         path = target / f"{candidate}.zip"
         release = {"commit": commit, "candidate": candidate}
         payload = dict(files, **{"release.json": json.dumps(release, separators=(",", ":")).encode()})
@@ -29,4 +30,6 @@ def build(commit, target):
 
 
 if __name__ == "__main__":
-    build(sys.argv[1], Path(sys.argv[2]))
+    if len(sys.argv) not in (3, 4) or (len(sys.argv) == 4 and sys.argv[3] != "--private-drill"):
+        raise SystemExit("usage: build.py COMMIT TARGET [--private-drill]")
+    build(sys.argv[1], Path(sys.argv[2]), len(sys.argv) == 4)

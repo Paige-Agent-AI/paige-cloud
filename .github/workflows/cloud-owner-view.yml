@@ -57,10 +57,11 @@ jobs:
         run: |
           set -euo pipefail
           node --test infra/aws/customer-zero/workload/service.test.mjs
-          python3 infra/aws/customer-zero/workload/build.py "$REVIEW_HEAD" "$RUNNER_TEMP/workload" | tee -a "$GITHUB_STEP_SUMMARY"
-          python3 infra/aws/customer-zero/workload/build.py "$REVIEW_HEAD" "$RUNNER_TEMP/workload-repeat"
+          python3 infra/aws/customer-zero/workload/build.py "$REVIEW_HEAD" "$RUNNER_TEMP/workload" --private-drill | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 infra/aws/customer-zero/workload/build.py "$REVIEW_HEAD" "$RUNNER_TEMP/workload-repeat" --private-drill
           cmp "$RUNNER_TEMP/workload/a.zip" "$RUNNER_TEMP/workload-repeat/a.zip"
           cmp "$RUNNER_TEMP/workload/b.zip" "$RUNNER_TEMP/workload-repeat/b.zip"
+          cmp "$RUNNER_TEMP/workload/drill.zip" "$RUNNER_TEMP/workload-repeat/drill.zip"
           if cmp -s "$RUNNER_TEMP/workload/a.zip" "$RUNNER_TEMP/workload/b.zip"; then exit 1; fi
 
   publish:

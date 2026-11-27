@@ -33,6 +33,10 @@ Parameters:
     Type: String
     Default: ''
     AllowedPattern: '(|[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}(/[a-z0-9][a-z0-9-]{0,47}){3})'
+  InspectionRecoveryPoint:
+    Type: String
+    Default: ''
+    AllowedPattern: '(|[1-9][0-9]*/[a-f0-9]{40})'
 
 Rules:
   InspectionRequiresEvaluatorBinding:
@@ -188,6 +192,7 @@ Resources:
           CLOUD_DB_NAME: paige_cloud
           CLOUD_INSPECTION_SCOPE: !Ref InspectionScope
           CLOUD_INSPECTION_ALIAS: !Ref InspectionAliasArn
+          CLOUD_INSPECTION_RECOVERY_POINT: !Ref InspectionRecoveryPoint
 
   AccountsLog:
     Type: AWS::Logs::LogGroup

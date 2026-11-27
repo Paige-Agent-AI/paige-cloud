@@ -19,7 +19,7 @@ Parameters:
     AllowedPattern: 'paige-cloud-customer-zero-artifacts-[a-z0-9-]+'
   ArtifactKey:
     Type: String
-    AllowedPattern: 'workload-releases/[0-9a-f]{40}/(a|b)\.zip'
+    AllowedPattern: 'workload-releases/[0-9a-f]{40}/(a|b|drill)\.zip'
   ArtifactVersion:
     Type: String
     AllowedPattern: '(?!null$)[A-Za-z0-9._~+/-]{1,1024}'

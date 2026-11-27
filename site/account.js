@@ -229,13 +229,15 @@ function workloadInspection(app, applicationsPath, revision) {
   const container = document.createElement("div");
   const trigger = document.createElement("button");
   const observation = document.createElement("p");
+  const incident = document.createElement("p");
   const path = `${applicationsPath}/${encodeURIComponent(app.id)}/environments/${encodeURIComponent(app.inspectionEnvironment)}/inspection`;
   container.className = "workload-inspection";
   trigger.className = "plain-button";
   trigger.type = "button";
   trigger.textContent = `Check ${app.inspectionEnvironment} health`;
   observation.setAttribute("role", "status");
-  container.append(trigger, observation);
+  incident.setAttribute("role", "status");
+  container.append(trigger, observation, incident);
   const isCurrent = () => revision === projectRevision && container.isConnected;
 
   trigger.addEventListener("click", async () => {
@@ -243,6 +245,7 @@ function workloadInspection(app, applicationsPath, revision) {
     trigger.setAttribute("aria-disabled", "true");
     trigger.disabled = true;
     observation.textContent = "Checking the running workload…";
+    incident.textContent = "";
     try {
       const result = await requestJson(`/api/cloud/v1${path}`, "POST");
       if (!isCurrent()) return;
@@ -255,6 +258,16 @@ function workloadInspection(app, applicationsPath, revision) {
       const status = document.createElement("strong");
       status.textContent = result.state === "healthy" ? "Healthy" : "Needs attention";
       observation.replaceChildren(status, ` · Version ${result.release.version} · ${result.release.commit.slice(0, 8)} · `, time);
+      if (result.incident?.reason === "backend_access_denied") {
+        const plan = result.incident.plan;
+        incident.textContent = plan?.operation === "restore_verified_alias" && plan.status === "review_required"
+          ? `AWS denied the configuration read. Proposed recovery: restore verified version ${plan.target.version} (${plan.target.commit.slice(0, 8)}) through a reviewed deployment. Check health after recovery.`
+          : "AWS denied the configuration read. Verify the workload’s data binding before changing it.";
+      } else if (result.incident?.reason === "backend_record_invalid") {
+        incident.textContent = "The configuration record failed validation. Review the release and its data binding.";
+      } else if (result.incident) {
+        incident.textContent = "The workload could not verify its configuration read. Review the runtime evidence.";
+      }
     } catch (error) {
       if (!isCurrent()) return;
       if (error.status === 401) {
