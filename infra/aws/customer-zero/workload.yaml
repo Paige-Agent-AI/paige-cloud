@@ -99,6 +99,7 @@ Resources:
     Properties:
       FunctionName: !Ref Workload
       CodeSha256: !Ref ArtifactDigest
+      Description: !Sub 'Pinned backend object version ${DataVersion}'
 
   Live:
     Type: AWS::Lambda::Alias
