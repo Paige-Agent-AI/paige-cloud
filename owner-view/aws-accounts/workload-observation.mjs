@@ -4,7 +4,8 @@ import { createHash } from "node:crypto";
 export const inspectionCapability = "paige.cloud.workload.inspect.v1";
 const segment = "[a-z0-9][a-z0-9-]{0,47}";
 const scopePattern = new RegExp(`^([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})/(${segment})/(${segment})/(${segment})$`);
-const unavailableReasons = new Set(["backend_access_denied", "backend_record_invalid", "backend_read_unverified"]);
+const unavailableReasons = new Set(["backend_access_denied", "backend_record_invalid", "backend_read_unverified",
+  "configuration_access_denied", "configuration_unverified"]);
 
 export function parseInspectionScope(value) {
   const match = scopePattern.exec(value);
@@ -53,6 +54,12 @@ export function readRuntimeWorkloadObservation(result, scope, now) {
     release: { commit: observed.release.commit, candidate: observed.release.candidate, version: result.ExecutedVersion },
     evidence: { source: "runtime_backend_read", sha256: createHash("sha256").update(bytes).digest("hex") }
   };
+  if ("configuration" in observed) {
+    const { revision, digest } = observed.configuration ?? {};
+    if (!Number.isInteger(revision) || revision < 1 || revision > 2147483647 ||
+        typeof digest !== "string" || !/^[a-f0-9]{64}$/.test(digest)) return null;
+    observation.consumedConfiguration = { revision, digest };
+  }
   if (observation.state === "unavailable") {
     observation.incident = {
       reason: unavailableReasons.has(observed.reason) ? observed.reason : "backend_read_unverified"

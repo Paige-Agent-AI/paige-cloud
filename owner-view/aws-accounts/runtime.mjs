@@ -183,7 +183,7 @@ function createAccountRecords({ resourceArn, secretArn, database }) {
         { actor, organization, project, application, environment, revision: revision ?? "" }, JSON.parse);
     },
     saveWorkloadConfiguration(actor, { organization, project, application, environment }, configuration) {
-      return call(`SELECT CAST(cloud_accounts.save_workload_configuration(CAST(:actor AS uuid),
+      return call(`SELECT CAST(cloud_accounts.save_workload_configuration_v2(CAST(:actor AS uuid),
         CAST(:organization AS uuid), :project, :application, :environment,
         CAST(:revision AS integer), :level, CAST(:timeout AS integer)) AS text)`, {
         actor, organization, project, application, environment, revision: String(configuration.expectedRevision),

@@ -27,6 +27,7 @@ verify_db < "$dir/002-registry.sql"
 verify_db < "$dir/003-workload-observation.sql"
 verify_db < "$dir/004-organization-name.sql"
 verify_db < "$dir/005-workload-configuration.sql"
+verify_db < "$dir/006-configuration-history.sql"
 verify_db < "$dir/account-records.test.sql"
 verify_db < "$dir/registry.test.sql"
 verify_db < "$dir/workload-configuration.test.sql"
@@ -136,7 +137,7 @@ save_first_configuration() {
 SET statement_timeout = '12s';
 SET ROLE paige_cloud_account_runtime;
 BEGIN;
-SELECT coalesce(result->>'error', result->>'revision') FROM cloud_accounts.save_workload_configuration(
+SELECT coalesce(result->>'error', result->>'revision') FROM cloud_accounts.save_workload_configuration_v2(
   cloud_accounts.find_verified_identity('test-issuer', 'concurrent'), '$organization',
   'capacity', 'last-slot', 'development', 0, 'info', $2) result;
 SELECT pg_sleep($3);

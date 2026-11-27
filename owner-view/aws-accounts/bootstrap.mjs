@@ -69,6 +69,7 @@ async function bootstrap() {
   const observation = await readFile(new URL("../sql/cloud-accounts/003-workload-observation.sql", import.meta.url), "utf8");
   const organizationName = await readFile(new URL("../sql/cloud-accounts/004-organization-name.sql", import.meta.url), "utf8");
   const workloadConfiguration = await readFile(new URL("../sql/cloud-accounts/005-workload-configuration.sql", import.meta.url), "utf8");
+  const configurationHistory = await readFile(new URL("../sql/cloud-accounts/006-configuration-history.sql", import.meta.url), "utf8");
   const connection = { resourceArn, secretArn, database: "paige_cloud" };
   const data = new RDSDataClient({});
   const { transactionId } = await data.send(new BeginTransactionCommand(connection));
@@ -92,6 +93,7 @@ async function bootstrap() {
     applied = (await applyAdditiveMigration("003", observation, execute)) || applied;
     applied = (await applyAdditiveMigration("004", organizationName, execute)) || applied;
     applied = (await applyAdditiveMigration("005", workloadConfiguration, execute)) || applied;
+    applied = (await applyAdditiveMigration("006", configurationHistory, execute)) || applied;
     await data.send(new CommitTransactionCommand(transaction));
   } catch (error) {
     try {
@@ -115,6 +117,8 @@ async function bootstrap() {
       AND NOT has_table_privilege(current_user, 'cloud_accounts.workload_observation_budget', 'SELECT, INSERT, UPDATE, DELETE')
       AND has_function_privilege(current_user, 'cloud_accounts.read_workload_configuration(uuid, uuid, text, text, text, integer)', 'EXECUTE')
       AND has_function_privilege(current_user, 'cloud_accounts.save_workload_configuration(uuid, uuid, text, text, text, integer, text, integer)', 'EXECUTE')
+      AND has_function_privilege(current_user, 'cloud_accounts.save_workload_configuration_v2(uuid, uuid, text, text, text, integer, text, integer)', 'EXECUTE')
+      AND NOT has_function_privilege(current_user, 'cloud_accounts.save_workload_configuration_revision(uuid, uuid, text, text, text, integer, text, integer, boolean)', 'EXECUTE')
       AND NOT has_table_privilege(current_user, 'cloud_accounts.workload_configuration_revisions', 'SELECT, INSERT, UPDATE, DELETE')`
   }));
   if (check.records?.[0]?.[0]?.booleanValue !== true) throw new Error("Application database login was not confirmed");

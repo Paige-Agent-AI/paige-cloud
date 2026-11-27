@@ -125,7 +125,8 @@ test("workload configuration uses current session, exact scope, bounded values a
     },
     async saveWorkloadConfiguration(actor, scope, body) {
       calls.push({ actor, scope, body });
-      return actor === "actor-0" && scope.organization === ids[0] ? { error: "configuration_changed" } : null;
+      if (actor !== "actor-0" || scope.organization !== ids[0]) return null;
+      return { error: body.expectedRevision === 33 ? "configuration_rate_limited" : "configuration_changed" };
     },
   } });
   for (const email of allowedEmails) await register(email);
@@ -135,11 +136,11 @@ test("workload configuration uses current session, exact scope, bounded values a
   const body = { expectedRevision: 0, logLevel: "info", requestTimeoutMs: 2500 };
   assert.equal((await request("GET")).statusCode, 401);
   assert.equal((await request("PUT", { token: tokens[0], body, from: "https://foreign.example.test" })).statusCode, 403);
-  for (const invalid of [{ requestTimeoutMs: 1.5 }, { expectedRevision: 33 }, { logLevel: "debug" },
+  for (const invalid of [{ requestTimeoutMs: 1.5 }, { expectedRevision: 2147483648 }, { logLevel: "debug" },
     { destination: "secret" }, { requestTimeoutMs: 30001 }]) {
     assert.equal((await request("PUT", { token: tokens[0], body: { ...body, ...invalid } })).statusCode, 400);
   }
-  assert.equal((await request("GET", { token: tokens[0] }, "/revisions/33")).statusCode, 404);
+  assert.equal((await request("GET", { token: tokens[0] }, "/revisions/2147483648")).statusCode, 404);
   assert.equal((await request("PUT", { token: tokens[0], body }, "/revisions/1")).statusCode, 404);
   assert.equal(calls.length, 0);
   assert.equal((await request("GET", { token: tokens[1] })).statusCode, 404);
@@ -155,6 +156,11 @@ test("workload configuration uses current session, exact scope, bounded values a
   assert.deepEqual(calls.at(-1), {
     actor: "actor-0", scope: { organization: ids[0], project: "project", application: "app", environment: "development" }, body
   });
+  assert.equal((await request("GET", { token: tokens[0] }, "/revisions/33")).statusCode, 200);
+  assert.equal(calls.at(-1).revision, "33");
+  const limited = await request("PUT", { token: tokens[0], body: { ...body, expectedRevision: 33 } });
+  assert.equal(limited.statusCode, 429);
+  assert.equal(JSON.parse(limited.body).error, "configuration_rate_limited");
 });
 
 test("evaluator registration requires confirmation and keeps provider tokens out of the response body", async () => {

@@ -11,6 +11,12 @@
       "Action": "Update:*",
       "Principal": "*",
       "Resource": "LogicalResourceId/WorkloadRole"
+    },
+    {
+      "Effect": "Deny",
+      "Action": ["Update:Delete", "Update:Replace"],
+      "Principal": "*",
+      "Resource": "LogicalResourceId/SettingsWorkloadRole"
     }
   ]
 }

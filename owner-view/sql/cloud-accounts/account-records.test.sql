@@ -21,7 +21,8 @@ BEGIN
       AND (NOT proc.prosecdef
            OR NOT COALESCE('search_path=pg_catalog, pg_temp' = ANY(proc.proconfig), false)
            OR has_function_privilege('untrusted_account_test', proc.oid, 'EXECUTE')
-           OR NOT has_function_privilege('paige_cloud_account_runtime', proc.oid, 'EXECUTE'))
+           OR has_function_privilege('paige_cloud_account_runtime', proc.oid, 'EXECUTE') <>
+             (proc.oid <> 'cloud_accounts.save_workload_configuration_revision(uuid, uuid, text, text, text, integer, text, integer, boolean)'::regprocedure))
   ) THEN
     RAISE EXCEPTION 'unexpected execution authority or function search path';
   END IF;
