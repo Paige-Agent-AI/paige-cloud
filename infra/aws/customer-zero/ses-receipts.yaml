@@ -1,0 +1,102 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Ohio SES delivery receipts for the PAIGE Cloud transactional sender.
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+
+Parameters:
+  SenderAddress:
+    Type: String
+    AllowedPattern: '[a-zA-Z0-9._+-]+@[a-z0-9.-]+'
+    MaxLength: 254
+
+Resources:
+  TransactionalConfiguration:
+    Type: AWS::SES::ConfigurationSet
+    Properties:
+      Name: !Ref AWS::StackName
+      SuppressionOptions:
+        SuppressedReasons: [BOUNCE, COMPLAINT]
+
+  ReceiptQueue:
+    Type: AWS::SQS::Queue
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Keep short-lived delivery evidence for reconciliation by authorized operators.
+        must: Exclude message contents and recipient addresses from the queued receipt.
+    Properties:
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 86400
+      VisibilityTimeout: 30
+
+  ReceiptQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues: [!Ref ReceiptQueue]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublishFromExactReceiptRule
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt ReceiptQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Sub 'arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/${AWS::StackName}'
+
+  ReceiptRule:
+    Type: AWS::Events::Rule
+    DependsOn: ReceiptQueuePolicy
+    Properties:
+      Name: !Ref AWS::StackName
+      EventPattern:
+        source: [aws.ses]
+        account: [!Ref AWS::AccountId]
+        region: [!Ref AWS::Region]
+        detail-type:
+          - Email Sent
+          - Email Delivered
+          - Email Bounced
+          - Email Complaint Received
+          - Email Rejected
+          - Email Delivery Delayed
+          - Email Rendering Failed
+        detail:
+          mail:
+            source: [!Ref SenderAddress]
+            tags:
+              'ses:configuration-set': [!Ref TransactionalConfiguration]
+      State: ENABLED
+      Targets:
+        - Id: TransactionalDeliveryReceipt
+          Arn: !GetAtt ReceiptQueue.Arn
+          RetryPolicy:
+            MaximumEventAgeInSeconds: 3600
+            MaximumRetryAttempts: 12
+          InputTransformer:
+            InputPathsMap:
+              eventId: '$.id'
+              occurredAt: '$.time'
+              eventType: '$.detail.eventType'
+              messageId: '$.detail.mail.messageId'
+            InputTemplate: '{"schemaVersion":1,"eventId":<eventId>,"occurredAt":<occurredAt>,"eventType":<eventType>,"messageId":<messageId>}'
+
+  EventDestination:
+    Type: AWS::SES::ConfigurationSetEventDestination
+    DependsOn: ReceiptRule
+    Properties:
+      ConfigurationSetName: !Ref TransactionalConfiguration
+      EventDestination:
+        Name: delivery-receipts
+        Enabled: true
+        MatchingEventTypes: [SEND, DELIVERY, BOUNCE, COMPLAINT, REJECT, DELIVERY_DELAY, RENDERING_FAILURE]
+        EventBridgeDestination:
+          EventBusArn: !Sub 'arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/default'
+
+Outputs:
+  ConfigurationSetName:
+    Value: !Ref TransactionalConfiguration
+  ReceiptQueueUrl:
+    Value: !Ref ReceiptQueue
