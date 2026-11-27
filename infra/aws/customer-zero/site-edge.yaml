@@ -61,24 +61,6 @@ Resources:
           return request;
         }
 
-  NoCache:
-    Type: AWS::CloudFront::CachePolicy
-    Properties:
-      CachePolicyConfig:
-        Name: !Sub '${AWS::StackName}-no-cache'
-        MinTTL: 0
-        DefaultTTL: 0
-        MaxTTL: 0
-        ParametersInCacheKeyAndForwardedToOrigin:
-          EnableAcceptEncodingGzip: true
-          EnableAcceptEncodingBrotli: true
-          CookiesConfig:
-            CookieBehavior: none
-          HeadersConfig:
-            HeaderBehavior: none
-          QueryStringsConfig:
-            QueryStringBehavior: none
-
   AccountsRequestPolicy:
     Type: AWS::CloudFront::OriginRequestPolicy
     Properties:
@@ -154,19 +136,19 @@ Resources:
         DefaultCacheBehavior:
           TargetOriginId: website
           ViewerProtocolPolicy: redirect-to-https
-          CachePolicyId: !Ref NoCache
+          # AWS-managed CachingDisabled policy.
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
           ResponseHeadersPolicyId: !Ref BrowserSecurity
           FunctionAssociations:
             - EventType: viewer-request
               FunctionARN: !GetAtt EvaluatorAccess.FunctionARN
-          Compress: true
         CacheBehaviors:
           - PathPattern: /api/cloud/auth/*
             TargetOriginId: accounts
             ViewerProtocolPolicy: https-only
             AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
             CachedMethods: [GET, HEAD]
-            CachePolicyId: !Ref NoCache
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
             OriginRequestPolicyId: !Ref AccountsRequestPolicy
             ResponseHeadersPolicyId: !Ref BrowserSecurity
             FunctionAssociations:
@@ -175,7 +157,7 @@ Resources:
           - PathPattern: /mission-control
             TargetOriginId: accounts
             ViewerProtocolPolicy: https-only
-            CachePolicyId: !Ref NoCache
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
             OriginRequestPolicyId: !Ref AccountsRequestPolicy
             ResponseHeadersPolicyId: !Ref BrowserSecurity
             FunctionAssociations:
