@@ -420,6 +420,7 @@ function workloadInspection(app, applicationsPath, revision, settings) {
         clearWorkspace();
         location.replace("/sign-in");
       } else if (error.status === 404 || error.status === 403) {
+        if (error.status === 404) settings?.invalidateScope();
         settings?.report(null, "Inspection is unavailable in your current scope.");
         observation.textContent = "This workload is no longer available to inspect.";
         trigger.hidden = true;
@@ -454,6 +455,7 @@ function workloadReleaseInventory(app, applicationsPath, projectGeneration, sett
   trigger.textContent = "Check published versions";
   status.setAttribute("role", "status");
   versions.className = "published-versions";
+  versions.setAttribute("role", "list");
   panel.append(trigger, status, versions);
 
   settings?.connectInspection(denied => {
@@ -474,17 +476,17 @@ function workloadReleaseInventory(app, applicationsPath, projectGeneration, sett
       const inventory = await requestJson(path, "POST");
       if (!isCurrent()) return;
       const checkedAt = new Date(inventory.observedAt).toLocaleString();
-      const serving = inventory.servingVersion
-        ? `Version ${inventory.servingVersion} was serving at ${checkedAt}.`
-        : `The serving version could not be matched to this page at ${checkedAt}.`;
-      status.textContent = inventory.completeness === "partial" ? `${serving} Showing part of the inventory.` : serving;
+      const aliasTarget = inventory.liveAliasVersion
+        ? `Live alias pointed to version ${inventory.liveAliasVersion} at ${checkedAt}.`
+        : `The live alias target could not be matched to this page at ${checkedAt}.`;
+      status.textContent = inventory.completeness === "partial" ? `${aliasTarget} Showing part of the inventory.` : aliasTarget;
       for (const entry of inventory.versions) {
         const row = document.createElement("li");
         const version = document.createElement("strong");
         const pin = document.createElement("span");
         const modified = document.createElement("time");
         const checksum = document.createElement("code");
-        version.textContent = `Version ${entry.version}${entry.version === inventory.servingVersion ? " · Serving" : ""}`;
+        version.textContent = `Version ${entry.version}${entry.version === inventory.liveAliasVersion ? " · Live alias target" : ""}`;
         pin.textContent = entry.pinnedRevision === null ? "No configuration pin" : `Pinned revision ${entry.pinnedRevision}`;
         modified.dateTime = entry.lastModified;
         modified.textContent = `Modified ${new Date(entry.lastModified).toLocaleString()}`;

@@ -528,7 +528,7 @@ test("release inventory verifies the session and project grant again before retu
         reads++;
         if (revoke === "grant") granted = false;
         if (revoke === "session") await accountRequest("POST", "/sign-out", { token: lastSession });
-        return { status: 200, inventory: { servingVersion: "5" } };
+        return { status: 200, inventory: { liveAliasVersion: "5" } };
       }
     } },
     records: { async registryApplications(actor, id) { return granted && id === ids[0] && actor === "actor-0" ? records : null; } }
@@ -549,15 +549,15 @@ test("release inventory verifies the session and project grant again before retu
   const success = await input("development", tokens[0]);
   assert.equal(success.statusCode, 200);
   assert.equal(success.headers["cache-control"], "no-store");
-  assert.deepEqual(JSON.parse(success.body), { servingVersion: "5" });
+  assert.deepEqual(JSON.parse(success.body), { liveAliasVersion: "5" });
   revoke = "grant";
   const lostGrant = await input("development", tokens[0]);
   assert.equal(lostGrant.statusCode, 404);
-  assert.doesNotMatch(lostGrant.body, /servingVersion/);
+  assert.doesNotMatch(lostGrant.body, /liveAliasVersion/);
   granted = true;
   revoke = "session";
   lastSession = tokens[0];
   const lostSession = await input("development", tokens[0]);
   assert.equal(lostSession.statusCode, 401);
-  assert.doesNotMatch(lostSession.body, /servingVersion/);
+  assert.doesNotMatch(lostSession.body, /liveAliasVersion/);
 });

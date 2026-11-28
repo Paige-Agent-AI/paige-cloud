@@ -127,7 +127,7 @@ test("release inventory uses the exact admitted scope and returns only stable, i
   const { inspection, calls } = fixture({ readReleases: providerPage });
   const reply = await inspection.listReleases("verified-actor", scope, records);
   assert.equal(reply.status, 200);
-  assert.equal(reply.inventory.servingVersion, "5");
+  assert.equal(reply.inventory.liveAliasVersion, "5");
   assert.equal(reply.inventory.completeness, "complete");
   assert.deepEqual(reply.inventory.versions.map(row => [row.version, row.pinnedRevision]), [["12", null], ["5", 1]]);
   assert.equal(reply.inventory.versions[0].lastModified, "2026-11-27T09:00:00.000Z");
@@ -166,6 +166,6 @@ test("release inventory rejects changing or weighted aliases and foreign or inco
   }) });
   const partial = await inspection.listReleases("verified-actor", scope, records);
   assert.equal(partial.inventory.completeness, "partial");
-  assert.equal(partial.inventory.servingVersion, null);
+  assert.equal(partial.inventory.liveAliasVersion, null);
   assert.equal(JSON.stringify(partial).includes("internal-cursor"), false);
 });

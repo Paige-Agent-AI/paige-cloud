@@ -46,12 +46,12 @@ export function projectWorkloadReleases({ versions, before, after }, scope, alia
   }
 
   const partial = typeof versions.NextMarker === "string" && versions.NextMarker.length > 0;
-  const servingVersion = rows.has(after.FunctionVersion) ? after.FunctionVersion : null;
-  if (!servingVersion && !partial) return null;
+  const liveAliasVersion = rows.has(after.FunctionVersion) ? after.FunctionVersion : null;
+  if (!liveAliasVersion && !partial) return null;
   return {
     observedAt: new Date(now).toISOString(),
     completeness: partial ? "partial" : "complete",
-    servingVersion,
+    liveAliasVersion,
     versions: [...rows.values()].sort((a, b) => b.version.length - a.version.length || b.version.localeCompare(a.version))
   };
 }
