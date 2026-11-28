@@ -1,5 +1,6 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { workloadReleaseLimit } from "./workload-releases.mjs";
 import {
   AdminSetUserPasswordCommand,
   AdminUserGlobalSignOutCommand,
@@ -227,7 +228,7 @@ function createAccountRecords({ resourceArn, secretArn, database }) {
 const {
   CLOUD_SITE_ORIGIN, CLOUD_EVALUATORS, CLOUD_ENROLLMENT_MODE, CLOUD_EDGE_KEY, COGNITO_USER_POOL_ID, COGNITO_CLIENT_ID,
   CLOUD_DB_CLUSTER_ARN, CLOUD_DB_RUNTIME_SECRET_ARN, CLOUD_DB_NAME,
-  CLOUD_INSPECTION_SCOPE, CLOUD_INSPECTION_ALIAS, CLOUD_INSPECTION_RECOVERY_POINT
+  CLOUD_INSPECTION_SCOPE, CLOUD_INSPECTION_ALIAS, CLOUD_INSPECTION_RECOVERY_POINT, CLOUD_RELEASE_INVENTORY_ENABLED
 } = process.env;
 if (!CLOUD_EDGE_KEY) throw new Error("The Cloud edge key is required");
 
@@ -238,10 +239,28 @@ let workloadObservation;
 if (CLOUD_INSPECTION_ALIAS) {
   const scope = parseInspectionScope(CLOUD_INSPECTION_SCOPE);
   const { decideGovernedExecution } = await import("./canonical-spine/governedExecution.mjs");
-  const { InvokeCommand, LambdaClient } = await import("@aws-sdk/client-lambda");
+  const { GetAliasCommand, InvokeCommand, LambdaClient, ListVersionsByFunctionCommand } = await import("@aws-sdk/client-lambda");
   const lambda = new LambdaClient({ maxAttempts: 1 });
+  let readReleases;
+  if (CLOUD_RELEASE_INVENTORY_ENABLED === "true") {
+    const aliasArn = CLOUD_INSPECTION_ALIAS;
+    if (!aliasArn.endsWith(":live")) throw new Error("Release inventory requires a qualified live alias");
+    const functionArn = aliasArn.slice(0, -":live".length);
+    readReleases = async () => {
+      const options = { abortSignal: AbortSignal.timeout(4500) };
+      const readAlias = () => lambda.send(new GetAliasCommand({ FunctionName: functionArn, Name: "live" }), options);
+      const before = await readAlias();
+      const versions = await lambda.send(new ListVersionsByFunctionCommand({
+        FunctionName: functionArn, MaxItems: workloadReleaseLimit
+      }), options);
+      const after = await readAlias();
+      return { before, versions, after };
+    };
+  }
   workloadObservation = createWorkloadObservation({
     scope,
+    aliasArn: CLOUD_INSPECTION_ALIAS,
+    readReleases,
     recoveryPoint: parseInspectionRecoveryPoint(CLOUD_INSPECTION_RECOVERY_POINT),
     decide: decideGovernedExecution,
     reserve: records.reserveInspection,
