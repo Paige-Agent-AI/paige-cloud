@@ -214,11 +214,13 @@ let workspaceClosed = false;
 const missionHeading = find("[data-mission-heading]");
 const missionViewsReady = missionHeading && getComputedStyle(workspace)
   .getPropertyValue("--mission-operating-views").trim() === "1";
+const releaseInventoryReady = missionViewsReady && getComputedStyle(workspace)
+  .getPropertyValue("--mission-release-inventory").trim() === "1";
 const missionViews = {
   overview: ["Mission Control", ""],
   projects: ["Projects", ""],
   infrastructure: ["Infrastructure", "Open a project to inspect a registered workload. Health is checked on demand for its bound environment."],
-  deployments: ["Deployments", "Check the serving version and source for a bound workload. Release history is awaiting a qualified source."],
+  deployments: ["Deployments", "Open a project to check the serving release for a bound workload."],
   configuration: ["Configuration", "Open an application environment to view its saved non-secret settings and check what the workload consumed."]
 };
 
@@ -418,6 +420,7 @@ function workloadInspection(app, applicationsPath, revision, settings) {
         clearWorkspace();
         location.replace("/sign-in");
       } else if (error.status === 404 || error.status === 403) {
+        if (error.status === 404) settings?.invalidateScope();
         settings?.report(null, "Inspection is unavailable in your current scope.");
         observation.textContent = "This workload is no longer available to inspect.";
         trigger.hidden = true;
@@ -434,6 +437,84 @@ function workloadInspection(app, applicationsPath, revision, settings) {
     }
   });
   return container;
+}
+
+function workloadReleaseInventory(app, applicationsPath, projectGeneration, settings) {
+  const panel = document.createElement("section");
+  const trigger = document.createElement("button");
+  const status = document.createElement("p");
+  const versions = document.createElement("ol");
+  const environment = app.releaseInventoryEnvironment;
+  const path = `/api/cloud/v1${applicationsPath}/${encodeURIComponent(app.id)}/environments/${encodeURIComponent(environment)}/published-releases`;
+
+  panel.dataset.missionFeature = "release-inventory";
+  panel.className = "release-inventory";
+  panel.setAttribute("aria-label", `Published versions for ${app.name} · ${environment}`);
+  trigger.className = "plain-button";
+  trigger.type = "button";
+  trigger.textContent = "Check published versions";
+  status.setAttribute("role", "status");
+  versions.className = "published-versions";
+  versions.setAttribute("role", "list");
+  panel.append(trigger, status, versions);
+
+  settings?.connectInspection(denied => {
+    trigger.hidden = denied;
+    versions.replaceChildren();
+    status.textContent = denied ? "Published versions are unavailable in your current scope." : "";
+  });
+
+  trigger.addEventListener("click", async () => {
+    const generation = settings?.inspectionGeneration();
+    const isCurrent = () => projectGeneration === projectRevision && panel.isConnected &&
+      (!settings || settings.acceptsInspection(generation));
+    if (!isCurrent() || trigger.disabled) return;
+    trigger.disabled = true;
+    versions.replaceChildren();
+    status.textContent = "Checking published versions…";
+    try {
+      const inventory = await requestJson(path, "POST");
+      if (!isCurrent()) return;
+      const checkedAt = new Date(inventory.observedAt).toLocaleString();
+      const aliasTarget = inventory.liveAliasVersion
+        ? `Live alias pointed to version ${inventory.liveAliasVersion} at ${checkedAt}.`
+        : `The live alias target could not be matched to this page at ${checkedAt}.`;
+      status.textContent = inventory.completeness === "partial" ? `${aliasTarget} Showing part of the inventory.` : aliasTarget;
+      for (const entry of inventory.versions) {
+        const row = document.createElement("li");
+        const version = document.createElement("strong");
+        const pin = document.createElement("span");
+        const modified = document.createElement("time");
+        const checksum = document.createElement("code");
+        version.textContent = `Version ${entry.version}${entry.version === inventory.liveAliasVersion ? " · Live alias target" : ""}`;
+        pin.textContent = entry.pinnedRevision === null ? "No configuration pin" : `Pinned revision ${entry.pinnedRevision}`;
+        modified.dateTime = entry.lastModified;
+        modified.textContent = `Modified ${new Date(entry.lastModified).toLocaleString()}`;
+        checksum.textContent = `SHA-256 ${entry.codeSha256}`;
+        row.append(version, pin, modified, checksum);
+        versions.append(row);
+      }
+    } catch (error) {
+      if (!isCurrent()) return;
+      if (error.status === 401) {
+        clearWorkspace();
+        location.replace("/sign-in");
+      } else if (error.status === 404 || error.status === 403) {
+        versions.replaceChildren();
+        if (error.status === 404) settings?.invalidateScope();
+        trigger.hidden = true;
+        status.textContent = "Published versions are unavailable in your current scope.";
+      } else {
+        versions.replaceChildren();
+        status.textContent = error.status === 429
+          ? "Wait 30 seconds before checking this environment again."
+          : "Published versions could not be verified. Try again.";
+      }
+    } finally {
+      trigger.disabled = false;
+    }
+  });
+  return panel;
 }
 
 function environmentConfiguration(app, environment, applicationsPath, projectGeneration, canWrite) {
@@ -454,7 +535,7 @@ function environmentConfiguration(app, environment, applicationsPath, projectGen
   let generation = 0;
   let inspectionGeneration = 0;
   let inspectionDenied = false;
-  let updateInspectionAccess;
+  const inspectionListeners = new Set();
 
   title.textContent = `Configuration · ${environment}`;
   evidence.setAttribute("role", "status");
@@ -493,14 +574,14 @@ function environmentConfiguration(app, environment, applicationsPath, projectGen
   function denyScope() {
     inspectionDenied = true;
     inspectionGeneration++;
-    updateInspectionAccess?.(true);
+    for (const update of inspectionListeners) update(true);
     report(null, "No configuration evidence is available in your current scope.");
   }
 
   function showSaved(result) {
     if (inspectionDenied) {
       inspectionDenied = false;
-      updateInspectionAccess?.(false);
+      for (const update of inspectionListeners) update(false);
     }
     if (editor) {
       editor.elements.logLevel.value = result.configuration?.logLevel ?? "";
@@ -604,7 +685,14 @@ function environmentConfiguration(app, environment, applicationsPath, projectGen
   renderRuntime();
   return {
     details, report,
-    connectInspection(update) { updateInspectionAccess = update; },
+    connectInspection(update) { inspectionListeners.add(update); },
+    invalidateScope() {
+      generation++;
+      saved = null;
+      if (editor) editor.hidden = true;
+      evidence.textContent = "Configuration is unavailable in your current scope.";
+      denyScope();
+    },
     inspectionGeneration: () => inspectionGeneration,
     acceptsInspection: request => !inspectionDenied && request === inspectionGeneration
   };
@@ -632,6 +720,12 @@ function renderProject(project, registryPath, revision) {
     label.textContent = app.name;
     targets.textContent = `${app.id} · Environments: ${app.environments.join(", ")}`;
     item.append(label, targets);
+    if (app.sourceRepository) {
+      const source = document.createElement("p");
+      source.dataset.missionFeature = "registry";
+      source.textContent = `Registered repository · ${app.sourceRepository}`;
+      item.append(source);
+    }
     const configuration = document.createElement("div");
     configuration.className = "environment-settings";
     configuration.dataset.missionFeature = "configuration";
@@ -647,6 +741,9 @@ function renderProject(project, registryPath, revision) {
       unavailable.dataset.missionFeature = "observation";
       unavailable.textContent = "No workload inspection is bound to this application.";
       item.append(unavailable);
+    }
+    if (releaseInventoryReady && app.releaseInventoryEnvironment) {
+      item.append(workloadReleaseInventory(app, applicationsPath, revision, settings.get(app.releaseInventoryEnvironment)));
     }
     const template = find("#environment-editor");
     if (template && project.role === "owner") {

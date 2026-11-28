@@ -94,3 +94,12 @@ test("workspace and data API still depend on the origin session and authority", 
   }
   assert.equal(request(fn, ip, "/missing", "HEAD").body, undefined);
 });
+
+test("published versions use the protected uncached workload route", () => {
+  const route = registry + "/platform/applications/independent/environments/development/published-releases";
+  const governed = handler("route-governed");
+  assert.equal(request(governed, externalIps[0], route, "POST").statusCode, 401);
+  assert.equal(request(governed, externalIps[0], route, "POST", "a.b.c").uri, route);
+  assert.equal(request(governed, externalIps[0], route + "/revisions/4", "POST", "a.b.c").statusCode, 404);
+  assert.equal(request(handler("marketing-public"), externalIps[0], route, "POST", "a.b.c").statusCode, 403);
+});

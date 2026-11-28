@@ -5,7 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 const prefix = "/api/cloud/auth";
 const registryPath = /^\/api\/cloud\/v1\/organizations\/([a-fA-F0-9-]{36})\/projects(?:\/([a-z0-9][a-z0-9-]{0,47})\/applications)?$/;
-const workloadPath = /^\/api\/cloud\/v1\/organizations\/([a-f0-9-]{36})\/projects\/([a-z0-9][a-z0-9-]{0,47})\/applications\/([a-z0-9][a-z0-9-]{0,47})\/environments\/([a-z0-9][a-z0-9-]{0,47})\/(inspection|configuration)(?:\/revisions\/([1-9][0-9]{0,9}))?$/;
+const workloadPath = /^\/api\/cloud\/v1\/organizations\/([a-f0-9-]{36})\/projects\/([a-z0-9][a-z0-9-]{0,47})\/applications\/([a-z0-9][a-z0-9-]{0,47})\/environments\/([a-z0-9][a-z0-9-]{0,47})\/(inspection|configuration|published-releases)(?:\/revisions\/([1-9][0-9]{0,9}))?$/;
 const maxConfigurationRevision = 2147483647;
 const resourceId = /^[a-z0-9][a-z0-9-]{0,47}$/;
 const repositoryName = /^[a-zA-Z0-9][a-zA-Z0-9-]{0,38}\/[a-zA-Z0-9_.-]{1,100}$/;
@@ -202,7 +202,10 @@ export function createAccountHandler({ origin, evaluatorEmails, identity, record
     if (method === "GET" && project && workloadObservation) {
       result = result.map(record => {
         const environment = workloadObservation.targetFor(organization, project, record);
-        return environment ? { ...record, inspectionEnvironment: environment } : record;
+        return environment ? {
+          ...record, inspectionEnvironment: environment,
+          ...(workloadObservation.releasesAvailable && { releaseInventoryEnvironment: environment })
+        } : record;
       });
     }
     return reply(200, result);
@@ -248,6 +251,26 @@ export function createAccountHandler({ origin, evaluatorEmails, identity, record
     throw new RequestError(503, "inspection_unavailable");
   }
 
+  async function handleReleaseInventory(event, method, [, organization, project, application, environment]) {
+    if (!workloadObservation?.releasesAvailable || method !== "POST" || !uuid.test(organization)) {
+      throw new RequestError(404, "not_found");
+    }
+    if (event.headers?.origin !== origin) throw new RequestError(403, "origin_denied");
+    const actor = await requireAccount(event);
+    const scope = { organization, project, application, environment };
+    const registered = await records.registryApplications(actor, organization, project);
+    const result = await workloadObservation.listReleases(actor, scope, registered);
+    if (result.status === 404) throw new RequestError(404, "not_found");
+    if (result.status === 403) throw new RequestError(403, "inspection_denied");
+    if (result.status === 429) throw new RequestError(429, "inspection_limited");
+    if (result.status !== 200) throw new RequestError(503, "release_inventory_unavailable");
+
+    if (await requireAccount(event) !== actor) throw new RequestError(401, "sign_in_required");
+    const current = await records.registryApplications(actor, organization, project);
+    if (!workloadObservation.matches(scope, current)) throw new RequestError(404, "not_found");
+    return reply(200, result.inventory);
+  }
+
   async function handle(event) {
     const method = event.requestContext?.http?.method;
     const path = event.rawPath;
@@ -271,6 +294,7 @@ export function createAccountHandler({ origin, evaluatorEmails, identity, record
     const workload = typeof path === "string" && path.match(workloadPath);
     if (workload?.[5] === "configuration") return handleConfiguration(event, method, workload);
     if (workload?.[5] === "inspection" && !workload[6]) return handleObservation(event, method, workload);
+    if (workload?.[5] === "published-releases" && !workload[6]) return handleReleaseInventory(event, method, workload);
     const registry = typeof path === "string" && path.match(registryPath);
     if (registry) return handleRegistry(event, method, registry[1], registry[2]);
     const route = typeof path === "string" && path.startsWith(prefix + "/") ? path.slice(prefix.length) : "";

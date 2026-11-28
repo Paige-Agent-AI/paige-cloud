@@ -41,6 +41,10 @@ Parameters:
     Type: String
     Default: 'false'
     AllowedValues: ['true', 'false']
+  ReleaseInventoryEnabled:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
   InspectionAliasArn:
     Type: String
     Default: ''
@@ -71,10 +75,17 @@ Rules:
       - Assert: !And [!Not [!Equals [!Ref InspectionScope, '']], !Equals [!Ref EvaluatorApiEnabled, 'true']]
         AssertDescription: Workload inspection requires a registered scope and the private evaluator routes.
 
+  ReleaseInventoryRequiresInspection:
+    RuleCondition: !Equals [!Ref ReleaseInventoryEnabled, 'true']
+    Assertions:
+      - Assert: !Not [!Equals [!Ref InspectionAliasArn, '']]
+        AssertDescription: Release inventory requires the existing exact workload binding.
+
 Conditions:
   UseVerifiedSesSender: !Not [!Equals [!Ref VerifiedEmailSenderDomain, '']]
   PublishEvaluatorRoutes: !Equals [!Ref EvaluatorApiEnabled, 'true']
   EnableInspection: !Not [!Equals [!Ref InspectionAliasArn, '']]
+  EnableReleaseInventory: !And [!Condition EnableInspection, !Equals [!Ref ReleaseInventoryEnabled, 'true']]
 
 Resources:
   IdentityPool:
@@ -228,6 +239,7 @@ Resources:
           CLOUD_INSPECTION_SCOPE: !Ref InspectionScope
           CLOUD_INSPECTION_ALIAS: !Ref InspectionAliasArn
           CLOUD_INSPECTION_RECOVERY_POINT: !Ref InspectionRecoveryPoint
+          CLOUD_RELEASE_INVENTORY_ENABLED: !Ref ReleaseInventoryEnabled
 
   AccountsLog:
     Type: AWS::Logs::LogGroup
@@ -273,6 +285,12 @@ Resources:
                 - Effect: Allow
                   Action: lambda:InvokeFunction
                   Resource: !Ref InspectionAliasArn
+                - !Ref AWS::NoValue
+              - !If
+                - EnableReleaseInventory
+                - Effect: Allow
+                  Action: [lambda:GetAlias, lambda:ListVersionsByFunction]
+                  Resource: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:paige-cloud-customer-zero-independent'
                 - !Ref AWS::NoValue
 
   AccountsApi:

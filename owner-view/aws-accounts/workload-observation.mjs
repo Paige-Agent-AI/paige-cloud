@@ -1,7 +1,9 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
+import { projectWorkloadReleases } from "./workload-releases.mjs";
 
 export const inspectionCapability = "paige.cloud.workload.inspect.v1";
+export const releaseInventoryCapability = "paige.cloud.workload.releases.read.v1";
 const segment = "[a-z0-9][a-z0-9-]{0,47}";
 const scopePattern = new RegExp(`^([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})/(${segment})/(${segment})/(${segment})$`);
 const unavailableReasons = new Set(["backend_access_denied", "backend_record_invalid", "backend_read_unverified",
@@ -68,7 +70,7 @@ export function readRuntimeWorkloadObservation(result, scope, now) {
   return observation;
 }
 
-export function createWorkloadObservation({ scope, decide, reserve, invoke, recoveryPoint, now = Date.now }) {
+export function createWorkloadObservation({ scope, decide, reserve, invoke, readReleases, aliasArn, recoveryPoint, now = Date.now }) {
   const { organization, project, application, environment } = scope;
   function targetFor(organizationId, projectId, record) {
     if (organizationId === organization && projectId === project &&
@@ -76,31 +78,53 @@ export function createWorkloadObservation({ scope, decide, reserve, invoke, reco
     return null;
   }
 
+  function matches(selected, records) {
+    return records?.some(record => targetFor(selected.organization, selected.project, record) === selected.environment &&
+      record.id === selected.application) === true;
+  }
+
+  async function admit(actor, selected, records, operation) {
+    if (!matches(selected, records)) return { status: 404 };
+
+    // The session yields the person. The active project grant yields access. The deployment
+    // binding yields the exact scope. Spine receives only those server-established facts.
+    const args = Object.freeze({ operation });
+    const decision = decide({
+      caller: { authenticated: true, userId: actor, principal: "person", tenantId: organization,
+        tenantSource: "server", door: "other", access: { allowed: true } },
+      capability: { id: operation, effect: "read", availability: "live" },
+      approval: { autonomyLane: "off" },
+      requestArgs: args
+    });
+    if (decision.kind !== "execute" || decision.args !== args) return { status: 403 };
+
+    const reservation = await reserve(actor, scope);
+    if (reservation === null) return { status: 404 };
+    if (reservation === "limited") return { status: 429 };
+    if (reservation !== "reserved") return { status: 503 };
+    return { status: 200, args: decision.args };
+  }
+
   return {
     targetFor,
-    async inspect(actor, selected, records) {
-      if (!records?.some(record => targetFor(selected.organization, selected.project, record) === selected.environment &&
-          record.id === selected.application)) return { status: 404 };
-
-      // The session yields the person. The active project grant yields access. The deployment
-      // binding yields the exact scope. Spine receives only those server-established facts.
-      const args = Object.freeze({ operation: inspectionCapability });
-      const decision = decide({
-        caller: { authenticated: true, userId: actor, principal: "person", tenantId: organization,
-          tenantSource: "server", door: "other", access: { allowed: true } },
-        capability: { id: inspectionCapability, effect: "read", availability: "live" },
-        approval: { autonomyLane: "off" },
-        requestArgs: args
-      });
-      if (decision.kind !== "execute" || decision.args !== args) return { status: 403 };
-
-      const reservation = await reserve(actor, scope);
-      if (reservation === null) return { status: 404 };
-      if (reservation === "limited") return { status: 429 };
-      if (reservation !== "reserved") return { status: 503 };
-
+    matches,
+    releasesAvailable: typeof readReleases === "function",
+    async listReleases(actor, selected, records) {
+      if (!readReleases) return { status: 404 };
+      const outcome = await admit(actor, selected, records, releaseInventoryCapability);
+      if (outcome.status !== 200) return outcome;
       try {
-        const result = await invoke(decision.args);
+        const inventory = projectWorkloadReleases(await readReleases(), scope, aliasArn, now());
+        return inventory ? { status: 200, inventory } : { status: 503 };
+      } catch {
+        return { status: 503 };
+      }
+    },
+    async inspect(actor, selected, records) {
+      const outcome = await admit(actor, selected, records, inspectionCapability);
+      if (outcome.status !== 200) return outcome;
+      try {
+        const result = await invoke(outcome.args);
         const observation = readRuntimeWorkloadObservation(result, scope, now());
         if (!observation) return { status: 503 };
         if (observation.incident?.reason === "backend_access_denied" && recoveryPoint &&

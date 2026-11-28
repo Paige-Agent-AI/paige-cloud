@@ -511,3 +511,53 @@ test("the versioned registry derives its actor from the session and validates in
       repository: "example/source", environment: "development" }]
   ]);
 });
+
+test("release inventory verifies the session and project grant again before returning provider evidence", async () => {
+  const target = { organization: ids[0], project: "workspace", application: "independent", environment: "development" };
+  const records = [{ id: target.application, environments: ["development", "preview"] }];
+  let granted = true;
+  let revoke = false;
+  let reads = 0;
+  let lastSession;
+  const { handle, register, request: accountRequest } = fixture({
+    config: { workloadObservation: {
+      releasesAvailable: true,
+      matches: (scope, eligible) => !!eligible && Object.keys(target).every(key => scope[key] === target[key]),
+      async listReleases(actor, scope, eligible) {
+        if (!this.matches(scope, eligible)) return { status: 404 };
+        reads++;
+        if (revoke === "grant") granted = false;
+        if (revoke === "session") await accountRequest("POST", "/sign-out", { token: lastSession });
+        return { status: 200, inventory: { liveAliasVersion: "5" } };
+      }
+    } },
+    records: { async registryApplications(actor, id) { return granted && id === ids[0] && actor === "actor-0" ? records : null; } }
+  });
+  await register(allowedEmails[0]);
+  await register(allowedEmails[1]);
+  const base = `/api/cloud/v1/organizations/${ids[0]}/projects/workspace/applications/independent/environments/`;
+  const input = (environment, token, from = origin) => handle({
+    ...event("POST", "", { token, from }), rawPath: base + environment + "/published-releases"
+  });
+  for (const [environment, token, from, status] of [
+    ["development", undefined, origin, 401], ["development", tokens[1], origin, 404],
+    ["preview", tokens[0], origin, 404], ["development", tokens[0], "https://foreign.example.test", 403]
+  ]) {
+    assert.equal((await input(environment, token, from)).statusCode, status);
+    assert.equal(reads, 0);
+  }
+  const success = await input("development", tokens[0]);
+  assert.equal(success.statusCode, 200);
+  assert.equal(success.headers["cache-control"], "no-store");
+  assert.deepEqual(JSON.parse(success.body), { liveAliasVersion: "5" });
+  revoke = "grant";
+  const lostGrant = await input("development", tokens[0]);
+  assert.equal(lostGrant.statusCode, 404);
+  assert.doesNotMatch(lostGrant.body, /liveAliasVersion/);
+  granted = true;
+  revoke = "session";
+  lastSession = tokens[0];
+  const lostSession = await input("development", tokens[0]);
+  assert.equal(lostSession.statusCode, 401);
+  assert.doesNotMatch(lostSession.body, /liveAliasVersion/);
+});
