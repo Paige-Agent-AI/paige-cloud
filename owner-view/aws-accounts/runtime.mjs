@@ -204,6 +204,11 @@ function createAccountRecords({ resourceArn, secretArn, database }) {
         CAST(:organization AS uuid), :project, :application, :environment)`,
         { actor, organization, project, application, environment });
     },
+    readRepositoryBinding(actor, { organization, project, application, environment }) {
+      return call(`SELECT CAST(cloud_accounts.read_repository_binding(CAST(:actor AS uuid),
+        CAST(:organization AS uuid), :project, :application, :environment) AS text)`,
+        { actor, organization, project, application, environment }, JSON.parse);
+    },
     readWorkloadConfiguration(actor, { organization, project, application, environment }, revision) {
       return call(`SELECT CAST(cloud_accounts.read_workload_configuration(CAST(:actor AS uuid),
         CAST(:organization AS uuid), :project, :application, :environment, CAST(NULLIF(:revision, '') AS integer)) AS text)`,

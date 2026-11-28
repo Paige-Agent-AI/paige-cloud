@@ -59,6 +59,67 @@ END
 $$;
 RESET ROLE;
 
+INSERT INTO cloud_accounts.repository_bindings (
+  organization_id, project_id, application_id, environment_id, repository_id, repository, ref, connection_arn
+) VALUES (
+  current_setting('paige.registry.org')::uuid, 'workspace', 'independent', 'development',
+  '1207965608', 'Example/Source', 'refs/heads/main',
+  'arn:aws:codeconnections:us-east-2:111111111111:connection/11111111-1111-4111-8111-111111111111'
+);
+
+DO $$
+BEGIN
+  INSERT INTO cloud_accounts.repository_bindings (
+    organization_id, project_id, application_id, environment_id, repository_id, repository, ref, connection_arn
+  )
+  SELECT organization_id, project_id, application_id, environment_id, '42', repository, ref, connection_arn
+  FROM cloud_accounts.repository_bindings WHERE organization_id = current_setting('paige.registry.org')::uuid;
+  RAISE EXCEPTION 'simultaneous repository bindings were accepted';
+EXCEPTION WHEN unique_violation THEN NULL;
+END
+$$;
+
+SET LOCAL ROLE paige_cloud_account_runtime;
+DO $$
+DECLARE
+  owner_id uuid := current_setting('paige.registry.owner')::uuid;
+  other_id uuid := current_setting('paige.registry.other')::uuid;
+  org uuid := current_setting('paige.registry.org')::uuid;
+  binding jsonb;
+BEGIN
+  binding := cloud_accounts.read_repository_binding(owner_id, org, 'workspace', 'independent', 'development')->'binding';
+  IF binding->>'repository' IS DISTINCT FROM 'Example/Source'
+     OR binding->>'repositoryId' IS DISTINCT FROM '1207965608'
+     OR binding->>'ref' IS DISTINCT FROM 'refs/heads/main'
+     OR (binding - 'repository' - 'repositoryId' - 'ref' - 'recordedAt') IS DISTINCT FROM '{}'::jsonb
+     OR binding->>'recordedAt' IS NULL
+     OR cloud_accounts.read_repository_binding(owner_id, org, 'workspace', 'independent', 'preview')
+        IS DISTINCT FROM '{"binding":null}'::jsonb
+     OR cloud_accounts.read_repository_binding(owner_id, org, 'workspace', 'independent', 'missing') IS NOT NULL
+     OR cloud_accounts.read_repository_binding(other_id, org, 'workspace', 'independent', 'development') IS NOT NULL
+     OR has_table_privilege(current_user, 'cloud_accounts.repository_bindings',
+       'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') THEN
+    RAISE EXCEPTION 'repository binding exposed unscoped, unverified or restricted fields';
+  END IF;
+END
+$$;
+RESET ROLE;
+
+UPDATE cloud_accounts.repository_bindings SET revoked_at = clock_timestamp()
+WHERE organization_id = current_setting('paige.registry.org')::uuid;
+
+SET LOCAL ROLE paige_cloud_account_runtime;
+DO $$
+BEGIN
+  IF cloud_accounts.read_repository_binding(current_setting('paige.registry.owner')::uuid,
+    current_setting('paige.registry.org')::uuid, 'workspace', 'independent', 'development')
+    IS DISTINCT FROM '{"binding":null}'::jsonb THEN
+    RAISE EXCEPTION 'repository revocation did not clear the active binding';
+  END IF;
+END
+$$;
+RESET ROLE;
+
 UPDATE cloud_accounts.workload_observation_budget SET attempts = 24, reserved_at = clock_timestamp() - interval '31 seconds'
 WHERE organization_id = current_setting('paige.registry.org')::uuid;
 SET LOCAL ROLE paige_cloud_account_runtime;

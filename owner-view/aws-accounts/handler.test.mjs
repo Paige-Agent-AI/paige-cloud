@@ -512,6 +512,39 @@ test("the versioned registry derives its actor from the session and validates in
   ]);
 });
 
+test("repository binding is a session-derived read for one registered environment", async () => {
+  const reads = [];
+  const binding = { repository: "example/source", repositoryId: "981547682137",
+    ref: "refs/heads/main", recordedAt: "2026-11-27T01:00:00Z" };
+  const { handle, register } = fixture({ records: {
+    async readRepositoryBinding(actor, scope) {
+      reads.push([actor, scope]);
+      if (actor !== "actor-0" || scope.environment === "missing") return null;
+      return { binding: scope.environment === "development" ? binding : null };
+    }
+  } });
+  await register(allowedEmails[0]);
+  await register(allowedEmails[1]);
+  const base = `/api/cloud/v1/organizations/${ids[0]}/projects/workspace/applications/independent/environments/`;
+  const request = (environment, token, method = "GET", suffix = "") => handle({
+    ...event(method, "", { token }), rawPath: base + environment + "/repository-binding" + suffix
+  });
+  assert.equal((await request("development")).statusCode, 401);
+  assert.equal((await request("development", tokens[0], "PUT")).statusCode, 404);
+  assert.equal((await request("development", tokens[0], "GET", "/revisions/1")).statusCode, 404);
+  assert.equal(reads.length, 0);
+  const result = await request("development", tokens[0]);
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.headers["cache-control"], "no-store");
+  assert.deepEqual(JSON.parse(result.body), { binding });
+  assert.deepEqual(reads[0], ["actor-0", {
+    organization: ids[0], project: "workspace", application: "independent", environment: "development"
+  }]);
+  assert.deepEqual(JSON.parse((await request("preview", tokens[0])).body), { binding: null });
+  assert.equal((await request("development", tokens[1])).statusCode, 404);
+  assert.equal((await request("missing", tokens[0])).statusCode, 404);
+});
+
 test("release inventory verifies the session and project grant again before returning provider evidence", async () => {
   const target = { organization: ids[0], project: "workspace", application: "independent", environment: "development" };
   const records = [{ id: target.application, environments: ["development", "preview"] }];

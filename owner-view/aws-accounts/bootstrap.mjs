@@ -73,6 +73,7 @@ async function bootstrap() {
   const accountEmailAdmission = await readFile(new URL("../sql/cloud-accounts/007-account-email-admission.sql", import.meta.url), "utf8");
   const accountEmailCapacity = await readFile(new URL("../sql/cloud-accounts/008-account-email-capacity.sql", import.meta.url), "utf8");
   const accountEmailProviderWindow = await readFile(new URL("../sql/cloud-accounts/009-account-email-provider-window.sql", import.meta.url), "utf8");
+  const repositoryBinding = await readFile(new URL("../sql/cloud-accounts/010-repository-binding.sql", import.meta.url), "utf8");
   const connection = { resourceArn, secretArn, database: "paige_cloud" };
   const data = new RDSDataClient({});
   const { transactionId } = await data.send(new BeginTransactionCommand(connection));
@@ -100,6 +101,7 @@ async function bootstrap() {
     applied = (await applyAdditiveMigration("007", accountEmailAdmission, execute)) || applied;
     applied = (await applyAdditiveMigration("008", accountEmailCapacity, execute)) || applied;
     applied = (await applyAdditiveMigration("009", accountEmailProviderWindow, execute)) || applied;
+    applied = (await applyAdditiveMigration("010", repositoryBinding, execute)) || applied;
     await data.send(new CommitTransactionCommand(transaction));
   } catch (error) {
     try {
@@ -126,7 +128,9 @@ async function bootstrap() {
       AND has_function_privilege(current_user, 'cloud_accounts.save_workload_configuration_v2(uuid, uuid, text, text, text, integer, text, integer)', 'EXECUTE')
       AND NOT has_function_privilege(current_user, 'cloud_accounts.save_workload_configuration_revision(uuid, uuid, text, text, text, integer, text, integer, boolean)', 'EXECUTE')
       AND has_function_privilege(current_user, 'cloud_accounts.reserve_account_email(text, text, text)', 'EXECUTE')
+      AND has_function_privilege(current_user, 'cloud_accounts.read_repository_binding(uuid, uuid, text, text, text)', 'EXECUTE')
       AND NOT has_table_privilege(current_user, 'cloud_accounts.account_email_admission', 'SELECT, INSERT, UPDATE, DELETE')
+      AND NOT has_table_privilege(current_user, 'cloud_accounts.repository_bindings', 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
       AND NOT has_table_privilege(current_user, 'cloud_accounts.workload_configuration_revisions', 'SELECT, INSERT, UPDATE, DELETE')`
   }));
   if (check.records?.[0]?.[0]?.booleanValue !== true) throw new Error("Application database login was not confirmed");
