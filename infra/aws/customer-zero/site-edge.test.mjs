@@ -103,3 +103,12 @@ test("published versions use the protected uncached workload route", () => {
   assert.equal(request(governed, externalIps[0], route + "/revisions/4", "POST", "a.b.c").statusCode, 404);
   assert.equal(request(handler("marketing-public"), externalIps[0], route, "POST", "a.b.c").statusCode, 403);
 });
+
+test("repository binding is protected by the workspace account route", () => {
+  const route = registry + "/platform/applications/independent/environments/development/repository-binding";
+  const governed = handler("route-governed");
+  assert.equal(request(governed, externalIps[0], route).statusCode, 401);
+  assert.equal(request(governed, externalIps[0], route, "GET", "a.b.c").uri, route);
+  assert.equal(request(governed, externalIps[0], route + "/revisions/1", "GET", "a.b.c").statusCode, 404);
+  assert.equal(request(handler("marketing-public"), externalIps[0], route, "GET", "a.b.c").statusCode, 403);
+});

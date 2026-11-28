@@ -5,7 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 const prefix = "/api/cloud/auth";
 const registryPath = /^\/api\/cloud\/v1\/organizations\/([a-fA-F0-9-]{36})\/projects(?:\/([a-z0-9][a-z0-9-]{0,47})\/applications)?$/;
-const workloadPath = /^\/api\/cloud\/v1\/organizations\/([a-f0-9-]{36})\/projects\/([a-z0-9][a-z0-9-]{0,47})\/applications\/([a-z0-9][a-z0-9-]{0,47})\/environments\/([a-z0-9][a-z0-9-]{0,47})\/(inspection|configuration|published-releases)(?:\/revisions\/([1-9][0-9]{0,9}))?$/;
+const workloadPath = /^\/api\/cloud\/v1\/organizations\/([a-f0-9-]{36})\/projects\/([a-z0-9][a-z0-9-]{0,47})\/applications\/([a-z0-9][a-z0-9-]{0,47})\/environments\/([a-z0-9][a-z0-9-]{0,47})\/(inspection|configuration|published-releases|repository-binding)(?:\/revisions\/([1-9][0-9]{0,9}))?$/;
 const maxConfigurationRevision = 2147483647;
 const resourceId = /^[a-z0-9][a-z0-9-]{0,47}$/;
 const repositoryName = /^[a-zA-Z0-9][a-zA-Z0-9-]{0,38}\/[a-zA-Z0-9_.-]{1,100}$/;
@@ -271,6 +271,14 @@ export function createAccountHandler({ origin, evaluatorEmails, identity, record
     return reply(200, result.inventory);
   }
 
+  async function handleRepositoryBinding(event, method, [, organization, project, application, environment]) {
+    if (method !== "GET" || !uuid.test(organization)) throw new RequestError(404, "not_found");
+    const actor = await requireAccount(event);
+    const result = await records.readRepositoryBinding(actor, { organization, project, application, environment });
+    if (result == null) throw new RequestError(404, "not_found");
+    return reply(200, result);
+  }
+
   async function handle(event) {
     const method = event.requestContext?.http?.method;
     const path = event.rawPath;
@@ -295,6 +303,7 @@ export function createAccountHandler({ origin, evaluatorEmails, identity, record
     if (workload?.[5] === "configuration") return handleConfiguration(event, method, workload);
     if (workload?.[5] === "inspection" && !workload[6]) return handleObservation(event, method, workload);
     if (workload?.[5] === "published-releases" && !workload[6]) return handleReleaseInventory(event, method, workload);
+    if (workload?.[5] === "repository-binding" && !workload[6]) return handleRepositoryBinding(event, method, workload);
     const registry = typeof path === "string" && path.match(registryPath);
     if (registry) return handleRegistry(event, method, registry[1], registry[2]);
     const route = typeof path === "string" && path.startsWith(prefix + "/") ? path.slice(prefix.length) : "";

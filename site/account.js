@@ -698,6 +698,50 @@ function environmentConfiguration(app, environment, applicationsPath, projectGen
   };
 }
 
+function repositoryBindingPanel(app, applicationsPath, projectGeneration) {
+  const panel = document.createElement("details");
+  const title = document.createElement("summary");
+  const status = document.createElement("p");
+  const label = document.createElement("label");
+  const picker = document.createElement("select");
+  panel.className = "environment-settings";
+  panel.dataset.missionFeature = "registry";
+  title.textContent = "Repository binding";
+  status.setAttribute("role", "status");
+  label.className = "organization-picker";
+  label.append("Environment ", picker);
+  for (const environment of app.environments) picker.add(new Option(environment, environment));
+  panel.append(title);
+  if (app.environments.length > 1) panel.append(label);
+  panel.append(status);
+
+  let generation = 0;
+  async function read() {
+    const request = ++generation;
+    const environment = picker.value;
+    const current = () => panel.open && panel.isConnected && request === generation &&
+      projectGeneration === projectRevision;
+    status.textContent = "";
+    if (!environment || !current()) return;
+    status.textContent = "Checking repository binding…";
+    const path = `${applicationsPath}/${encodeURIComponent(app.id)}/environments/${encodeURIComponent(environment)}/repository-binding`;
+    try {
+      const { binding } = await requestJson(`/api/cloud/v1${path}`, "GET");
+      if (!current()) return;
+      status.textContent = binding
+        ? `${environment} · ${binding.repository} · ${binding.ref} · GitHub ID ${binding.repositoryId}`
+        : `${environment} has no recorded source binding.`;
+    } catch (error) {
+      if (!current()) return;
+      status.textContent = error.status === 404 ? "Repository binding is unavailable in your current scope."
+        : "Repository binding could not be checked. Close and reopen to retry.";
+    }
+  }
+  panel.addEventListener("toggle", read);
+  picker.addEventListener("change", read);
+  return panel;
+}
+
 function renderProject(project, registryPath, revision) {
   const row = document.createElement("li");
   const details = document.createElement("details");
@@ -724,7 +768,7 @@ function renderProject(project, registryPath, revision) {
       const source = document.createElement("p");
       source.dataset.missionFeature = "registry";
       source.textContent = `Registered repository · ${app.sourceRepository}`;
-      item.append(source);
+      item.append(source, repositoryBindingPanel(app, applicationsPath, revision));
     }
     const configuration = document.createElement("div");
     configuration.className = "environment-settings";
