@@ -1,0 +1,11 @@
+{
+  "name": "paige-cloud-solo-streaming",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "jose": "6.2.18"
+  }
+}

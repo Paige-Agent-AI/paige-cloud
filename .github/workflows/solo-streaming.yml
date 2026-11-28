@@ -1,0 +1,33 @@
+name: Verify private Solo streaming
+
+on:
+  pull_request:
+    paths:
+      - "solo-streaming/**"
+      - ".github/workflows/solo-streaming.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  streaming:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Install the pinned verifier and test the HTTP contract
+        run: |
+          node --version
+          npm --prefix solo-streaming ci --ignore-scripts --no-audit --no-fund
+          node --test solo-streaming/server.test.mjs
+      - name: Exercise real RTMPS, HLS and replay with two workspaces
+        run: |
+          docker build --target verify -t paige-solo-streaming ./solo-streaming
+          node solo-streaming/runtime-smoke.mjs
