@@ -719,8 +719,8 @@ function repositoryBindingPanel(app, applicationsPath, projectGeneration) {
   async function read() {
     const request = ++generation;
     const environment = picker.value;
-    const current = () => panel.open && panel.isConnected && request === generation &&
-      projectGeneration === projectRevision;
+    const scopeCurrent = () => panel.isConnected && projectGeneration === projectRevision;
+    const current = () => panel.open && request === generation && scopeCurrent();
     status.textContent = "";
     if (!environment || !current()) return;
     status.textContent = "Checking repository binding…";
@@ -732,6 +732,11 @@ function repositoryBindingPanel(app, applicationsPath, projectGeneration) {
         ? `${environment} · ${binding.repository} · ${binding.ref} · GitHub ID ${binding.repositoryId}`
         : `${environment} has no recorded source binding.`;
     } catch (error) {
+      if (error.status === 401 && scopeCurrent()) {
+        clearWorkspace();
+        location.replace("/sign-in");
+        return;
+      }
       if (!current()) return;
       status.textContent = error.status === 404 ? "Repository binding is unavailable in your current scope."
         : "Repository binding could not be checked. Close and reopen to retry.";
